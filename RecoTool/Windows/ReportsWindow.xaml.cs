@@ -1,0 +1,737 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using Microsoft.Win32;
+using Microsoft.Extensions.DependencyInjection;
+using RecoTool.Models;
+using RecoTool.Services;
+
+namespace RecoTool.Windows
+{
+    /// <summary>
+    /// Logique d'interaction pour ReportsWindow.xaml
+    /// Fenêtre de génération de rapports et exports
+    /// </summary>
+    public partial class ReportsWindow : Window, INotifyPropertyChanged
+    {
+        #region Fields and Properties
+
+        private readonly ReconciliationService _reconciliationService;
+        private readonly OfflineFirstService _offlineFirstService;
+        private ExportService _exportService;
+        private DateTime _startDate;
+        private DateTime _endDate;
+        private bool _isGenerating;
+        private string _outputPath;
+
+        public Country CurrentCountry => _offlineFirstService?.CurrentCountry;
+
+        public DateTime StartDate
+        {
+            get => _startDate;
+            set
+            {
+                _startDate = value;
+                OnPropertyChanged(nameof(StartDate));
+            }
+        }
+
+        public DateTime EndDate
+        {
+            get => _endDate;
+            set
+            {
+                _endDate = value;
+                OnPropertyChanged(nameof(EndDate));
+            }
+        }
+
+        public bool IsGenerating
+        {
+            get => _isGenerating;
+            set
+            {
+                _isGenerating = value;
+                OnPropertyChanged(nameof(IsGenerating));
+            }
+        }
+
+        public string OutputPath
+        {
+            get => _outputPath;
+            set
+            {
+                _outputPath = value;
+                OnPropertyChanged(nameof(OutputPath));
+            }
+        }
+
+        #endregion
+
+        protected override void OnActivated(EventArgs e)
+        {
+            base.OnActivated(e);
+            // Rafraîchir l'affichage du pays courant si la sélection a changé dans la fenêtre principale
+            OnPropertyChanged(nameof(CurrentCountry));
+        }
+
+        #region Constructor
+
+        public ReportsWindow()
+        {
+            InitializeComponent();
+            DataContext = this;
+            InitializeData();
+        }
+
+        public ReportsWindow(ReconciliationService reconciliationService, OfflineFirstService offlineFirstService) : this()
+        {
+            _reconciliationService = reconciliationService;
+            _offlineFirstService = offlineFirstService ?? App.ServiceProvider?.GetRequiredService<OfflineFirstService>();
+            if (_reconciliationService != null)
+            {
+                _exportService = new ExportService(_reconciliationService);
+            }
+
+            // Mettre à jour les bindings dépendants du pays courant
+            OnPropertyChanged(nameof(CurrentCountry));
+        }
+
+        #endregion
+
+        #region Initialization
+
+        /// <summary>
+        /// Initialise les données par défaut
+        /// </summary>
+        private void InitializeData()
+        {
+            
+            // Dates par défaut : mois courant
+            StartDate = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1);
+            EndDate = DateTime.Now;
+            
+            // Répertoire de sortie par défaut
+            OutputPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "RecoTool_Reports");
+        }
+
+        #endregion
+
+        #region Event Handlers
+
+        /// <summary>
+        /// Sélection du répertoire de sortie
+        /// </summary>
+        private void BrowseOutputPathButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var folderDialog = new System.Windows.Forms.FolderBrowserDialog
+                {
+                    Description = "Select the reports output directory",
+                    SelectedPath = OutputPath
+                };
+
+                if (folderDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+                {
+                    OutputPath = folderDialog.SelectedPath;
+                    UpdateTextBox("OutputPathTextBox", OutputPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Error selecting directory: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Génération du rapport de réconciliation complet
+        /// </summary>
+        private async void GenerateReconciliationReportButton_Click(object sender, RoutedEventArgs e)
+        {
+            await GenerateReport("Reconciliation", "Reconciliation Report");
+        }
+
+        /// <summary>
+        /// Génération du rapport KPI
+        /// </summary>
+        private async void GenerateKPIReportButton_Click(object sender, RoutedEventArgs e)
+        {
+            await GenerateReport("KPI", "KPI Report");
+        }
+
+        /// <summary>
+        /// Génération du rapport d'anomalies
+        /// </summary>
+        private async void GenerateAnomaliesReportButton_Click(object sender, RoutedEventArgs e)
+        {
+            await GenerateReport("Anomalies", "Anomalies Report");
+        }
+
+        /// <summary>
+        /// Génération du rapport détaillé par devise
+        /// </summary>
+        private async void GenerateCurrencyReportButton_Click(object sender, RoutedEventArgs e)
+        {
+            await GenerateReport("Currency", "Currency Report");
+        }
+
+        /// <summary>
+        /// Export des données brutes
+        /// </summary>
+        private async void ExportRawDataButton_Click(object sender, RoutedEventArgs e)
+        {
+            await ExportData("RawData", "Raw Data Export");
+        }
+
+        /// <summary>
+        /// Export des données réconciliées seulement
+        /// </summary>
+        private async void ExportReconciledDataButton_Click(object sender, RoutedEventArgs e)
+        {
+            await ExportData("Reconciled", "Reconciled Data Export");
+        }
+
+        /// <summary>
+        /// Export des données en attente
+        /// </summary>
+        private async void ExportPendingDataButton_Click(object sender, RoutedEventArgs e)
+        {
+            await ExportData("Pending", "Pending Data Export");
+        }
+
+        /// <summary>
+        /// Export personnalisé avec sélection de fichier
+        /// </summary>
+        private async void ExportCustomButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var saveFileDialog = new SaveFileDialog
+                {
+                    Title = "Custom Export",
+                    Filter = "Excel Files (*.xlsx)|*.xlsx|CSV Files (*.csv)|*.csv",
+                    DefaultExt = "xlsx",
+                    FileName = $"RecoTool_Custom_{DateTime.Now:yyyyMMdd_HHmmss}"
+                };
+
+                if (saveFileDialog.ShowDialog() == true)
+                {
+                    await ExportDataToFile(saveFileDialog.FileName, "Custom");
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Error during custom export: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Validation des paramètres
+        /// </summary>
+        private void ValidateParametersButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var validationResults = ValidateParameters();
+                if (validationResults.Count == 0)
+                {
+                    ShowInfo("All parameters are valid.");
+                }
+                else
+                {
+                    var message = "Issues detected:\n" + string.Join("\n", validationResults);
+                    ShowWarning(message);
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Error during validation: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Fermeture de la fenêtre
+        /// </summary>
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
+        }
+
+        #endregion
+
+        #region Report Generation
+
+        /// <summary>
+        /// Génère un rapport selon le type spécifié
+        /// </summary>
+        private async Task GenerateReport(string reportType, string reportName)
+        {
+            if (!ValidateParametersForGeneration())
+                return;
+
+            try
+            {
+                IsGenerating = true;
+                UpdateStatusText($"Generating {reportName}...");
+
+                // Création du répertoire de sortie si nécessaire
+                Directory.CreateDirectory(OutputPath);
+
+                // Nom du fichier
+                var fileName = $"{reportType}_Report_{CurrentCountry?.CNT_Id}_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+                var fullPath = Path.Combine(OutputPath, fileName);
+
+                // Récupération des données
+                var data = await GetReportData(reportType);
+                
+                // Génération du rapport
+                await GenerateReportFile(fullPath, reportType, data);
+
+                UpdateStatusText($"{reportName} generated successfully: {fullPath}");
+                ShowInfo($"{reportName} generated successfully:\n{fullPath}");
+            }
+            catch (Exception ex)
+            {
+                UpdateStatusText($"Error generating {reportName}");
+                ShowError($"Error generating {reportName}: {ex.Message}");
+            }
+            finally
+            {
+                IsGenerating = false;
+            }
+        }
+
+        /// <summary>
+        /// Exporte des données selon le type spécifié
+        /// </summary>
+        private async Task ExportData(string exportType, string exportName)
+        {
+            if (!ValidateParametersForGeneration())
+                return;
+
+            try
+            {
+                IsGenerating = true;
+                UpdateStatusText($"Exporting: {exportName}...");
+
+                // Création du répertoire de sortie si nécessaire
+                Directory.CreateDirectory(OutputPath);
+
+                // Nom du fichier
+                var fileName = $"{exportType}_Export_{CurrentCountry?.CNT_Id}_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+                var fullPath = Path.Combine(OutputPath, fileName);
+
+                await ExportDataToFile(fullPath, exportType);
+
+                UpdateStatusText($"{exportName} completed successfully: {fullPath}");
+                ShowInfo($"{exportName} completed successfully:\n{fullPath}");
+            }
+            catch (Exception ex)
+            {
+                UpdateStatusText($"Error during export: {exportName}");
+                ShowError($"Error during export {exportName}: {ex.Message}");
+            }
+            finally
+            {
+                IsGenerating = false;
+            }
+        }
+
+        /// <summary>
+        /// Récupère les données pour un rapport
+        /// </summary>
+        private async Task<List<ReconciliationViewData>> GetReportData(string reportType)
+        {
+            if (_reconciliationService == null || CurrentCountry == null)
+                return new List<ReconciliationViewData>();
+
+            // Construction du filtre selon le type de rapport
+            string filter = reportType switch
+            {
+                "Anomalies" => "KPI = 0 OR Action = 2", // IT Issues or Investigate
+                "Currency" => null, // All data, grouped by currency
+                "KPI" => null, // All data for KPI calculations
+                _ => null // Réconciliation complète
+            };
+
+            return await _reconciliationService.GetReconciliationViewAsync(CurrentCountry.CNT_Id, filter);
+        }
+
+        /// <summary>
+        /// Génère un fichier de rapport
+        /// </summary>
+        private async Task GenerateReportFile(string filePath, string reportType, List<ReconciliationViewData> data)
+        {
+            // TODO: Implémenter la génération Excel selon le type de rapport
+            // Pour l'instant, simulation avec délai
+            await Task.Delay(2000);
+
+            // Écriture basique d'un fichier de test
+            var content = $"Report {reportType}\nCountry: {CurrentCountry?.CNT_Name}\nPeriod: {StartDate:dd/MM/yyyy} - {EndDate:dd/MM/yyyy}\nNumber of rows: {data.Count}\nGenerated on: {DateTime.Now}";
+            File.WriteAllText(filePath.Replace(".xlsx", ".txt"), content);
+        }
+
+        /// <summary>
+        /// Exporte des données vers un fichier
+        /// </summary>
+        private async Task ExportDataToFile(string filePath, string exportType)
+        {
+            if (_reconciliationService == null || CurrentCountry == null)
+                return;
+
+            // Construction du filtre selon le type d'export
+            string filter = exportType switch
+            {
+                "Reconciled" => "KPI = 1", // Paid But Not Reconciled
+                "Pending" => "Action IS NULL OR Action = 2", // Pending or to investigate
+                "Custom" => GetCustomFilter(),
+                _ => null // Toutes les données
+            };
+
+            var data = await _reconciliationService.GetReconciliationViewAsync(CurrentCountry.CNT_Id, filter);
+
+            // TODO: Implémenter l'export Excel/CSV
+            // Pour l'instant, simulation avec délai
+            await Task.Delay(1500);
+
+            // Écriture basique d'un fichier de test
+            var content = $"Export {exportType}\nCountry: {CurrentCountry?.CNT_Name}\nPeriod: {StartDate:dd/MM/yyyy} - {EndDate:dd/MM/yyyy}\nNumber of rows: {data.Count}\nExported on: {DateTime.Now}";
+            File.WriteAllText(filePath.Replace(".xlsx", ".txt").Replace(".csv", ".txt"), content);
+        }
+
+        #endregion
+
+        #region Validation
+
+        /// <summary>
+        /// Valide les paramètres généraux
+        /// </summary>
+        private List<string> ValidateParameters()
+        {
+            var issues = new List<string>();
+
+            if (CurrentCountry == null)
+                issues.Add("No country selected");
+
+            if (StartDate > EndDate)
+                issues.Add("Start date must be before end date");
+
+            if (string.IsNullOrWhiteSpace(OutputPath))
+                issues.Add("Output directory not specified");
+
+            return issues;
+        }
+
+        /// <summary>
+        /// Valide les paramètres avant génération
+        /// </summary>
+        private bool ValidateParametersForGeneration()
+        {
+            var issues = ValidateParameters();
+            if (issues.Count > 0)
+            {
+                var message = "Cannot generate report:\n" + string.Join("\n", issues);
+                ShowWarning(message);
+                return false;
+            }
+
+            if (_reconciliationService == null)
+            {
+                ShowWarning("Reconciliation service not available");
+                return false;
+            }
+
+            return true;
+        }
+
+        #endregion
+
+        #region Helper Methods
+
+        /// <summary>
+        /// Obtient le filtre personnalisé depuis l'interface
+        /// </summary>
+        private string GetCustomFilter()
+        {
+            // TODO: Récupérer depuis les contrôles de filtre personnalisé
+            return null;
+        }
+
+        /// <summary>
+        /// Met à jour le texte de statut
+        /// </summary>
+        private void UpdateStatusText(string status)
+        {
+            try
+            {
+                var statusText = FindName("StatusText") as TextBlock;
+                if (statusText != null)
+                {
+                    statusText.Text = status;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error updating status: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Met à jour un TextBox par son nom
+        /// </summary>
+        private void UpdateTextBox(string name, string value)
+        {
+            try
+            {
+                var textBox = FindName(name) as TextBox;
+                if (textBox != null)
+                {
+                    textBox.Text = value;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"TextBox '{name}' not found: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Affiche un message d'information
+        /// </summary>
+        private void ShowInfo(string message)
+        {
+            MessageBox.Show(message, "Information", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        /// <summary>
+        /// Affiche un message d'avertissement
+        /// </summary>
+        private void ShowWarning(string message)
+        {
+            MessageBox.Show(message, "Avertissement", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
+        /// <summary>
+        /// Affiche un message d'erreur
+        /// </summary>
+        private void ShowError(string message)
+        {
+            MessageBox.Show(message, "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+
+        #endregion
+
+        #region INotifyPropertyChanged
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        protected virtual void OnPropertyChanged(string propertyName)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+        #endregion
+
+        #region Event Handlers
+
+        /// <summary>
+        /// Génère un rapport de synthèse par pays
+        /// </summary>
+        private async void GenerateCountrySummary_Click(object sender, RoutedEventArgs e)
+        {
+            await GenerateReport("CountrySummary", "rapport de synthèse par pays");
+        }
+
+        /// <summary>
+        /// Génère un rapport de performance
+        /// </summary>
+        private async void GeneratePerformanceReport_Click(object sender, RoutedEventArgs e)
+        {
+            await GenerateReport("Performance", "rapport de performance");
+        }
+
+        /// <summary>
+        /// Génère un rapport d'activité quotidienne
+        /// </summary>
+        private async void GenerateDailyActivity_Click(object sender, RoutedEventArgs e)
+        {
+            await GenerateReport("DailyActivity", "rapport d'activité quotidienne");
+        }
+
+        /// <summary>
+        /// Génère un rapport d'écarts
+        /// </summary>
+        private async void GenerateDiscrepancyReport_Click(object sender, RoutedEventArgs e)
+        {
+            await GenerateReport("Discrepancy", "rapport d'écarts");
+        }
+
+        /// <summary>
+        /// Génère une répartition par devise
+        /// </summary>
+        private async void GenerateCurrencyBreakdown_Click(object sender, RoutedEventArgs e)
+        {
+            await GenerateReport("CurrencyBreakdown", "répartition par devise");
+        }
+
+        /// <summary>
+        /// Génère un rapport de série temporelle
+        /// </summary>
+        private async void GenerateTimeSeriesReport_Click(object sender, RoutedEventArgs e)
+        {
+            await GenerateReport("TimeSeries", "rapport de série temporelle");
+        }
+
+        /// <summary>
+        /// Exporte vers Excel
+        /// </summary>
+        private async void ExportToExcel_Click(object sender, RoutedEventArgs e)
+        {
+            await ExportData("xlsx", "Export Excel");
+        }
+
+        /// <summary>
+        /// Exporte vers CSV
+        /// </summary>
+        private async void ExportToCSV_Click(object sender, RoutedEventArgs e)
+        {
+            await ExportData("csv", "Export CSV");
+        }
+
+        /// <summary>
+        /// Exporte vers PDF
+        /// </summary>
+        private async void ExportToPDF_Click(object sender, RoutedEventArgs e)
+        {
+            await ExportData("pdf", "Export PDF");
+        }
+
+        // Param exports via T_param keys
+        private async void ExportKPIParam_Click(object sender, RoutedEventArgs e)
+        {
+            await RunParamExportAsync("Export_KPI");
+        }
+
+        private async void ExportPastDueParam_Click(object sender, RoutedEventArgs e)
+        {
+            await RunParamExportAsync("Export_PastDUE");
+        }
+
+        private async void ExportITParam_Click(object sender, RoutedEventArgs e)
+        {
+            await RunParamExportAsync("Export_IT");
+        }
+
+        /// <summary>
+        /// Actualise les données
+        /// </summary>
+        private async void RefreshData_Click(object sender, RoutedEventArgs e)
+        {
+            //await LoadCountries();
+            UpdateStatusText("Données actualisées");
+        }
+
+        /// <summary>
+        /// Ouvre le dossier d'exports
+        /// </summary>
+        private void OpenExportsFolder_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (Directory.Exists(OutputPath))
+                {
+                    System.Diagnostics.Process.Start("explorer.exe", OutputPath);
+                }
+                else
+                {
+                    MessageBox.Show("Le dossier d'exports n'existe pas encore. Générez d'abord un rapport.", "Dossier introuvable", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Impossible d'ouvrir le dossier: {ex.Message}", "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        /// <summary>
+        /// Ferme la fenêtre
+        /// </summary>
+        private void Close_Click(object sender, RoutedEventArgs e)
+        {
+            this.Close();
+        }
+
+        #endregion
+
+        #region Param Export Implementation
+
+        private async Task RunParamExportAsync(string paramKey)
+        {
+            if (!ValidateParametersForGeneration())
+                return;
+
+            if (_exportService == null)
+            {
+                ShowWarning("Export service not available");
+                return;
+            }
+
+            try
+            {
+                IsGenerating = true;
+                UpdateStatusText($"Exporting {paramKey}...");
+
+                var ctx = BuildExportContext();
+                var path = await _exportService.ExportFromParamAsync(paramKey, ctx);
+                UpdateStatusText($"Export finished: {path}");
+                ShowInfo($"Export terminé:\n{path}");
+            }
+            catch (Exception ex)
+            {
+                UpdateStatusText($"Error during export {paramKey}");
+                ShowError($"Erreur export {paramKey}: {ex.Message}");
+            }
+            finally
+            {
+                IsGenerating = false;
+            }
+        }
+
+        private ExportContext BuildExportContext()
+        {
+            var countryId = CurrentCountry?.CNT_Id;
+            var userId = TryGetUserIdFromTextBox();
+            return new ExportContext
+            {
+                CountryId = countryId,
+                AccountId = null, // pas de sélection de compte dans cette fenêtre
+                FromDate = StartDate,
+                ToDate = EndDate,
+                UserId = string.IsNullOrWhiteSpace(userId) ? _reconciliationService?.CurrentUser : userId,
+                OutputDirectory = OutputPath
+            };
+        }
+
+        private string TryGetUserIdFromTextBox()
+        {
+            try
+            {
+                var tb = FindName("ExportUserIdTextBox") as TextBox;
+                return tb?.Text;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        #endregion
+    }
+}

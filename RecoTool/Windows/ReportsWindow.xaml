@@ -1,0 +1,239 @@
+<Window x:Class="RecoTool.Windows.ReportsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Rapports et Exports" Height="700" Width="1000"
+        WindowStartupLocation="CenterScreen"
+        Style="{DynamicResource WindowStyle}">
+    
+    <Window.Resources>
+        <Style x:Key="SectionHeaderStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="#2E8B57"/>
+            <Setter Property="Margin" Value="0,10,0,5"/>
+        </Style>
+        
+        <Style x:Key="ReportButtonStyle" TargetType="Button">
+            <Setter Property="Padding" Value="15,8"/>
+            <Setter Property="Margin" Value="5"/>
+            <Setter Property="Background" Value="#4CAF50"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" 
+                                CornerRadius="4"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" 
+                                            VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#45a049"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Background" Value="#3d8b40"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <!-- Disable all action buttons when generating -->
+                <DataTrigger Binding="{Binding IsGenerating}" Value="True">
+                    <Setter Property="IsEnabled" Value="False"/>
+                    <Setter Property="Opacity" Value="0.7"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ExportButtonStyle" TargetType="Button" BasedOn="{StaticResource ReportButtonStyle}">
+            <Setter Property="Background" Value="#2196F3"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#1976D2"/>
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="#1565C0"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Grid.Row="0" Background="#F5F5F5" Padding="16,12">
+            <StackPanel>
+                <TextBlock Text="Reports and Exports" FontSize="24" FontWeight="Bold" Foreground="#2E8B57"/>
+                <TextBlock Text="Generate reports and export reconciliation data" 
+                          FontSize="14" Foreground="Gray" Margin="0,5,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Content -->
+        <ScrollViewer Grid.Row="1" Padding="16" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                
+                <!-- Paramètres généraux -->
+                <TextBlock Text="General Parameters" Style="{StaticResource SectionHeaderStyle}"/>
+                <Border Background="White" BorderBrush="#E0E0E0" BorderThickness="1" Padding="12" Margin="0,0,0,16">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150"/>
+                            <ColumnDefinition Width="200"/>
+                            <ColumnDefinition Width="150"/>
+                            <ColumnDefinition Width="200"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Country:" VerticalAlignment="Center"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="CountryDisplay" Margin="0,5" FontWeight="SemiBold"
+                                   Text="{Binding CurrentCountry.CNT_Name, FallbackValue=No country selected}"/>
+
+                        <!-- Dates alignées sur la même ligne -->
+                        <TextBlock Grid.Row="0" Grid.Column="2" Text="Start Date:" VerticalAlignment="Center"/>
+                        <DatePicker Grid.Row="0" Grid.Column="3" x:Name="FromDatePicker" Margin="0,5"
+                                    SelectedDate="{Binding StartDate, Mode=TwoWay}"/>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="End Date:" VerticalAlignment="Center"/>
+                        <DatePicker Grid.Row="0" Grid.Column="1" x:Name="ToDatePicker" Margin="0,5"
+                                    SelectedDate="{Binding EndDate, Mode=TwoWay}"/>
+
+                        <!-- Min Amount sur la ligne suivante pour la symétrie -->
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Min Amount:" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="MinAmountTextBox" Margin="0,5" Text="0" Grid.ColumnSpan="3"/>
+
+                        <!-- Output path selection -->
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Output Path:" VerticalAlignment="Center"/>
+                        <Grid Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,5,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" x:Name="OutputPathTextBox" Text="{Binding OutputPath, Mode=TwoWay}" Margin="0,0,8,0"/>
+                            <Button Grid.Column="1" Content="Browse..." Style="{StaticResource ReportButtonStyle}"
+                                    Click="BrowseOutputPathButton_Click"/>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- Rapports de Synthèse -->
+                <TextBlock Text="Summary Reports" Style="{StaticResource SectionHeaderStyle}"/>
+                <Border Background="White" BorderBrush="#E0E0E0" BorderThickness="1" Padding="12" Margin="0,0,0,16">
+                    <WrapPanel Orientation="Horizontal">
+                        <Button Content="Country Summary" Style="{StaticResource ReportButtonStyle}" 
+                               Click="GenerateCountrySummary_Click"/>
+                        <Button Content="Multi-Country Performance" Style="{StaticResource ReportButtonStyle}" 
+                               Click="GeneratePerformanceReport_Click"/>
+                        <Button Content="Daily Activity" Style="{StaticResource ReportButtonStyle}" 
+                               Click="GenerateDailyActivity_Click"/>
+                    </WrapPanel>
+                </Border>
+
+                <!-- Rapports d'Analyse -->
+                <TextBlock Text="Analysis Reports" Style="{StaticResource SectionHeaderStyle}"/>
+                <Border Background="White" BorderBrush="#E0E0E0" BorderThickness="1" Padding="12" Margin="0,0,0,16">
+                    <WrapPanel Orientation="Horizontal">
+                        <Button Content="Discrepancy Analysis" Style="{StaticResource ReportButtonStyle}" 
+                               Click="GenerateDiscrepancyReport_Click"/>
+                        <Button Content="Currency Breakdown" Style="{StaticResource ReportButtonStyle}" 
+                               Click="GenerateCurrencyBreakdown_Click"/>
+                        <Button Content="Time Series" Style="{StaticResource ReportButtonStyle}" 
+                               Click="GenerateTimeSeriesReport_Click"/>
+                    </WrapPanel>
+                </Border>
+
+                <!-- Exports de Données -->
+                <TextBlock Text="Data Exports" Style="{StaticResource SectionHeaderStyle}"/>
+                <Border Background="White" BorderBrush="#E0E0E0" BorderThickness="1" Padding="12" Margin="0,0,0,16">
+                    <StackPanel>
+                        <!-- User filter for exports -->
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="User:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox x:Name="ExportUserIdTextBox" Width="160"/>
+                        </StackPanel>
+
+                        <WrapPanel Orientation="Horizontal">
+                            <Button Content="Export KPI" Style="{StaticResource ExportButtonStyle}"
+                                    Click="ExportKPIParam_Click"/>
+                            <Button Content="Export PastDue" Style="{StaticResource ExportButtonStyle}"
+                                    Click="ExportPastDueParam_Click"/>
+                            <Button Content="Export IT" Style="{StaticResource ExportButtonStyle}"
+                                    Click="ExportITParam_Click"/>
+
+                            <Separator Width="20"/>
+
+                            <Button Content="Complete Excel Export" Style="{StaticResource ExportButtonStyle}" 
+                                    Click="ExportToExcel_Click"/>
+                            <Button Content="Export CSV" Style="{StaticResource ExportButtonStyle}" 
+                                    Click="ExportToCSV_Click"/>
+                            <Button Content="Export PDF" Style="{StaticResource ExportButtonStyle}" 
+                                    Click="ExportToPDF_Click"/>
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Rapports Programmés -->
+                <TextBlock Text="Scheduled Reports" Style="{StaticResource SectionHeaderStyle}"/>
+                <Border Background="White" BorderBrush="#E0E0E0" BorderThickness="1" Padding="12" Margin="0,0,0,16">
+                    <StackPanel>
+                        <CheckBox x:Name="ScheduleDailyReportCheckBox" Content="Rapport quotidien automatique" Margin="0,5"/>
+                        <CheckBox x:Name="ScheduleWeeklyReportCheckBox" Content="Rapport hebdomadaire automatique" Margin="0,5"/>
+                        <CheckBox x:Name="ScheduleMonthlyReportCheckBox" Content="Rapport mensuel automatique" Margin="0,5"/>
+                        
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                            <TextBlock Text="Notification email:" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                            <TextBox x:Name="NotificationEmailTextBox" Width="300" Text="admin@company.com"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Zone de prévisualisation -->
+                <TextBlock Text="Preview" Style="{StaticResource SectionHeaderStyle}"/>
+                <Border Background="White" BorderBrush="#E0E0E0" BorderThickness="1" Padding="12" Height="200">
+                    <ScrollViewer>
+                        <TextBlock x:Name="PreviewTextBlock" 
+                                  Text="Select a report to display a preview..."
+                                  FontFamily="Consolas"
+                                  FontSize="12"
+                                  TextWrapping="Wrap"/>
+                    </ScrollViewer>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Footer -->
+        <Border Grid.Row="2" Background="#F5F5F5" Padding="16,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusText" Grid.Column="0" VerticalAlignment="Center" Foreground="Gray"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Actualiser Données" Style="{StaticResource ReportButtonStyle}" 
+                           Click="RefreshData_Click"/>
+                    <Button Content="Ouvrir Dossier Exports" Style="{StaticResource ExportButtonStyle}" 
+                           Click="OpenExportsFolder_Click"/>
+                    <Button Content="Fermer" Style="{StaticResource ReportButtonStyle}" 
+                           Background="Gray" Click="Close_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>

@@ -1,0 +1,26 @@
+<Window x:Class="RecoTool.Windows.FilterPickerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Saved Filters" Height="420" Width="420"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,8">
+            <TextBlock Text="Search:" Margin="0,0,6,0" VerticalAlignment="Center"/>
+            <TextBox x:Name="SearchBox" MinWidth="180" VerticalAlignment="Center" TextChanged="SearchBox_TextChanged"/>
+        </DockPanel>
+
+        <ListBox x:Name="FiltersList" Grid.Row="1" DisplayMemberPath="Display" />
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button Content="Delete" Width="90" Margin="0,0,8,0" Click="Delete_Click"/>
+            <Button Content="OK" Width="80" Margin="0,0,8,0" IsDefault="True" Click="Ok_Click"/>
+            <Button Content="Cancel" Width="80" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

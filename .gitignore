@@ -1,0 +1,64 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+
+# Visual Studio cache/options directory
+.vscode/
+
+# Rider
+.idea/
+
+# NuGet
+packages/
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+!**/packages/repositories.config
+
+# Test results
+TestResults/
+*.trx
+
+# Resharper
+_ReSharper*/
+*.[Rr]e[Ss]harper
+
+# Others
+*.DS_Store
+*.orig
+*.tmp
+*.bak
+*.swp
+*.swo
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# User-specific files
+*.csproj.user
+*.vcxproj.user
+*.sln.ide
+
+# DotCover
+*.dotCover
+
+# Access/Jet cache or temp files
+*.ldb
+*.laccdb
+
+# Local caches
+**/*.dtbcache.json
+
+# Build/Publish
+publish/
+artifacts/

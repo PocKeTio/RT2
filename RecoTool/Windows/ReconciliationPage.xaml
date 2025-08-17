@@ -1,0 +1,152 @@
+<UserControl x:Class="RecoTool.Windows.ReconciliationPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:local="clr-namespace:RecoTool.Windows"
+             xmlns:sys="clr-namespace:System;assembly=mscorlib"
+                mc:Ignorable="d" 
+             d:DesignHeight="700" d:DesignWidth="1200">
+
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    </UserControl.Resources>
+
+    <Grid Background="{DynamicResource BNPBackground}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Mini Ribbon for Reconciliation Page -->
+        <Border Grid.Row="0" Background="{DynamicResource BNPLightGreenBrush}" Padding="15,8" Effect="{StaticResource LightShadow}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Add View Button -->
+                <Button Grid.Column="0" Style="{StaticResource StandardButtonStyle}" Margin="0,0,15,0" Height="36" Padding="15,5" Click="AddView_Click" IsEnabled="{Binding CanInteract}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock Text="Add View" FontSize="14" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+
+                <!-- Account Selection -->
+                <Border Grid.Column="1" Background="{DynamicResource BNPSectionBackground}" CornerRadius="4" Padding="10,5" Margin="0,0,15,0" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE8C9;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                        <TextBlock Text="Account:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
+                        <ComboBox x:Name="AccountComboBox" Width="120" ItemsSource="{Binding Accounts}" SelectedItem="{Binding SelectedAccount, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Filter Selection -->
+                <Border Grid.Column="2" Background="{DynamicResource BNPSectionBackground}" CornerRadius="4" Padding="10,5" Margin="0,0,15,0" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE8FB;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                        <TextBlock Text="Status:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
+                        <ComboBox x:Name="StatusComboBox" Width="120" ItemsSource="{Binding Statuses}" SelectedItem="{Binding SelectedStatus, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Saved Filters Selection -->
+                <Border Grid.Column="2" Background="{DynamicResource BNPSectionBackground}" CornerRadius="4" Padding="10,5" Margin="0,0,15,0" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Height="38" VerticalAlignment="Top">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                        <TextBlock Text="Saved Filters:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
+                        <ComboBox x:Name="SavedFiltersComboBox" Width="180" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
+                                  ItemsSource="{Binding SavedFilters}"
+                                  DisplayMemberPath="UFI_Name"
+                                  SelectionChanged="SavedFiltersComboBox_SelectionChanged"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Saved Views Selection -->
+                <Border Grid.Column="3" Background="{DynamicResource BNPSectionBackground}" CornerRadius="4" Padding="10,5" Margin="0,0,15,0" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Height="38" VerticalAlignment="Top">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE8A1;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                        <TextBlock Text="Saved Views:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
+                        <ComboBox x:Name="SavedViewsComboBox" Width="180" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
+                                  ItemsSource="{Binding SavedViews}"
+                                  SelectedItem="{Binding SelectedSavedView, Mode=TwoWay}"
+                                  DisplayMemberPath="Name"
+                                  SelectionChanged="SavedViewsComboBox_SelectionChanged"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- View Type Selection -->
+                <Border Grid.Column="4" Background="{DynamicResource BNPSectionBackground}" CornerRadius="4" Padding="10,5" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE8A9;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                        <TextBlock Text="View Type:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
+                        <ComboBox x:Name="ViewTypeComboBox" Width="120" ItemsSource="{Binding ViewTypes}" SelectedItem="{Binding SelectedViewType, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Sync Now Button -->
+                <Button Grid.Column="5" Style="{StaticResource StandardButtonStyle}" Margin="15,0,15,0" Height="36" Padding="15,5" Click="SyncNowButton_Click" ToolTip="Synchronize with server (skips if locked)" IsEnabled="{Binding CanInteract}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock Text="Sync Now" FontSize="14" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+
+                <!-- Lock Status Indicator -->
+                <Border Grid.Column="6" Background="#FFF9E6" BorderBrush="#E6C200" BorderThickness="1" CornerRadius="4" Padding="10,5" Visibility="{Binding IsGlobalLockActive, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE785;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="#E6C200"/>
+                        <TextBlock Text="Import in progress - global lock active" VerticalAlignment="Center" Foreground="#6B5E00"/>
+                    </StackPanel>
+                </Border>
+
+            </Grid>
+        </Border>
+
+        <!-- Main Content Area - Will contain dynamically added views -->
+        <Grid Grid.Row="1">
+            <!-- Loading indicator -->
+            <Border Background="#80FFFFFF" Visibility="{Binding IsLoading, Converter={StaticResource BooleanToVisibilityConverter}}" Panel.ZIndex="99">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <TextBlock Text="Loading data..." FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10" />
+                    <ProgressBar IsIndeterminate="True" Width="200" Height="10" />
+                </StackPanel>
+            </Border>
+            <!-- Views Container - Horizontal stacking of multiple views -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="ViewsPanel" Orientation="Vertical" Visibility="Collapsed" HorizontalAlignment="Stretch" />
+            </ScrollViewer>
+
+            <!-- Floating Add Button - Visible when at least one view is open -->
+            <Button x:Name="FloatingAddButton" Style="{StaticResource StandardButtonStyle}" Width="50" Height="50" 
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,20,20" 
+                    Click="AddView_Click" Visibility="Collapsed" Padding="0" ToolTip="Add another view" IsEnabled="{Binding CanInteract}">
+                <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="20" />
+            </Button>
+
+            <!-- Empty State - Shown when no views are open -->
+            <Border x:Name="EmptyStatePanel" Margin="30" Background="{DynamicResource BNPSectionBackground}" CornerRadius="8" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Effect="{StaticResource LightShadow}">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <Ellipse Width="100" Height="100" Fill="{DynamicResource BNPLightGreenBrush}" Opacity="0.2" Margin="0,0,0,10"/>
+                    <TextBlock Text="&#xE8A5;" FontFamily="Segoe MDL2 Assets" FontSize="48" Foreground="{DynamicResource BNPMainGreenBrush}" HorizontalAlignment="Center" Margin="0,-85,0,40"/>
+                    <TextBlock Text="No reconciliation views open" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource BNPMainGreenBrush}" Margin="0,0,0,10"/>
+                    <TextBlock Text="Click the button below to start reconciling accounts" FontSize="14" Foreground="#666666" HorizontalAlignment="Center" TextWrapping="Wrap" MaxWidth="400" TextAlignment="Center"/>
+                    <Button Style="{StaticResource StandardButtonStyle}" Margin="0,30,0,0" Width="180" Height="42" Click="AddView_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Text="Add Reconciliation View" FontSize="14" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

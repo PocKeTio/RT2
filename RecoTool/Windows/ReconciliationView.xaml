@@ -1,0 +1,853 @@
+<UserControl x:Class="RecoTool.Windows.ReconciliationView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:local="clr-namespace:RecoTool.Windows"
+             mc:Ignorable="d" 
+             d:DesignHeight="600" d:DesignWidth="900">
+    <UserControl.Resources>
+        <!-- Converters defined in code-behind -->
+        <local:UserFieldOptionsConverter x:Key="UserFieldOptionsConverter" />
+        <local:UserFieldIdToNameConverter x:Key="UserFieldIdToNameConverter" />
+        <local:ActionColorConverter x:Key="ActionColorConverter" />
+    </UserControl.Resources>
+    <Grid Background="{DynamicResource BNPBackground}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header - Optimisé pour un seul ruban -->
+        <Border Grid.Row="0" Background="{DynamicResource BNPMainGreenBrush}" Padding="12,8" CornerRadius="8,8,0,0" Effect="{StaticResource StandardShadow}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Titre et info compte regroupés -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <Border Background="#FFFFFF" CornerRadius="50" Width="36" Height="36" Margin="0,0,15,0" Effect="{StaticResource LightShadow}">
+                        <TextBlock Text="&#xE81E;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="{DynamicResource BNPMainGreenBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <StackPanel>
+                        <TextBlock x:Name="TitleText" Text="Default View" FontSize="18" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8C9;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="AccountInfoText" Text="Account: All | Status: All" VerticalAlignment="Center" Foreground="White" FontSize="12"/>
+                        </StackPanel>
+                        <!-- Country-specific Pivot/Receivable info -->
+                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                            <TextBlock Text="&#xE909;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="CountryPivotReceivableText" Text="" VerticalAlignment="Center" Foreground="White" FontSize="12"/>
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Filter & View Buttons -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    
+                    <!-- Toggle Filters Button -->
+                    <Button x:Name="ToggleFiltersButton" Click="ToggleFilters_Click" Foreground="{DynamicResource BNPMainGreenBrush}" BorderThickness="0" Padding="10,5" Cursor="Hand" Margin="0,0,8,0" ToolTip="Afficher/Masquer les filtres">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE700;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="Filters" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Load View Button -->
+                    <Button x:Name="LoadViewButton" Click="LoadView_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="0,0,8,0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="Load View" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Save View Button -->
+                    <Button x:Name="SaveViewButton" Click="SaveView_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="0,0,8,0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="Save View" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Load Filter Button -->
+                    <Button x:Name="LoadFilterButton" Click="LoadFilter_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="0,0,8,0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="Load Filter" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Save Filter Button -->
+                    <Button x:Name="SaveFilterButton" Click="SaveFilter_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="0,0,8,0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="Save Filter" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Reset Button -->
+                    <Button x:Name="ResetFilterButton" Click="ResetFilter_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="Reset" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Button>
+
+                    
+
+                    <!-- Bulk Selection (moved from Results header) -->
+                    <Button x:Name="BulkSelectionButton" Click="BulkSelection_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0"
+                            ToolTip="Sélection groupée: Clic = tout | Maj+Clic = appariés | Ctrl+Clic = non appariés | Alt+Clic = vider">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE762;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="Bulk Selection" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Export Button (moved from KPI bar) -->
+                    <Button x:Name="ExportButton" Click="Export_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="Export" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Button>
+
+                    
+
+                    <!-- Close View Button -->
+                    <Button x:Name="CloseViewButton" Click="CloseViewButton_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="Close" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Main Content with Filters and Data -->
+        <Grid Grid.Row="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" x:Name="FiltersRow"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Filters Section -->
+            <Expander Grid.Row="0" IsExpanded="False" x:Name="FiltersExpander" Background="{DynamicResource BNPSectionBackground}" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Margin="0,0,0,6">
+                <Expander.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="{DynamicResource BNPMainGreenBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock Text="Filters" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                    </StackPanel>
+                </Expander.Header>
+                <Border Background="{DynamicResource BNPSectionBackground}" Padding="10,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Ambre Filters -->
+                        <GroupBox Grid.Column="0" Margin="0,0,10,0" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Background="#FAFAFA">
+                            <GroupBox.Header>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{DynamicResource BNPMainGreenBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock Text="Ambre Filters" FontWeight="SemiBold" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                                </StackPanel>
+                            </GroupBox.Header>
+                            <StackPanel>
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Reconciliation #:" VerticalAlignment="Center"/>
+                                    <TextBox Grid.Column="1" Margin="5,0,0,0" Text="{Binding FilterReconciliationNum, UpdateSourceTrigger=PropertyChanged}"/>
+                                </Grid>
+
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Label:" VerticalAlignment="Center"/>
+                                    <TextBox Grid.Column="1" Margin="5,0,0,0" Text="{Binding FilterRawLabel, UpdateSourceTrigger=PropertyChanged}"/>
+                                </Grid>
+
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Event #:" VerticalAlignment="Center"/>
+                                    <TextBox Grid.Column="1" Margin="5,0,0,0" Text="{Binding FilterEventNum, UpdateSourceTrigger=PropertyChanged}"/>
+                                </Grid>
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Operation Date From:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <DatePicker SelectedDate="{Binding FilterFromDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Operation Date To:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <DatePicker SelectedDate="{Binding FilterToDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Currency:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <ComboBox x:Name="CurrencyComboBox" Margin="5,0" BorderThickness="0" Background="Transparent" Style="{StaticResource ModernComboBoxStyle}"
+                                                  SelectedValue="{Binding FilterCurrency, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  SelectedValuePath="Content">
+                                            <!-- Empty option allows clearing the filter -->
+                                            <ComboBoxItem Content=""/>
+                                            <ComboBoxItem Content="EUR"/>
+                                            <ComboBoxItem Content="USD"/>
+                                            <ComboBoxItem Content="GBP"/>
+                                        </ComboBox>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Amount Min:" VerticalAlignment="Center"/>
+                                    <TextBox Grid.Column="1" Margin="5,0,0,0" Text="{Binding FilterMinAmount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                </Grid>
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Amount Max:" VerticalAlignment="Center"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding FilterMaxAmount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </Border>
+                                </Grid>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- DWings Filters -->
+                        <GroupBox Grid.Column="1" Margin="0,0,10,0" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Background="#FAFAFA">
+                            <GroupBox.Header>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE8C9;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{DynamicResource BNPMainGreenBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock Text="DWings Filters" FontWeight="SemiBold" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                                </StackPanel>
+                            </GroupBox.Header>
+                            <StackPanel>
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Guarantee Ref:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding FilterDwGuaranteeId, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Official Ref:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent"/>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Commission Ref:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding FilterDwCommissionId, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Guarantee Type:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <ComboBox x:Name="TypeComboBox" Margin="5,0" BorderThickness="0" Background="Transparent" Style="{StaticResource ModernComboBoxStyle}"
+                                                  SelectedValue="{Binding FilterGuaranteeType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  SelectedValuePath="Content">
+                                            <ComboBoxItem Content=""/>
+                                            <ComboBoxItem Content="REISSUANCE"/>
+                                            <ComboBoxItem Content="ISSUANCE"/>
+                                            <ComboBoxItem Content="ADVISING"/>
+                                        </ComboBox>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Transaction Type:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <ComboBox x:Name="TransactionTypeComboBox" Margin="5,0" BorderThickness="0" Background="Transparent" Style="{StaticResource ModernComboBoxStyle}"
+                                                  SelectedValue="{Binding FilterTransactionType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  SelectedValuePath="Content">
+                                            <ComboBoxItem Content=""/>
+                                            <ComboBoxItem Content="INCOMING PAYMENT (RULE INVOICE/791)"/>
+                                            <ComboBoxItem Content="DIRECT DEBIT"/>
+                                            <ComboBoxItem Content="MANUAL OUTGOING"/>
+                                            <ComboBoxItem Content="OUTGOING PAYMENT"/>
+                                            <ComboBoxItem Content="EXTERNAL DEBIT PAYMENT"/>
+                                        </ComboBox>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Client:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent"/>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Guarantee Status:" VerticalAlignment="Center"/>
+                                    <ComboBox x:Name="GuaranteeStatusComboBox" Grid.Column="1" Margin="5,0,0,0"
+                                              SelectedValue="{Binding FilterGuaranteeStatus, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              SelectedValuePath="Content">
+                                        <ComboBoxItem Content=""/>
+                                        <ComboBoxItem Content="LIVE"/>
+                                        <ComboBoxItem Content="CANCELLED"/>
+                                    </ComboBox>
+                                </Grid>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- User Filters -->
+                        <GroupBox Grid.Column="2" Margin="0,0,0,0" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Background="#FAFAFA">
+                            <GroupBox.Header>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{DynamicResource BNPMainGreenBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock Text="User Filters" FontWeight="SemiBold" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                                </StackPanel>
+                            </GroupBox.Header>
+                            <StackPanel>
+                                <!-- Category filter removed per request -->
+
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Action:" VerticalAlignment="Center"/>
+                                    <ComboBox x:Name="ActionComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
+                                              DisplayMemberPath="Name"
+                                              SelectedValuePath="Id"
+                                              SelectedValue="{Binding FilterActionId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                        <ComboBox.ItemsSource>
+                                            <CompositeCollection>
+                                                <ComboBoxItem Content="" />
+                                                <CollectionContainer>
+                                                    <CollectionContainer.Collection>
+                                                        <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Action">
+                                                            <Binding Path="Account_ID"/>
+                                                            <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                            <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                        </MultiBinding>
+                                                    </CollectionContainer.Collection>
+                                                </CollectionContainer>
+                                            </CompositeCollection>
+                                        </ComboBox.ItemsSource>
+                                    </ComboBox>
+                                </Grid>
+
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="KPI:" VerticalAlignment="Center"/>
+                                    <ComboBox x:Name="KPIComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
+                                              DisplayMemberPath="Name"
+                                              SelectedValuePath="Id"
+                                              SelectedValue="{Binding FilterKpiId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                        <ComboBox.ItemsSource>
+                                            <CompositeCollection>
+                                                <ComboBoxItem Content="" />
+                                                <CollectionContainer>
+                                                    <CollectionContainer.Collection>
+                                                        <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="KPI">
+                                                            <Binding Path="Account_ID"/>
+                                                            <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                            <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                        </MultiBinding>
+                                                    </CollectionContainer.Collection>
+                                                </CollectionContainer>
+                                            </CompositeCollection>
+                                        </ComboBox.ItemsSource>
+                                    </ComboBox>
+                                </Grid>
+
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Incident Type:" VerticalAlignment="Center"/>
+                                    <ComboBox x:Name="IncidentTypeComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
+                                              DisplayMemberPath="Name"
+                                              SelectedValuePath="Id"
+                                              SelectedValue="{Binding FilterIncidentTypeId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                        <ComboBox.ItemsSource>
+                                            <CompositeCollection>
+                                                <ComboBoxItem Content="" />
+                                                <CollectionContainer>
+                                                    <CollectionContainer.Collection>
+                                                        <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Incident Type">
+                                                            <Binding Path="Account_ID"/>
+                                                            <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                            <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                        </MultiBinding>
+                                                    </CollectionContainer.Collection>
+                                                </CollectionContainer>
+                                            </CompositeCollection>
+                                        </ComboBox.ItemsSource>
+                                    </ComboBox>
+                                </Grid>
+
+
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Comments:" VerticalAlignment="Top" Margin="0,5,0,0" FontWeight="SemiBold"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent" TextWrapping="Wrap" AcceptsReturn="True" Height="60"/>
+                                    </Border>
+                                </Grid>
+
+                            </StackPanel>
+
+
+                        </GroupBox>
+
+                    </Grid>
+                </Border>
+            </Expander>
+
+            <!-- KPI Summary Bar -->
+            <Border Grid.Row="1" Background="#FFFFFF" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="6" Margin="0,0,0,6" Effect="{StaticResource LightShadow}" Height="50">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Total Rows -->
+                    <Border Grid.Column="0" Margin="2" CornerRadius="10" Background="#F4F7FE" BorderBrush="#E0E6F7" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal" Margin="8,4" VerticalAlignment="Center">
+                            <TextBlock Text="&#xE179;" FontFamily="Segoe MDL2 Assets" Foreground="#3B82F6" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Total Rows:" Foreground="#334155" FontSize="11" Margin="0,0,6,0"/>
+                                <TextBlock x:Name="KpiTotalCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#0F172A"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Matched Count -->
+                    <Border Grid.Column="1" Margin="2" CornerRadius="10" Background="#ECFDF5" BorderBrush="#D1FAE5" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal" Margin="8,4" VerticalAlignment="Center">
+                            <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" Foreground="#10B981" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Matched:" Foreground="#065F46" FontSize="11" Margin="0,0,6,0"/>
+                                <TextBlock x:Name="KpiMatchedCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#064E3B"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Unmatched Count -->
+                    <Border Grid.Column="2" Margin="2" CornerRadius="10" Background="#FEF2F2" BorderBrush="#FEE2E2" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal" Margin="8,4" VerticalAlignment="Center">
+                            <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" Foreground="#EF4444" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Unmatched:" Foreground="#7F1D1D" FontSize="11" Margin="0,0,6,0"/>
+                                <TextBlock x:Name="KpiUnmatchedCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#991B1B"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Total Amount -->
+                    <Border Grid.Column="3" Margin="2" CornerRadius="10" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal" Margin="8,4" VerticalAlignment="Center">
+                            <TextBlock Text="&#xEAFD;" FontFamily="Segoe MDL2 Assets" Foreground="#2563EB" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Total Amount:" Foreground="#334155" FontSize="11" Margin="0,0,6,0"/>
+                                <TextBlock x:Name="KpiTotalAmountText" Text="0.00" FontSize="13" FontWeight="Bold" Foreground="#0F172A"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Matched Amount -->
+                    <Border Grid.Column="4" Margin="2" CornerRadius="10" Background="#ECFDF5" BorderBrush="#D1FAE5" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal" Margin="8,4" VerticalAlignment="Center">
+                            <TextBlock Text="&#xE8FB;" FontFamily="Segoe MDL2 Assets" Foreground="#10B981" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Matched Amount:" Foreground="#065F46" FontSize="11" Margin="0,0,6,0"/>
+                                <TextBlock x:Name="KpiMatchedAmountText" Text="0.00" FontSize="13" FontWeight="Bold" Foreground="#064E3B"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Unmatched Amount -->
+                    <Border Grid.Column="5" Margin="2" CornerRadius="10" Background="#FEF2F2" BorderBrush="#FEE2E2" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal" Margin="8,4" VerticalAlignment="Center">
+                            <TextBlock Text="&#xE89F;" FontFamily="Segoe MDL2 Assets" Foreground="#EF4444" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Unmatched Amount:" Foreground="#7F1D1D" FontSize="11" Margin="0,0,6,0"/>
+                                <TextBlock x:Name="KpiUnmatchedAmountText" Text="0.00" FontSize="13" FontWeight="Bold" Foreground="#991B1B"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <!-- Data Grid Section -->
+            <Border Grid.Row="2" Margin="15" Background="White" BorderBrush="#DDDDDD" BorderThickness="1" CornerRadius="8" Effect="{StaticResource LightShadow}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Results Grid -->
+                    <DataGrid x:Name="ResultsDataGrid" Grid.Row="0"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              IsReadOnly="False"
+                              ItemsSource="{Binding ViewData, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                              Margin="0"
+                              SelectionChanged="ResultsDataGrid_SelectionChanged"
+                              MouseDoubleClick="ResultsDataGrid_MouseDoubleClick"
+                              EnableRowVirtualization="True"
+                              EnableColumnVirtualization="True"
+                              ScrollViewer.CanContentScroll="True"
+                              ScrollViewer.IsDeferredScrollingEnabled="False"
+                              AlternatingRowBackground="#F7F9FC"
+                              GridLinesVisibility="Vertical"
+                              RowHeight="26"
+                              ColumnHeaderHeight="28">
+                        <DataGrid.ColumnHeaderStyle>
+                            <Style TargetType="DataGridColumnHeader">
+                                <Setter Property="Background" Value="#F3F4F6"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                <Setter Property="Padding" Value="6,3"/>
+                                <Setter Property="BorderBrush" Value="#DDDDDD"/>
+                                <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                            </Style>
+                        </DataGrid.ColumnHeaderStyle>
+                        <DataGrid.CellStyle>
+                            <Style TargetType="DataGridCell">
+                                <Setter Property="Padding" Value="6,2"/>
+                            </Style>
+                        </DataGrid.CellStyle>
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow">
+                                <Setter Property="SnapsToDevicePixels" Value="True"/>
+                                <Setter Property="Background">
+                                    <Setter.Value>
+                                        <MultiBinding Converter="{StaticResource ActionColorConverter}">
+                                            <Binding Path="Action"/>
+                                            <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                        </MultiBinding>
+                                    </Setter.Value>
+                                </Setter>
+                                <Setter Property="ContextMenu">
+                                    <Setter.Value>
+                                        <ContextMenu>
+                                            <!-- Quick Set submenus will be populated at open time -->
+                                            <MenuItem Header="Set Action" x:Name="QuickSetActionRoot" Tag="Action"/>
+                                            <MenuItem Header="Set KPI" x:Name="QuickSetKpiRoot" Tag="KPI"/>
+                                            <MenuItem Header="Set Incident Type" x:Name="QuickSetIncidentRoot" Tag="Incident Type"/>
+                                        </ContextMenu>
+                                    </Setter.Value>
+                                </Setter>
+                                <EventSetter Event="ContextMenuOpening" Handler="DataGridRow_ContextMenuOpening"/>
+                                <Style.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#EEF5FF"/>
+                                    </Trigger>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter Property="Background" Value="#DCEBFF"/>
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <!-- Colonnes Ambre / ViewData -->
+                            <DataGridTextColumn Header="Event Num" Binding="{Binding Event_Num}" Width="100" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Folder" Binding="{Binding Folder}" Width="100" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Pivot Transaction Codes" Binding="{Binding Pivot_TransactionCodesFromLabel}" Width="150" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Pivot TRN" Binding="{Binding Pivot_TRNFromLabel}" Width="100" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Raw Label" Binding="{Binding RawLabel}" Width="200" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Receivable DW Ref" Binding="{Binding Receivable_DWRefFromAmbre}" Width="120" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Local Signed Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="130" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Operation Date" Binding="{Binding Operation_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Reconciliation Num" Binding="{Binding Reconciliation_Num}" Width="130" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Receivable Invoice" Binding="{Binding Receivable_InvoiceFromAmbre}" Width="120" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Reconciliation Origin Num" Binding="{Binding ReconciliationOrigin_Num}" Width="150" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Signed Amount" Binding="{Binding SignedAmount, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Value Date" Binding="{Binding Value_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True"/>
+
+                            <!-- Colonnes T_Reconciliation (données combinées à plat dans ReconciliationViewData) -->
+
+                            <!-- Action: editable ComboBox filtered by category and account type -->
+                            <DataGridTemplateColumn Header="Action" Width="120" SortMemberPath="Action">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock>
+                                            <TextBlock.Text>
+                                                <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
+                                                    <Binding Path="Action"/>
+                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                </MultiBinding>
+                                            </TextBlock.Text>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <ComboBox Width="Auto"
+                                                  SelectedValue="{Binding Action, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  SelectedValuePath="USR_ID"
+                                                  DisplayMemberPath="USR_FieldName"
+                                                  SelectionChanged="UserFieldComboBox_SelectionChanged"
+                                                  Tag="Action">
+                                            <ComboBox.ItemsSource>
+                                                <CompositeCollection>
+                                                    <ComboBoxItem Content="" />
+                                                    <CollectionContainer>
+                                                        <CollectionContainer.Collection>
+                                                            <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Action">
+                                                                <Binding Path="Account_ID"/>
+                                                                <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                                <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                            </MultiBinding>
+                                                        </CollectionContainer.Collection>
+                                                    </CollectionContainer>
+                                                </CompositeCollection>
+                                            </ComboBox.ItemsSource>
+                                        </ComboBox>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Comments" Binding="{Binding Comments}" Width="150"/>
+                            <DataGridTextColumn Header="Internal Invoice Ref" Binding="{Binding InternalInvoiceReference}" Width="140"/>
+                            <DataGridTextColumn Header="First Claim Date" Binding="{Binding FirstClaimDate, StringFormat={}{0:dd/MM/yyyy}}" Width="120"/>
+                            <DataGridTextColumn Header="Last Claim Date" Binding="{Binding LastClaimDate, StringFormat={}{0:dd/MM/yyyy}}" Width="120"/>
+                            <DataGridCheckBoxColumn Header="To Remind" Binding="{Binding ToRemind}" Width="80"/>
+                            <DataGridTextColumn Header="Remind Date" Binding="{Binding ToRemindDate, StringFormat={}{0:dd/MM/yyyy}}" Width="110"/>
+                            <DataGridCheckBoxColumn Header="ACK" Binding="{Binding ACK}" Width="60"/>
+                            <DataGridTextColumn Header="Swift Code" Binding="{Binding SwiftCode}" Width="100"/>
+                            <DataGridTextColumn Header="Payment Reference" Binding="{Binding PaymentReference}" Width="130"/>
+                            <DataGridTextColumn Header="User" Binding="{Binding Reco_ModifiedBy}" Width="120" IsReadOnly="True"/>
+                            <!-- KPI: editable ComboBox -->
+                            <DataGridTemplateColumn Header="KPI" Width="160" SortMemberPath="KPI">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock>
+                                            <TextBlock.Text>
+                                                <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
+                                                    <Binding Path="KPI"/>
+                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                </MultiBinding>
+                                            </TextBlock.Text>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <ComboBox Width="Auto"
+                                                  SelectedValue="{Binding KPI, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  SelectedValuePath="USR_ID"
+                                                  DisplayMemberPath="USR_FieldName"
+                                                  SelectionChanged="UserFieldComboBox_SelectionChanged"
+                                                  Tag="KPI">
+                                            <ComboBox.ItemsSource>
+                                                <CompositeCollection>
+                                                    <ComboBoxItem Content="" />
+                                                    <CollectionContainer>
+                                                        <CollectionContainer.Collection>
+                                                            <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="KPI">
+                                                                <Binding Path="Account_ID"/>
+                                                                <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                                <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                            </MultiBinding>
+                                                        </CollectionContainer.Collection>
+                                                    </CollectionContainer>
+                                                </CompositeCollection>
+                                            </ComboBox.ItemsSource>
+                                        </ComboBox>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+
+                            <!-- Incident Type: editable ComboBox -->
+                            <DataGridTemplateColumn Header="Incident Type" Width="180" SortMemberPath="IncidentType">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock>
+                                            <TextBlock.Text>
+                                                <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
+                                                    <Binding Path="IncidentType"/>
+                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                </MultiBinding>
+                                            </TextBlock.Text>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <ComboBox Width="Auto"
+                                                  SelectedValue="{Binding IncidentType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  SelectedValuePath="USR_ID"
+                                                  DisplayMemberPath="USR_FieldName"
+                                                  SelectionChanged="UserFieldComboBox_SelectionChanged"
+                                                  Tag="Incident Type">
+                                            <ComboBox.ItemsSource>
+                                                <CompositeCollection>
+                                                    <ComboBoxItem Content="" />
+                                                    <CollectionContainer>
+                                                        <CollectionContainer.Collection>
+                                                            <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Incident Type">
+                                                                <Binding Path="Account_ID"/>
+                                                                <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                                <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                            </MultiBinding>
+                                                        </CollectionContainer.Collection>
+                                                    </CollectionContainer>
+                                                </CompositeCollection>
+                                            </ComboBox.ItemsSource>
+                                        </ComboBox>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Risky Item" Binding="{Binding RiskyItem}" Width="90"/>
+                            <DataGridTextColumn Header="Reason Non Risky" Binding="{Binding ReasonNonRisky}" Width="130"/>
+
+                            <!-- Colonnes T_DW_Guarantee (propriétés DWINGS disponibles dans ReconciliationViewData) -->
+                            
+                            <DataGridTextColumn Header="DW Syndicate" Binding="{Binding SYNDICATE}" Width="100"/>
+                            <DataGridTextColumn Header="DW Currency" Binding="{Binding GUARANTEE_CURRENCY}" Width="80"/>
+                            <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

@@ -203,7 +203,11 @@ namespace RecoTool.Windows
             {
                 progressWindow.WindowStartupLocation = WindowStartupLocation.CenterScreen;
             }
+            // S'assurer qu'elle reste au premier plan pendant la copie initiale
+            progressWindow.Topmost = true;
+            progressWindow.ShowActivated = true;
             progressWindow.Show();
+            progressWindow.Activate();
 
             try
             {
@@ -218,11 +222,14 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 // Fermer la fenêtre avant d'afficher l'erreur
+                progressWindow.Topmost = false;
                 progressWindow.Close();
                 ShowError("Erreur", $"Copie de la base DW échouée: {ex.Message}");
                 return;
             }
 
+            // Rétablir avant fermeture
+            progressWindow.Topmost = false;
             progressWindow.Close();
         }
 

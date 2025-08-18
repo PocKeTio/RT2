@@ -79,8 +79,16 @@ namespace RecoTool.Services
 
                 progressCallback?.Invoke("Lecture du fichier Excel...", 20);
 
-                // Lecture du fichier Excel
-                var rawData = await ReadExcelFile(filePath, importFields);
+                // Lecture du fichier Excel avec progression (20% -> 40%)
+                var rawData = await ReadExcelFile(filePath, importFields, p =>
+                {
+                    int mapped = 20 + (p * 20 / 100); // map 0-100 => 20-40
+                    if (mapped > 40) mapped = 40;
+                    progressCallback?.Invoke($"Lecture du fichier Excel... ({p}%)", mapped);
+                });
+
+                // S'assurer d'atteindre 40% après la lecture
+                progressCallback?.Invoke("Lecture du fichier Excel terminée", 40);
                 if (!rawData.Any())
                 {
                     result.Errors.Add("Aucune donnée trouvée dans le fichier Excel.");
@@ -117,8 +125,9 @@ namespace RecoTool.Services
 
                 progressCallback?.Invoke("Synchronisation avec la base de données...", 80);
 
-                // Synchronisation avec la base de données (offline-first)
-                var syncResult = await SynchronizeWithDatabase(validData, countryId);
+                // Synchronisation avec la base locale (offline-first) uniquement
+                // La synchronisation réseau sera lancée en arrière-plan après l'import
+                var syncResult = await SynchronizeWithDatabase(validData, countryId, performNetworkSync: false);
                 result.NewRecords = syncResult.newCount;
                 result.UpdatedRecords = syncResult.updatedCount;
                 result.DeletedRecords = syncResult.deletedCount;
@@ -128,6 +137,24 @@ namespace RecoTool.Services
                 result.IsSuccess = true;
                 result.EndTime = DateTime.Now;
                 result.ProcessedRecords = validData.Count;
+
+                // Démarrer la synchronisation réseau en arrière-plan
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        LogManager.Info($"Démarrage de la synchronisation réseau en arrière-plan pour {countryId}");
+                        bool syncSuccess = await _offlineFirstService.SynchronizeData();
+                        if (syncSuccess)
+                            LogManager.Info($"Synchronisation réseau réussie (arrière-plan) pour {countryId}");
+                        else
+                            LogManager.Warning($"Synchronisation réseau échouée (arrière-plan) pour {countryId}");
+                    }
+                    catch (Exception syncEx)
+                    {
+                        LogManager.Error($"Erreur lors de la synchronisation réseau (arrière-plan) pour {countryId}", syncEx);
+                    }
+                });
 
                 return result;
             }
@@ -143,14 +170,14 @@ namespace RecoTool.Services
         /// Lit le fichier Excel en appliquant le mapping des champs
         /// </summary>
         private async Task<List<Dictionary<string, object>>> ReadExcelFile(string filePath,
-            IEnumerable<AmbreImportField> importFields)
+            IEnumerable<AmbreImportField> importFields, Action<int> progress = null)
         {
             return await Task.Run(() =>
             {
                 using (var excelHelper = new ExcelHelper())
                 {
                     excelHelper.OpenFile(filePath);
-                    return excelHelper.ReadSheetData(null, importFields, 2);
+                    return excelHelper.ReadSheetData(null, importFields, 2, progress);
                 }
             });
         }
@@ -323,7 +350,7 @@ namespace RecoTool.Services
         /// <summary>
         /// Synchronise les données transformées avec la base (offline-first avec verrous globaux)
         /// </summary>
-        private async Task<(int newCount, int updatedCount, int deletedCount)> SynchronizeWithDatabase(List<DataAmbre> newData, string countryId)
+        private async Task<(int newCount, int updatedCount, int deletedCount)> SynchronizeWithDatabase(List<DataAmbre> newData, string countryId, bool performNetworkSync)
         {
             ImportChanges changes;
 
@@ -364,26 +391,29 @@ namespace RecoTool.Services
                 // Le verrou global est libéré automatiquement par Dispose() à la fin du using
             }
             
-            try 
+            if (performNetworkSync)
             {
-                LogManager.Info($"Démarrage de la synchronisation réseau pour {countryId}");
-                
-                // Synchroniser avec la base réseau via OfflineFirstService
-                bool syncSuccess = await _offlineFirstService.SynchronizeData();
-                
-                if (syncSuccess)
+                try 
                 {
-                    LogManager.Info($"Synchronisation réseau réussie pour {countryId}");
+                    LogManager.Info($"Démarrage de la synchronisation réseau pour {countryId}");
+                    
+                    // Synchroniser avec la base réseau via OfflineFirstService
+                    bool syncSuccess = await _offlineFirstService.SynchronizeData();
+                    
+                    if (syncSuccess)
+                    {
+                        LogManager.Info($"Synchronisation réseau réussie pour {countryId}");
+                    }
+                    else
+                    {
+                        LogManager.Warning($"Synchronisation réseau échouée pour {countryId} - Les données restent en local");
+                    }
                 }
-                else
+                catch (Exception syncEx)
                 {
-                    LogManager.Warning($"Synchronisation réseau échouée pour {countryId} - Les données restent en local");
+                    LogManager.Error($"Erreur lors de la synchronisation réseau pour {countryId}", syncEx);
+                    // Ne pas faire échouer l'import si seule la sync réseau échoue
                 }
-            }
-            catch (Exception syncEx)
-            {
-                LogManager.Error($"Erreur lors de la synchronisation réseau pour {countryId}", syncEx);
-                // Ne pas faire échouer l'import si seule la sync réseau échoue
             }
             
             return (changes.ToAdd.Count, changes.ToUpdate.Count, changes.ToArchive.Count);

@@ -52,8 +52,8 @@ namespace RecoTool.Helpers
         /// <param name="importFields">Mapping des champs d'import</param>
         /// <param name="startRow">Ligne de début (défaut: 2 pour ignorer l'en-tête)</param>
         /// <returns>Liste des données lues sous forme de dictionnaire</returns>
-        public List<Dictionary<string, object>> ReadSheetData(string sheetName = null, 
-            IEnumerable<AmbreImportField> importFields = null, int startRow = 2)
+        public List<Dictionary<string, object>> ReadSheetData(string sheetName = null,
+            IEnumerable<AmbreImportField> importFields = null, int startRow = 2, Action<int> progress = null)
         {
             if (_workbook == null)
                 throw new InvalidOperationException("Aucun fichier Excel ouvert.");
@@ -61,8 +61,8 @@ namespace RecoTool.Helpers
             try
             {
                 // Sélectionner la feuille
-                Worksheet worksheet = string.IsNullOrEmpty(sheetName) 
-                    ? _workbook.Sheets[1] 
+                Worksheet worksheet = string.IsNullOrEmpty(sheetName)
+                    ? _workbook.Sheets[1]
                     : _workbook.Sheets[sheetName];
 
                 // Lire l'en-tête (ligne 1)
@@ -92,16 +92,62 @@ namespace RecoTool.Helpers
                     }
                 }
 
-                // Lire les données
+                // Lire les données via un accès massif (Range.Value2) pour réduire les appels COM
                 var data = new List<Dictionary<string, object>>();
-                var lastRow = worksheet.UsedRange.Rows.Count;
 
-                for (int row = startRow; row <= lastRow; row++)
+                var usedRange = worksheet.UsedRange;
+                int lastRow = usedRange.Rows.Count;
+                int lastColumn = usedRange.Columns.Count;
+
+                if (lastRow < startRow)
                 {
-                    var rowData = ReadRowData(worksheet, row, columnMapping);
-                    if (rowData.Any(kvp => kvp.Value != null && !string.IsNullOrEmpty(kvp.Value.ToString())))
+                    return data; // aucune donnée
+                }
+
+                Range dataRange = worksheet.Range[worksheet.Cells[startRow, 1], worksheet.Cells[lastRow, lastColumn]];
+                object raw = dataRange.Value2;
+
+                // Excel retourne un object[,] si plusieurs cellules, sinon une valeur simple
+                object[,] values = raw as object[,];
+                if (values == null)
+                {
+                    // Cas d'une seule ligne/colonne: normaliser en tableau 2D 1-based
+                    values = new object[2, 2];
+                    values[1, 1] = raw;
+                }
+
+                int totalRows = lastRow - startRow + 1;
+                for (int r = 1; r <= values.GetLength(0); r++)
+                {
+                    var rowDict = new Dictionary<string, object>();
+
+                    foreach (var kvp in columnMapping)
                     {
-                        data.Add(rowData);
+                        int colIndex = kvp.Key;
+                        string fieldName = kvp.Value;
+
+                        if (colIndex >= 1 && colIndex <= values.GetLength(1))
+                        {
+                            rowDict[fieldName] = values[r, colIndex];
+                        }
+                        else
+                        {
+                            rowDict[fieldName] = null;
+                        }
+                    }
+
+                    if (rowDict.Any(kvp => kvp.Value != null && !string.IsNullOrEmpty(kvp.Value.ToString())))
+                    {
+                        data.Add(rowDict);
+                    }
+
+                    // Progression (en pourcentage)
+                    if (progress != null)
+                    {
+                        int currentRow = r;
+                        int percent = (int)Math.Round(currentRow * 100.0 / totalRows);
+                        if (percent > 100) percent = 100;
+                        progress(percent);
                     }
                 }
 
@@ -119,12 +165,24 @@ namespace RecoTool.Helpers
         private List<string> ReadRowHeaders(Worksheet worksheet)
         {
             var headers = new List<string>();
-            var lastColumn = worksheet.UsedRange.Columns.Count;
+            var usedRange = worksheet.UsedRange;
+            var lastColumn = usedRange.Columns.Count;
 
-            for (int col = 1; col <= lastColumn; col++)
+            Range headerRange = worksheet.Range[worksheet.Cells[1, 1], worksheet.Cells[1, lastColumn]];
+            object raw = headerRange.Value2;
+
+            if (raw is object[,] values)
             {
-                var cellValue = worksheet.Cells[1, col].Value2;
-                headers.Add(cellValue?.ToString() ?? $"Column{col}");
+                for (int col = 1; col <= lastColumn; col++)
+                {
+                    var cellValue = values[1, col];
+                    headers.Add(cellValue?.ToString() ?? $"Column{col}");
+                }
+            }
+            else
+            {
+                // Fallback: une seule cellule
+                headers.Add(raw?.ToString() ?? "Column1");
             }
 
             return headers;
@@ -167,7 +225,7 @@ namespace RecoTool.Helpers
         /// <summary>
         /// Lit les données d'une ligne spécifique
         /// </summary>
-        private Dictionary<string, object> ReadRowData(Worksheet worksheet, int rowNumber, 
+        private Dictionary<string, object> ReadRowData(Worksheet worksheet, int rowNumber,
             Dictionary<int, string> columnMapping)
         {
             var rowData = new Dictionary<string, object>();

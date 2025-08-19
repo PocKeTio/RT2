@@ -72,7 +72,17 @@ namespace RecoTool.Services
                     var changeTuples = new List<(string TableName, string RowGuid, string OperationType)>();
                     try
                     {
+                        // Use a single batch timestamp to reduce DateTime.UtcNow calls
+                        var nowUtc = DateTime.UtcNow;
                         var tableColsCache = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+                        // Cache for archive commands per table (soft delete path)
+                        var archiveCmdCache = new Dictionary<string, OleDbCommand>(StringComparer.OrdinalIgnoreCase);
+                        // Cache prepared INSERT commands per (table|cols-signature)
+                        var insertCmdCache = new Dictionary<string, (OleDbCommand Cmd, List<string> Cols)>(StringComparer.OrdinalIgnoreCase);
+                        // Cache prepared UPDATE commands per (table|cols-signature|keyColumn)
+                        var updateCmdCache = new Dictionary<string, (OleDbCommand Cmd, List<string> Cols, int KeyIndex)>(StringComparer.OrdinalIgnoreCase);
+                        // Cache for primary key column names per table
+                        var pkColCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
                         Func<string, Task<HashSet<string>>> getColsAsync = async (table) =>
                         {
@@ -82,6 +92,14 @@ namespace RecoTool.Services
                                 tableColsCache[table] = cols;
                             }
                             return cols;
+                        };
+
+                        Func<string, Task<string>> getPkColAsync = async (table) =>
+                        {
+                            if (pkColCache.TryGetValue(table, out var pk)) return pk;
+                            pk = await GetPrimaryKeyColumnAsync(connection, table) ?? "ID";
+                            pkColCache[table] = pk;
+                            return pk;
                         };
 
                         // Helpers
@@ -99,7 +117,7 @@ namespace RecoTool.Services
                             if (rowGuidCol != null && (!entity.Properties.ContainsKey(rowGuidCol) || entity.Properties[rowGuidCol] == null))
                                 entity.Properties[rowGuidCol] = Guid.NewGuid().ToString();
                             if (lastModCol != null)
-                                entity.Properties[lastModCol] = DateTime.UtcNow;
+                                entity.Properties[lastModCol] = nowUtc;
                             if (isDeletedCol != null)
                             {
                                 if (isDeletedCol.Equals(_syncConfig.IsDeletedColumn, StringComparison.OrdinalIgnoreCase))
@@ -110,19 +128,32 @@ namespace RecoTool.Services
 
                             var validCols = entity.Properties.Keys.Where(k => cols.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
                             if (validCols.Count == 0) continue;
-                            var colList = string.Join(", ", validCols.Select(c => $"[{c}]"));
-                            var paramList = string.Join(", ", validCols.Select((c, i) => $"@p{i}"));
-                            var sql = $"INSERT INTO [{entity.TableName}] ({colList}) VALUES ({paramList})";
-                            using (var cmd = new OleDbCommand(sql, connection, tx))
+                            var sig = $"{entity.TableName}||{string.Join("|", validCols)}";
+                            if (!insertCmdCache.TryGetValue(sig, out var tup))
                             {
+                                var colList = string.Join(", ", validCols.Select(c => $"[{c}]"));
+                                var paramList = string.Join(", ", validCols.Select((c, i) => $"@p{i}"));
+                                var sql = $"INSERT INTO [{entity.TableName}] ({colList}) VALUES ({paramList})";
+                                var cmd = new OleDbCommand(sql, connection, tx);
                                 for (int i = 0; i < validCols.Count; i++)
                                 {
-                                    var prepared = PrepareValueForDatabase(entity.Properties[validCols[i]]);
-                                    cmd.Parameters.AddWithValue($"@p{i}", prepared);
+                                    // Initialize parameters once
+                                    cmd.Parameters.AddWithValue($"@p{i}", DBNull.Value);
                                 }
-                                await cmd.ExecuteNonQueryAsync();
+                                insertCmdCache[sig] = (cmd, validCols.ToList());
+                                tup = insertCmdCache[sig];
                             }
-                            string chKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol]?.ToString() : await GetPrimaryKeyValueAsync(connection, entity);
+                            // Set parameter values for this row
+                            for (int i = 0; i < tup.Cols.Count; i++)
+                            {
+                                var prepared = PrepareValueForDatabase(entity.Properties[tup.Cols[i]]);
+                                tup.Cmd.Parameters[i].Value = prepared;
+                            }
+                            await tup.Cmd.ExecuteNonQueryAsync();
+                            // Avoid extra PK lookup: RowGuid is ensured when available and used for change tracking
+                            string chKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol)
+                                ? entity.Properties[rowGuidCol]?.ToString()
+                                : null;
                             changeTuples.Add((entity.TableName, chKey, "INSERT"));
                         }
 
@@ -133,7 +164,7 @@ namespace RecoTool.Services
                             var rowGuidCol = getRowGuidCol(entity, cols);
                             var lastModCol = cols.Contains(_syncConfig.LastModifiedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.LastModifiedColumn : (cols.Contains("LastModified", StringComparer.OrdinalIgnoreCase) ? "LastModified" : null);
                             if (lastModCol != null)
-                                entity.Properties[lastModCol] = DateTime.UtcNow;
+                                entity.Properties[lastModCol] = nowUtc;
 
                             var updatable = entity.Properties.Keys.Where(k => (rowGuidCol == null || !k.Equals(rowGuidCol, StringComparison.OrdinalIgnoreCase)) && cols.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
                             if (updatable.Count == 0) continue;
@@ -143,24 +174,35 @@ namespace RecoTool.Services
                             object keyValue = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol] : null;
                             if (keyColumn == null || keyValue == null)
                             {
-                                keyColumn = await GetPrimaryKeyColumnAsync(connection, entity.TableName) ?? "ID";
+                                keyColumn = await getPkColAsync(entity.TableName);
                                 if (!entity.Properties.ContainsKey(keyColumn))
                                     throw new InvalidOperationException($"Valeur de clé introuvable pour la table {entity.TableName} (colonne {keyColumn})");
                                 keyValue = entity.Properties[keyColumn];
                             }
 
-                            var setList = string.Join(", ", updatable.Select((c, i) => $"[{c}] = @p{i}"));
-                            var sql = $"UPDATE [{entity.TableName}] SET {setList} WHERE [{keyColumn}] = @key";
-                            using (var cmd = new OleDbCommand(sql, connection, tx))
+                            var upSig = $"{entity.TableName}||{string.Join("|", updatable)}||{keyColumn}";
+                            if (!updateCmdCache.TryGetValue(upSig, out var upd))
                             {
+                                var setList = string.Join(", ", updatable.Select((c, i) => $"[{c}] = @p{i}"));
+                                var sql = $"UPDATE [{entity.TableName}] SET {setList} WHERE [{keyColumn}] = @key";
+                                var cmd = new OleDbCommand(sql, connection, tx);
                                 for (int i = 0; i < updatable.Count; i++)
                                 {
-                                    var prepared = PrepareValueForDatabase(entity.Properties[updatable[i]]);
-                                    cmd.Parameters.AddWithValue($"@p{i}", prepared);
+                                    cmd.Parameters.AddWithValue($"@p{i}", DBNull.Value);
                                 }
-                                cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
-                                await cmd.ExecuteNonQueryAsync();
+                                // key parameter at the end
+                                cmd.Parameters.AddWithValue("@key", DBNull.Value);
+                                updateCmdCache[upSig] = (cmd, updatable.ToList(), updatable.Count);
+                                upd = updateCmdCache[upSig];
                             }
+                            // Set parameters for this row
+                            for (int i = 0; i < upd.Cols.Count; i++)
+                            {
+                                var prepared = PrepareValueForDatabase(entity.Properties[upd.Cols[i]]);
+                                upd.Cmd.Parameters[i].Value = prepared;
+                            }
+                            upd.Cmd.Parameters[upd.KeyIndex].Value = keyValue ?? DBNull.Value;
+                            await upd.Cmd.ExecuteNonQueryAsync();
                             string chKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol]?.ToString() : keyValue?.ToString();
                             changeTuples.Add((entity.TableName, chKey, "UPDATE"));
                         }
@@ -187,23 +229,34 @@ namespace RecoTool.Services
 
                             if (hasIsDeleted || hasDeleteDate)
                             {
-                                var setParts = new List<string>();
-                                var parameters = new List<object>();
-                                if (hasIsDeleted) { setParts.Add($"[{_syncConfig.IsDeletedColumn}] = true"); }
-                                if (hasDeleteDate) { setParts.Add("[DeleteDate] = @p0"); parameters.Add(DateTime.UtcNow); }
-                                if (lastModCol != null) { setParts.Add($"[{lastModCol}] = @p1"); parameters.Add(DateTime.UtcNow); }
-                                var sql = $"UPDATE [{entity.TableName}] SET {string.Join(", ", setParts)} WHERE [{keyColumn}] = @key";
-                                using (var cmd = new OleDbCommand(sql, connection, tx))
+                                // Reuse prepared soft-delete command per table to reduce command creation overhead
+                                if (!archiveCmdCache.TryGetValue(entity.TableName, out var cmd))
                                 {
-                                    int pi = 0;
-                                    foreach (var p in parameters)
-                                    {
-                                        var prepared = PrepareValueForDatabase(p);
-                                        cmd.Parameters.AddWithValue($"@p{pi++}", prepared);
-                                    }
-                                    cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
-                                    await cmd.ExecuteNonQueryAsync();
+                                    var setParts = new List<string>();
+                                    var paramNames = new List<string>();
+                                    setParts.Add($"[{_syncConfig.IsDeletedColumn}] = true");
+                                    if (hasDeleteDate) { setParts.Add("[DeleteDate] = @p0"); paramNames.Add("@p0"); }
+                                    if (lastModCol != null) { setParts.Add($"[{lastModCol}] = @p1"); paramNames.Add("@p1"); }
+                                    var sql = $"UPDATE [{entity.TableName}] SET {string.Join(", ", setParts)} WHERE [{keyColumn}] = @key";
+                                    cmd = new OleDbCommand(sql, connection, tx);
+                                    // Prepare parameters in fixed order if present
+                                    if (hasDeleteDate) cmd.Parameters.AddWithValue("@p0", PrepareValueForDatabase(nowUtc));
+                                    if (lastModCol != null) cmd.Parameters.AddWithValue("@p1", PrepareValueForDatabase(nowUtc));
+                                    cmd.Parameters.AddWithValue("@key", DBNull.Value); // placeholder, set per row
+                                    archiveCmdCache[entity.TableName] = cmd;
                                 }
+                                // Update parameter values per row
+                                int baseIndex = 0;
+                                if (hasDeleteDate)
+                                {
+                                    cmd.Parameters[baseIndex++].Value = PrepareValueForDatabase(nowUtc);
+                                }
+                                if (lastModCol != null)
+                                {
+                                    cmd.Parameters[baseIndex++].Value = PrepareValueForDatabase(nowUtc);
+                                }
+                                cmd.Parameters[baseIndex].Value = keyValue ?? DBNull.Value; // @key
+                                await cmd.ExecuteNonQueryAsync();
                             }
                             else
                             {
@@ -229,6 +282,22 @@ namespace RecoTool.Services
                     {
                         try { tx.Rollback(); } catch { }
                         throw;
+                    }
+                    finally
+                    {
+                        // Dispose cached commands
+                        foreach (var kv in archiveCmdCache)
+                        {
+                            try { kv.Value?.Dispose(); } catch { }
+                        }
+                        foreach (var kv in insertCmdCache)
+                        {
+                            try { kv.Value.Cmd?.Dispose(); } catch { }
+                        }
+                        foreach (var kv in updateCmdCache)
+                        {
+                            try { kv.Value.Cmd?.Dispose(); } catch { }
+                        }
                     }
                 }
             }

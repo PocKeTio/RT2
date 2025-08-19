@@ -163,6 +163,12 @@ namespace RecoTool.Windows
         /// </summary>
         private async void ImportButton_Click(object sender, RoutedEventArgs e)
         {
+            // Empêcher le double clic immédiat
+            if (IsImporting || IsValidating)
+                return;
+
+            // Désactiver tout de suite avant l'async pour éviter 2ème déclenchement
+            ImportButton.IsEnabled = false;
             await StartImport();
         }
 
@@ -622,10 +628,12 @@ namespace RecoTool.Windows
             var hasFile = !string.IsNullOrEmpty(SelectedFilePath);
             var hasCountry = CurrentCountry != null;
             var canValidate = hasFile && hasCountry && !IsImporting && !IsValidating;
-            var canImport = canValidate && _validationResult?.IsValid == true;
-            
-            ImportButton.IsEnabled = true;
-            
+            // Autoriser l'import si fichier + pays sélectionnés et aucune opération en cours
+            var canImport = hasFile && hasCountry && !IsImporting && !IsValidating;
+
+            // Empêcher les doubles clics en désactivant le bouton pendant import/validation
+            ImportButton.IsEnabled = canImport;
+
             // Changer le texte du bouton Annuler
             CancelButton.Content = (IsImporting || IsValidating) ? "Annuler l'opération" : "Fermer";
         }

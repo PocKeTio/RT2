@@ -37,6 +37,58 @@ namespace OfflineFirstAccess.ChangeTracking
             }
         }
 
+        /// <summary>
+        /// Enregistre plusieurs changements en une seule fois en utilisant une connexion et une transaction.
+        /// </summary>
+        /// <param name="changes">Séquence (TableName, RowGuid, OperationType)</param>
+        public async Task RecordChangesAsync(IEnumerable<(string TableName, string RowGuid, string OperationType)> changes)
+        {
+            if (changes == null)
+                return;
+
+            var list = changes.ToList();
+            if (list.Count == 0)
+                return;
+
+            var insertSql = $"INSERT INTO [{ChangeLogTableName}] (TableName, RecordID, Operation, [Timestamp], Synchronized) VALUES (@TableName, @RecordID, @Operation, @Timestamp, @Synchronized)";
+
+            using (var connection = new OleDbConnection(_localConnectionString))
+            {
+                await connection.OpenAsync();
+                using (var tx = connection.BeginTransaction())
+                {
+                    try
+                    {
+                        using (var cmd = new OleDbCommand(insertSql, connection, tx))
+                        {
+                            // Prepare parameters once and reuse
+                            var pTable = cmd.Parameters.Add("@TableName", System.Data.OleDb.OleDbType.VarWChar);
+                            var pRecord = cmd.Parameters.Add("@RecordID", System.Data.OleDb.OleDbType.VarWChar);
+                            var pOp = cmd.Parameters.Add("@Operation", System.Data.OleDb.OleDbType.VarWChar);
+                            var pTs = cmd.Parameters.Add("@Timestamp", System.Data.OleDb.OleDbType.Double);
+                            var pSync = cmd.Parameters.Add("@Synchronized", System.Data.OleDb.OleDbType.Boolean);
+
+                            foreach (var (table, rowGuid, op) in list)
+                            {
+                                pTable.Value = table ?? (object)DBNull.Value;
+                                pRecord.Value = rowGuid ?? (object)DBNull.Value;
+                                pOp.Value = op ?? (object)DBNull.Value;
+                                pTs.Value = DateTime.UtcNow.ToOADate();
+                                pSync.Value = false;
+                                await cmd.ExecuteNonQueryAsync();
+                            }
+                        }
+                        tx.Commit();
+                    }
+                    catch
+                    {
+                        try { tx.Rollback(); } catch { }
+                        throw;
+                    }
+                }
+            }
+        }
+
         public async Task<IEnumerable<ChangeLogEntry>> GetUnsyncedChangesAsync()
         {
             var entries = new List<ChangeLogEntry>();

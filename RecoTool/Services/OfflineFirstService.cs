@@ -50,6 +50,190 @@ namespace RecoTool.Services
             return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={lockPath};";
         }
 
+        /// <summary>
+        /// Applique en lot des ajouts/mises à jour/archivages dans une seule connexion et transaction.
+        /// Réduit drastiquement le coût des imports volumineux.
+        /// </summary>
+        public async Task<bool> ApplyEntitiesBatchAsync(string identifier, List<Entity> toAdd, List<Entity> toUpdate, List<Entity> toArchive)
+        {
+            EnsureInitialized();
+            toAdd = toAdd ?? new List<Entity>();
+            toUpdate = toUpdate ?? new List<Entity>();
+            toArchive = toArchive ?? new List<Entity>();
+
+            if (toAdd.Count == 0 && toUpdate.Count == 0 && toArchive.Count == 0)
+                return true;
+
+            using (var connection = new OleDbConnection(GetLocalConnectionString()))
+            {
+                await connection.OpenAsync();
+                using (var tx = connection.BeginTransaction())
+                {
+                    var changeTuples = new List<(string TableName, string RowGuid, string OperationType)>();
+                    try
+                    {
+                        var tableColsCache = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+                        Func<string, Task<HashSet<string>>> getColsAsync = async (table) =>
+                        {
+                            if (!tableColsCache.TryGetValue(table, out var cols))
+                            {
+                                cols = await GetTableColumnsAsync(connection, table);
+                                tableColsCache[table] = cols;
+                            }
+                            return cols;
+                        };
+
+                        // Helpers
+                        Func<Entity, HashSet<string>, string> getRowGuidCol = (e, cols) =>
+                            cols.Contains(_syncConfig.PrimaryKeyGuidColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.PrimaryKeyGuidColumn : null;
+
+                        // INSERTS
+                        foreach (var entity in toAdd)
+                        {
+                            var cols = await getColsAsync(entity.TableName);
+                            var rowGuidCol = getRowGuidCol(entity, cols);
+                            var lastModCol = cols.Contains(_syncConfig.LastModifiedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.LastModifiedColumn : (cols.Contains("LastModified", StringComparer.OrdinalIgnoreCase) ? "LastModified" : null);
+                            var isDeletedCol = cols.Contains(_syncConfig.IsDeletedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.IsDeletedColumn : (cols.Contains("DeleteDate", StringComparer.OrdinalIgnoreCase) ? "DeleteDate" : null);
+
+                            if (rowGuidCol != null && (!entity.Properties.ContainsKey(rowGuidCol) || entity.Properties[rowGuidCol] == null))
+                                entity.Properties[rowGuidCol] = Guid.NewGuid().ToString();
+                            if (lastModCol != null)
+                                entity.Properties[lastModCol] = DateTime.UtcNow;
+                            if (isDeletedCol != null)
+                            {
+                                if (isDeletedCol.Equals(_syncConfig.IsDeletedColumn, StringComparison.OrdinalIgnoreCase))
+                                    entity.Properties[isDeletedCol] = false;
+                                else if (isDeletedCol.Equals("DeleteDate", StringComparison.OrdinalIgnoreCase))
+                                    entity.Properties[isDeletedCol] = DBNull.Value;
+                            }
+
+                            var validCols = entity.Properties.Keys.Where(k => cols.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
+                            if (validCols.Count == 0) continue;
+                            var colList = string.Join(", ", validCols.Select(c => $"[{c}]"));
+                            var paramList = string.Join(", ", validCols.Select((c, i) => $"@p{i}"));
+                            var sql = $"INSERT INTO [{entity.TableName}] ({colList}) VALUES ({paramList})";
+                            using (var cmd = new OleDbCommand(sql, connection, tx))
+                            {
+                                for (int i = 0; i < validCols.Count; i++)
+                                {
+                                    var prepared = PrepareValueForDatabase(entity.Properties[validCols[i]]);
+                                    cmd.Parameters.AddWithValue($"@p{i}", prepared);
+                                }
+                                await cmd.ExecuteNonQueryAsync();
+                            }
+                            string chKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol]?.ToString() : await GetPrimaryKeyValueAsync(connection, entity);
+                            changeTuples.Add((entity.TableName, chKey, "INSERT"));
+                        }
+
+                        // UPDATES
+                        foreach (var entity in toUpdate)
+                        {
+                            var cols = await getColsAsync(entity.TableName);
+                            var rowGuidCol = getRowGuidCol(entity, cols);
+                            var lastModCol = cols.Contains(_syncConfig.LastModifiedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.LastModifiedColumn : (cols.Contains("LastModified", StringComparer.OrdinalIgnoreCase) ? "LastModified" : null);
+                            if (lastModCol != null)
+                                entity.Properties[lastModCol] = DateTime.UtcNow;
+
+                            var updatable = entity.Properties.Keys.Where(k => (rowGuidCol == null || !k.Equals(rowGuidCol, StringComparison.OrdinalIgnoreCase)) && cols.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
+                            if (updatable.Count == 0) continue;
+
+                            // Determine key
+                            string keyColumn = rowGuidCol;
+                            object keyValue = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol] : null;
+                            if (keyColumn == null || keyValue == null)
+                            {
+                                keyColumn = await GetPrimaryKeyColumnAsync(connection, entity.TableName) ?? "ID";
+                                if (!entity.Properties.ContainsKey(keyColumn))
+                                    throw new InvalidOperationException($"Valeur de clé introuvable pour la table {entity.TableName} (colonne {keyColumn})");
+                                keyValue = entity.Properties[keyColumn];
+                            }
+
+                            var setList = string.Join(", ", updatable.Select((c, i) => $"[{c}] = @p{i}"));
+                            var sql = $"UPDATE [{entity.TableName}] SET {setList} WHERE [{keyColumn}] = @key";
+                            using (var cmd = new OleDbCommand(sql, connection, tx))
+                            {
+                                for (int i = 0; i < updatable.Count; i++)
+                                {
+                                    var prepared = PrepareValueForDatabase(entity.Properties[updatable[i]]);
+                                    cmd.Parameters.AddWithValue($"@p{i}", prepared);
+                                }
+                                cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
+                                await cmd.ExecuteNonQueryAsync();
+                            }
+                            string chKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol]?.ToString() : keyValue?.ToString();
+                            changeTuples.Add((entity.TableName, chKey, "UPDATE"));
+                        }
+
+                        // ARCHIVES (logical delete)
+                        foreach (var entity in toArchive)
+                        {
+                            var cols = await getColsAsync(entity.TableName);
+                            var rowGuidCol = getRowGuidCol(entity, cols);
+                            var lastModCol = cols.Contains(_syncConfig.LastModifiedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.LastModifiedColumn : (cols.Contains("LastModified", StringComparer.OrdinalIgnoreCase) ? "LastModified" : null);
+                            var hasIsDeleted = cols.Contains(_syncConfig.IsDeletedColumn, StringComparer.OrdinalIgnoreCase);
+                            var hasDeleteDate = cols.Contains("DeleteDate", StringComparer.OrdinalIgnoreCase);
+
+                            // Determine key
+                            string keyColumn = rowGuidCol;
+                            object keyValue = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol] : null;
+                            if (keyColumn == null || keyValue == null)
+                            {
+                                keyColumn = await GetPrimaryKeyColumnAsync(connection, entity.TableName) ?? "ID";
+                                if (!entity.Properties.ContainsKey(keyColumn))
+                                    throw new InvalidOperationException($"Valeur de clé introuvable pour la table {entity.TableName} (colonne {keyColumn})");
+                                keyValue = entity.Properties[keyColumn];
+                            }
+
+                            if (hasIsDeleted || hasDeleteDate)
+                            {
+                                var setParts = new List<string>();
+                                var parameters = new List<object>();
+                                if (hasIsDeleted) { setParts.Add($"[{_syncConfig.IsDeletedColumn}] = true"); }
+                                if (hasDeleteDate) { setParts.Add("[DeleteDate] = @p0"); parameters.Add(DateTime.UtcNow); }
+                                if (lastModCol != null) { setParts.Add($"[{lastModCol}] = @p1"); parameters.Add(DateTime.UtcNow); }
+                                var sql = $"UPDATE [{entity.TableName}] SET {string.Join(", ", setParts)} WHERE [{keyColumn}] = @key";
+                                using (var cmd = new OleDbCommand(sql, connection, tx))
+                                {
+                                    int pi = 0;
+                                    foreach (var p in parameters)
+                                    {
+                                        var prepared = PrepareValueForDatabase(p);
+                                        cmd.Parameters.AddWithValue($"@p{pi++}", prepared);
+                                    }
+                                    cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
+                                    await cmd.ExecuteNonQueryAsync();
+                                }
+                            }
+                            else
+                            {
+                                var sql = $"DELETE FROM [{entity.TableName}] WHERE [{keyColumn}] = @key";
+                                using (var cmd = new OleDbCommand(sql, connection, tx))
+                                {
+                                    cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
+                                    await cmd.ExecuteNonQueryAsync();
+                                }
+                            }
+                            string chKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol]?.ToString() : keyValue?.ToString();
+                            changeTuples.Add((entity.TableName, chKey, "DELETE"));
+                        }
+
+                        tx.Commit();
+
+                        // Batch-change tracking (use same target as existing per-row calls for consistency)
+                        var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId));
+                        await tracker.RecordChangesAsync(changeTuples);
+                        return true;
+                    }
+                    catch
+                    {
+                        try { tx.Rollback(); } catch { }
+                        throw;
+                    }
+                }
+            }
+        }
+
         private async Task EnsureSyncLocksTableExistsAsync(OleDbConnection connection)
         {
             var restrictions = new string[4];

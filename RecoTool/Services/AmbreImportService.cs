@@ -635,44 +635,32 @@ namespace RecoTool.Services
         {
             try
             {
-                LogManager.Info($"Application des changements - Ajouts: {changes.ToAdd.Count}, Modifications: {changes.ToUpdate.Count}, Suppressions: {changes.ToArchive.Count}");
-                
+                LogManager.Info($"Application des changements (batch) - Ajouts: {changes.ToAdd.Count}, Modifications: {changes.ToUpdate.Count}, Suppressions: {changes.ToArchive.Count}");
+
                 var countryId = _offlineFirstService.CurrentCountryId;
-                
-                // Appliquer les ajouts
+
+                // Construire les entit\u00e9s pour le batch
+                var toAdd = new List<OfflineFirstAccess.Models.Entity>(changes.ToAdd.Count);
+                var toUpdate = new List<OfflineFirstAccess.Models.Entity>(changes.ToUpdate.Count);
+                var toArchive = new List<OfflineFirstAccess.Models.Entity>(changes.ToArchive.Count);
+
                 foreach (var item in changes.ToAdd)
-                {
-                    var entity = ConvertDataAmbreToEntity(item);
-                     var success = await _offlineFirstService.AddEntityAsync(countryId, entity);
-                    if (!success)
-                    {
-                        LogManager.Warning($"Échec de l'ajout pour l'enregistrement {item.ID}");
-                    }
-                }
-                
-                // Appliquer les mises à jour
+                    toAdd.Add(ConvertDataAmbreToEntity(item));
                 foreach (var item in changes.ToUpdate)
-                {
-                    var entity = ConvertDataAmbreToEntity(item);
-                    var success = await _offlineFirstService.UpdateEntityAsync(countryId, entity);
-                    if (!success)
-                    {
-                        LogManager.Warning($"Échec de la mise à jour pour l'enregistrement {item.ID}");
-                    }
-                }
-                
-                // Appliquer les suppressions (archivage logique)
+                    toUpdate.Add(ConvertDataAmbreToEntity(item));
                 foreach (var item in changes.ToArchive)
+                    toArchive.Add(ConvertDataAmbreToEntity(item));
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var ok = await _offlineFirstService.ApplyEntitiesBatchAsync(countryId, toAdd, toUpdate, toArchive);
+                sw.Stop();
+
+                if (!ok)
                 {
-                    var entity = ConvertDataAmbreToEntity(item);
-                    var success = await _offlineFirstService.UpdateEntityAsync(countryId, entity); // On met à jour avec DeleteDate
-                    if (!success)
-                    {
-                        LogManager.Warning($"Échec de l'archivage pour l'enregistrement {item.ID}");
-                    }
+                    LogManager.Warning("L'application en lot a retourn\u00e9 false. V\u00e9rifiez les journaux d'erreur.");
                 }
-                
-                LogManager.Info($"Changements appliqués avec succès - {changes.ToAdd.Count} ajouts, {changes.ToUpdate.Count} mises à jour, {changes.ToArchive.Count} archivages");
+
+                LogManager.Info($"Changements appliqu\u00e9s (batch) en {sw.Elapsed.TotalSeconds:F1}s - {changes.ToAdd.Count} ajouts, {changes.ToUpdate.Count} mises \u00e0 jour, {changes.ToArchive.Count} archivages");
             }
             catch (Exception ex)
             {

@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="AMBRE Data Import - DWINGS/AMBRE Reconciliation Tool"
-        Height="468" Width="900" WindowStartupLocation="CenterScreen"
+        Height="650" Width="900" WindowStartupLocation="CenterScreen"
         Background="{DynamicResource BNPBackground}">
 
     <Window.Resources>

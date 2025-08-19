@@ -15,6 +15,11 @@ namespace OfflineFirstAccess.ChangeTracking
         Task RecordChangeAsync(string tableName, string rowGuid, string operationType);
 
         /// <summary>
+        /// Records multiple changes efficiently in a single batch.
+        /// </summary>
+        Task RecordChangesAsync(IEnumerable<(string TableName, string RowGuid, string OperationType)> changes);
+
+        /// <summary>
         /// Retrieves all changes that have not yet been synchronized.
         /// </summary>
         Task<IEnumerable<ChangeLogEntry>> GetUnsyncedChangesAsync();

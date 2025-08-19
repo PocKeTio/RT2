@@ -376,98 +376,93 @@ namespace RecoTool.Services
             var gateHeld = false;
             try
             {
+                // 1) Charger les données existantes et calculer les changements SANS verrou global
+                var existingData = await LoadExistingDataAsync(countryId);
+                changes = CalculateChanges(existingData, newData);
+                LogManager.Info($"Changements calculés pour {countryId} - Nouveaux: {changes.ToAdd.Count}, Modifiés: {changes.ToUpdate.Count}, Supprimés: {changes.ToArchive.Count}");
 
-            // S'assurer qu'aucune synchronisation réseau en arrière-plan ne tourne avant d'acquérir le verrou global
-            try
-            {
-                LogManager.Info("Vérification des synchronisations réseau en cours avant l'acquisition du verrou global...");
-                await _backgroundSyncGate.WaitAsync();
-                gateHeld = true;
-            }
-            catch (Exception ex)
-            {
-                LogManager.Warning($"Impossible d'acquérir le sémaphore de synchro réseau: {ex.Message}. Poursuite de l'opération locale.");
-            }
-
-            // Acquérir le verrou global pour bloquer les écritures réseau pendant l'import, avec timeout explicite
-            var lockWaitStart = DateTime.Now;
-            var lockTimeout = TimeSpan.FromMinutes(2); // Timeout explicite pour éviter l'attente infinie
-            LogManager.Info($"Tentative d'acquisition du verrou global pour {countryId} (timeout {lockTimeout.TotalSeconds} sec)...");
-
-            var acquireTask = _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", TimeSpan.FromMinutes(30));
-            var completed = await Task.WhenAny(acquireTask, Task.Delay(lockTimeout));
-            if (completed != acquireTask)
-            {
-                var waited = DateTime.Now - lockWaitStart;
-                var msg = $"Impossible d'obtenir le verrou global pour {countryId} dans le délai imparti ({lockTimeout.TotalSeconds} sec). Veuillez réessayer.";
-                var timeoutEx = new TimeoutException(msg);
-                LogManager.Error($"Timeout ({waited.TotalSeconds:F0}s) lors de l'attente du verrou global pour {countryId}. Opération annulée.", timeoutEx);
-                throw timeoutEx;
-            }
-
-            var globalLockHandle = await acquireTask;
-            using (var globalLock = globalLockHandle)
-            {
-                if (globalLock == null)
-                {
-                    throw new InvalidOperationException($"Impossible d'acquérir le verrou global pour {countryId}. Import annulé.");
-                }
-
-                var waited = DateTime.Now - lockWaitStart;
-                LogManager.Info($"Verrou global acquis pour {countryId} après {waited.TotalSeconds:F0}s d'attente");
-
+                // 2) Protéger uniquement la phase d'écriture (apply + reconciliation)
                 try
                 {
-                    // Charger les données existantes via l'API native d'OfflineFirstService
-                    var existingData = await LoadExistingDataAsync(countryId);
-
-                    // Calculer les changements nécessaires
-                    changes = CalculateChanges(existingData, newData);
-
-                    LogManager.Info($"Changements calculés pour {countryId} - Nouveaux: {changes.ToAdd.Count}, Modifiés: {changes.ToUpdate.Count}, Supprimés: {changes.ToArchive.Count}");
-
-                    // Appliquer les changements via les API natives d'OfflineFirstService
-                    await ApplyChangesAsync(changes);
-
-                    // Mettre à jour T_Reconciliation
-                    await UpdateReconciliationTable(changes.ToAdd, changes.ToUpdate, changes.ToArchive, countryId);
-
-                    LogManager.Info($"Import local terminé avec succès pour {countryId}");
+                    LogManager.Info("Vérification des synchronisations réseau en cours avant l'acquisition du verrou global...");
+                    await _backgroundSyncGate.WaitAsync();
+                    gateHeld = true;
                 }
                 catch (Exception ex)
                 {
-                    LogManager.Error($"Erreur lors de l'import local pour {countryId}", ex);
-                    throw new InvalidOperationException($"Erreur lors de la synchronisation avec la base de données: {ex.Message}", ex);
+                    LogManager.Warning($"Impossible d'acquérir le sémaphore de synchro réseau: {ex.Message}. Poursuite de l'opération locale.");
                 }
-                // Le verrou global est libéré automatiquement par Dispose() à la fin du using
-            }
-            
-            if (performNetworkSync)
-            {
-                try 
+
+                var lockWaitStart = DateTime.Now;
+                var lockTimeout = TimeSpan.FromMinutes(2); // Timeout explicite pour éviter l'attente infinie
+                LogManager.Info($"Tentative d'acquisition du verrou global pour {countryId} (timeout {lockTimeout.TotalSeconds} sec)...");
+
+                var acquireTask = _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", TimeSpan.FromMinutes(30));
+                var completed = await Task.WhenAny(acquireTask, Task.Delay(lockTimeout));
+                if (completed != acquireTask)
                 {
-                    LogManager.Info($"Démarrage de la synchronisation réseau pour {countryId}");
-                    
-                    // Synchroniser avec la base réseau via OfflineFirstService
-                    bool syncSuccess = await _offlineFirstService.SynchronizeData();
-                    
-                    if (syncSuccess)
-                    {
-                        LogManager.Info($"Synchronisation réseau réussie pour {countryId}");
-                    }
-                    else
-                    {
-                        LogManager.Warning($"Synchronisation réseau échouée pour {countryId} - Les données restent en local");
-                    }
+                    var waited = DateTime.Now - lockWaitStart;
+                    var msg = $"Impossible d'obtenir le verrou global pour {countryId} dans le délai imparti ({lockTimeout.TotalSeconds} sec). Veuillez réessayer.";
+                    var timeoutEx = new TimeoutException(msg);
+                    LogManager.Error($"Timeout ({waited.TotalSeconds:F0}s) lors de l'attente du verrou global pour {countryId}. Opération annulée.", timeoutEx);
+                    throw timeoutEx;
                 }
-                catch (Exception syncEx)
+
+                var globalLockHandle = await acquireTask;
+                using (var globalLock = globalLockHandle)
                 {
-                    LogManager.Error($"Erreur lors de la synchronisation réseau pour {countryId}", syncEx);
-                    // Ne pas faire échouer l'import si seule la sync réseau échoue
+                    if (globalLock == null)
+                    {
+                        throw new InvalidOperationException($"Impossible d'acquérir le verrou global pour {countryId}. Import annulé.");
+                    }
+
+                    var waited = DateTime.Now - lockWaitStart;
+                    LogManager.Info($"Verrou global acquis pour {countryId} après {waited.TotalSeconds:F0}s d'attente");
+
+                    try
+                    {
+                        // Appliquer les changements via les API natives d'OfflineFirstService
+                        await ApplyChangesAsync(changes);
+
+                        // Mettre à jour T_Reconciliation
+                        await UpdateReconciliationTable(changes.ToAdd, changes.ToUpdate, changes.ToArchive, countryId);
+
+                        LogManager.Info($"Import local terminé avec succès pour {countryId}");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogManager.Error($"Erreur lors de l'import local pour {countryId}", ex);
+                        throw new InvalidOperationException($"Erreur lors de la synchronisation avec la base de données: {ex.Message}", ex);
+                    }
+                    // Le verrou global est libéré automatiquement par Dispose() à la fin du using
                 }
-            }
-            
-            return (changes.ToAdd.Count, changes.ToUpdate.Count, changes.ToArchive.Count);
+
+                if (performNetworkSync)
+                {
+                    try
+                    {
+                        LogManager.Info($"Démarrage de la synchronisation réseau pour {countryId}");
+
+                        // Synchroniser avec la base réseau via OfflineFirstService
+                        bool syncSuccess = await _offlineFirstService.SynchronizeData();
+
+                        if (syncSuccess)
+                        {
+                            LogManager.Info($"Synchronisation réseau réussie pour {countryId}");
+                        }
+                        else
+                        {
+                            LogManager.Warning($"Synchronisation réseau échouée pour {countryId} - Les données restent en local");
+                        }
+                    }
+                    catch (Exception syncEx)
+                    {
+                        LogManager.Error($"Erreur lors de la synchronisation réseau pour {countryId}", syncEx);
+                        // Ne pas faire échouer l'import si seule la sync réseau échoue
+                    }
+                }
+
+                return (changes.ToAdd.Count, changes.ToUpdate.Count, changes.ToArchive.Count);
             }
             finally
             {

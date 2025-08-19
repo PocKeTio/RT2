@@ -221,7 +221,7 @@ namespace RecoTool.Services
                         tx.Commit();
 
                         // Batch-change tracking (use same target as existing per-row calls for consistency)
-                        var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId));
+                        var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetLocalConnectionString());
                         await tracker.RecordChangesAsync(changeTuples);
                         return true;
                     }

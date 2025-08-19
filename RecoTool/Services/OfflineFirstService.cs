@@ -70,19 +70,17 @@ namespace RecoTool.Services
                 using (var tx = connection.BeginTransaction())
                 {
                     var changeTuples = new List<(string TableName, string RowGuid, string OperationType)>();
+                    // Caches must be declared outside try to be visible in finally
+                    var tableColsCache = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+                    var archiveCmdCache = new Dictionary<string, OleDbCommand>(StringComparer.OrdinalIgnoreCase);
+                    var insertCmdCache = new Dictionary<string, (OleDbCommand Cmd, List<string> Cols)>(StringComparer.OrdinalIgnoreCase);
+                    var updateCmdCache = new Dictionary<string, (OleDbCommand Cmd, List<string> Cols, int KeyIndex)>(StringComparer.OrdinalIgnoreCase);
+                    var pkColCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                     try
                     {
                         // Use a single batch timestamp to reduce DateTime.UtcNow calls
                         var nowUtc = DateTime.UtcNow;
-                        var tableColsCache = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-                        // Cache for archive commands per table (soft delete path)
-                        var archiveCmdCache = new Dictionary<string, OleDbCommand>(StringComparer.OrdinalIgnoreCase);
-                        // Cache prepared INSERT commands per (table|cols-signature)
-                        var insertCmdCache = new Dictionary<string, (OleDbCommand Cmd, List<string> Cols)>(StringComparer.OrdinalIgnoreCase);
-                        // Cache prepared UPDATE commands per (table|cols-signature|keyColumn)
-                        var updateCmdCache = new Dictionary<string, (OleDbCommand Cmd, List<string> Cols, int KeyIndex)>(StringComparer.OrdinalIgnoreCase);
-                        // Cache for primary key column names per table
-                        var pkColCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        // caches declared above
 
                         Func<string, Task<HashSet<string>>> getColsAsync = async (table) =>
                         {

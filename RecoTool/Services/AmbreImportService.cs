@@ -26,6 +26,7 @@ namespace RecoTool.Services
         private readonly OfflineFirstService _offlineFirstService;
         private readonly TransformationService _transformationService;
         private readonly string _currentUser;
+        private static readonly System.Threading.SemaphoreSlim _backgroundSyncGate = new System.Threading.SemaphoreSlim(1, 1);
 
         /// <summary>
         /// Constructeur avec OfflineFirstService
@@ -138,23 +139,8 @@ namespace RecoTool.Services
                 result.EndTime = DateTime.Now;
                 result.ProcessedRecords = validData.Count;
 
-                // Démarrer la synchronisation réseau en arrière-plan
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        LogManager.Info($"Démarrage de la synchronisation réseau en arrière-plan pour {countryId}");
-                        bool syncSuccess = await _offlineFirstService.SynchronizeData();
-                        if (syncSuccess)
-                            LogManager.Info($"Synchronisation réseau réussie (arrière-plan) pour {countryId}");
-                        else
-                            LogManager.Warning($"Synchronisation réseau échouée (arrière-plan) pour {countryId}");
-                    }
-                    catch (Exception syncEx)
-                    {
-                        LogManager.Error($"Erreur lors de la synchronisation réseau (arrière-plan) pour {countryId}", syncEx);
-                    }
-                });
+                // Démarrer la synchronisation réseau en arrière-plan (une seule instance à la fois)
+                _ = StartBackgroundSyncIfIdle(countryId);
 
                 return result;
             }
@@ -164,6 +150,40 @@ namespace RecoTool.Services
                 result.EndTime = DateTime.Now;
                 return result;
             }
+        }
+
+        /// <summary>
+        /// Lance une synchronisation réseau en arrière-plan si aucune n'est déjà en cours.
+        /// Empêche les verrous persistants en évitant les synchros concurrentes.
+        /// </summary>
+        private async Task StartBackgroundSyncIfIdle(string countryId)
+        {
+            if (!await _backgroundSyncGate.WaitAsync(0))
+            {
+                LogManager.Info("Synchronisation réseau déjà en cours en arrière-plan - nouvelle demande ignorée");
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    LogManager.Info($"Démarrage de la synchronisation réseau en arrière-plan pour {countryId}");
+                    bool syncSuccess = await _offlineFirstService.SynchronizeData();
+                    if (syncSuccess)
+                        LogManager.Info($"Synchronisation réseau réussie (arrière-plan) pour {countryId}");
+                    else
+                        LogManager.Warning($"Synchronisation réseau échouée (arrière-plan) pour {countryId}");
+                }
+                catch (Exception syncEx)
+                {
+                    LogManager.Error($"Erreur lors de la synchronisation réseau (arrière-plan) pour {countryId}", syncEx);
+                }
+                finally
+                {
+                    _backgroundSyncGate.Release();
+                }
+            });
         }
 
         /// <summary>
@@ -353,17 +373,48 @@ namespace RecoTool.Services
         private async Task<(int newCount, int updatedCount, int deletedCount)> SynchronizeWithDatabase(List<DataAmbre> newData, string countryId, bool performNetworkSync)
         {
             ImportChanges changes;
+            var gateHeld = false;
+            try
+            {
 
-            // Acquérir le verrou global pour bloquer les écritures réseau pendant l'import
-            // La libération se fait automatiquement via Dispose() (pattern using)
-            using (var globalLock = await _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", TimeSpan.FromMinutes(30)))
+            // S'assurer qu'aucune synchronisation réseau en arrière-plan ne tourne avant d'acquérir le verrou global
+            try
+            {
+                LogManager.Info("Vérification des synchronisations réseau en cours avant l'acquisition du verrou global...");
+                await _backgroundSyncGate.WaitAsync();
+                gateHeld = true;
+            }
+            catch (Exception ex)
+            {
+                LogManager.Warning($"Impossible d'acquérir le sémaphore de synchro réseau: {ex.Message}. Poursuite de l'opération locale.");
+            }
+
+            // Acquérir le verrou global pour bloquer les écritures réseau pendant l'import, avec timeout explicite
+            var lockWaitStart = DateTime.Now;
+            var lockTimeout = TimeSpan.FromMinutes(2); // Timeout explicite pour éviter l'attente infinie
+            LogManager.Info($"Tentative d'acquisition du verrou global pour {countryId} (timeout {lockTimeout.TotalSeconds} sec)...");
+
+            var acquireTask = _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", TimeSpan.FromMinutes(30));
+            var completed = await Task.WhenAny(acquireTask, Task.Delay(lockTimeout));
+            if (completed != acquireTask)
+            {
+                var waited = DateTime.Now - lockWaitStart;
+                var msg = $"Impossible d'obtenir le verrou global pour {countryId} dans le délai imparti ({lockTimeout.TotalSeconds} sec). Veuillez réessayer.";
+                var timeoutEx = new TimeoutException(msg);
+                LogManager.Error($"Timeout ({waited.TotalSeconds:F0}s) lors de l'attente du verrou global pour {countryId}. Opération annulée.", timeoutEx);
+                throw timeoutEx;
+            }
+
+            var globalLockHandle = await acquireTask;
+            using (var globalLock = globalLockHandle)
             {
                 if (globalLock == null)
                 {
                     throw new InvalidOperationException($"Impossible d'acquérir le verrou global pour {countryId}. Import annulé.");
                 }
 
-                LogManager.Info($"Verrou global acquis pour {countryId}");
+                var waited = DateTime.Now - lockWaitStart;
+                LogManager.Info($"Verrou global acquis pour {countryId} après {waited.TotalSeconds:F0}s d'attente");
 
                 try
                 {
@@ -417,6 +468,14 @@ namespace RecoTool.Services
             }
             
             return (changes.ToAdd.Count, changes.ToUpdate.Count, changes.ToArchive.Count);
+            }
+            finally
+            {
+                if (gateHeld)
+                {
+                    try { _backgroundSyncGate.Release(); } catch { }
+                }
+            }
         }
 
         /// <summary>
@@ -665,7 +724,7 @@ namespace RecoTool.Services
         /// </summary>
         private string GetUniqueKey(DataAmbre data)
         {
-            return $"{data.Country}_{data.Account_ID}_{data.Event_Num}_{data.Operation_Date?.ToString("yyyyMMdd")}_{data.SignedAmount}";
+            return $"{data.Country}_{data.Account_ID}_{data.Event_Num}_{data.ReconciliationOrigin_Num}_{data.Operation_Date?.ToString("yyyyMMdd")}_{data.SignedAmount}";
         }
 
         /// <summary>

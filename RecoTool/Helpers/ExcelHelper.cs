@@ -142,13 +142,13 @@ namespace RecoTool.Helpers
                     }
 
                     // Progression (en pourcentage)
-                    if (progress != null)
-                    {
-                        int currentRow = r;
-                        int percent = (int)Math.Round(currentRow * 100.0 / totalRows);
-                        if (percent > 100) percent = 100;
-                        progress(percent);
-                    }
+                    //if (progress != null)
+                    //{
+                    //    int currentRow = r;
+                    //    int percent = (int)Math.Round(currentRow * 100.0 / totalRows);
+                    //    if (percent > 100) percent = 100;
+                    //    progress(percent);
+                    //}
                 }
 
                 return data;

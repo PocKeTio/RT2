@@ -196,14 +196,14 @@ namespace RecoTool.Helpers
                 errors.Add("Au moins un des montants (SignedAmount ou LocalSignedAmount) doit être différent de zéro.");
             }
 
-            // Vérifier la cohérence des dates
-            if (dataAmbre.Operation_Date.HasValue && dataAmbre.Value_Date.HasValue)
-            {
-                if (dataAmbre.Value_Date < dataAmbre.Operation_Date)
-                {
-                    errors.Add("La date de valeur ne peut pas être antérieure à la date d'opération.");
-                }
-            }
+            //// Vérifier la cohérence des dates
+            //if (dataAmbre.Operation_Date.HasValue && dataAmbre.Value_Date.HasValue)
+            //{
+            //    if (dataAmbre.Value_Date < dataAmbre.Operation_Date)
+            //    {
+            //        errors.Add("La date de valeur ne peut pas être antérieure à la date d'opération.");
+            //    }
+            //}
 
             return errors;
         }

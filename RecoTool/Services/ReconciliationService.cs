@@ -138,14 +138,14 @@ namespace RecoTool.Services
             string dwDataJoinCom = string.IsNullOrEmpty(dwEsc) ? "T_DW_Data AS dCom" : $"(SELECT * FROM [{dwEsc}].T_DW_Data) AS dCom";
             string dwGuaranteeJoin = string.IsNullOrEmpty(dwEsc) ? "T_DW_Guarantee AS g" : $"(SELECT * FROM [{dwEsc}].T_DW_Guarantee) AS g";
 
-            var query = $@"SELECT a.ROWGUID AS ROWGUID, r.*, a.*, 
+            var query = $@"SELECT r.*, a.*, 
                                    r.DWINGS_GuaranteeID AS DW_GUARANTEE_ID,
                                    dInv.INVOICE_ID AS DW_INVOICE_ID,
                                    dCom.COMMISSION_ID AS DW_COMMISSION_ID,
                                    r.ModifiedBy AS Reco_ModifiedBy,
                                    g.SYNDICATE, g.AMOUNT AS GUARANTEE_AMOUNT, g.CURRENCY AS GUARANTEE_CURRENCY, g.STATUS AS GUARANTEE_STATUS
                            FROM (((T_Data_Ambre AS a 
-                           LEFT JOIN T_Reconciliation AS r ON a.ROWGUID = r.ROWGUID)
+                           LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
                            LEFT JOIN {dwDataJoinInv} ON r.DWINGS_InvoiceID = dInv.INVOICE_ID)
                            LEFT JOIN {dwDataJoinCom} ON r.DWINGS_CommissionID = dCom.COMMISSION_ID)
                            LEFT JOIN {dwGuaranteeJoin} ON r.DWINGS_GuaranteeID = g.GUARANTEE_ID
@@ -543,16 +543,16 @@ namespace RecoTool.Services
         /// <summary>
         /// Récupère ou crée une réconciliation pour une ligne Ambre
         /// </summary>
-        public async Task<Reconciliation> GetOrCreateReconciliationAsync(string rowGuid)
+        public async Task<Reconciliation> GetOrCreateReconciliationAsync(string id)
         {
-            // Primary lookup by ROWGUID; fallback to ID for backward compatibility
-            var query = "SELECT * FROM T_Reconciliation WHERE ROWGUID = ? AND DeleteDate IS NULL";
-            var existing = await ExecuteQueryAsync<Reconciliation>(query, rowGuid);
+            // Lookup by ID
+            var query = "SELECT * FROM T_Reconciliation WHERE ID = ? AND DeleteDate IS NULL";
+            var existing = await ExecuteQueryAsync<Reconciliation>(query, id);
             
             if (existing.Any())
                 return existing.First();
 
-            return Reconciliation.CreateForAmbreLine(rowGuid);
+            return Reconciliation.CreateForAmbreLine(id);
         }
 
         /// <summary>
@@ -605,11 +605,11 @@ namespace RecoTool.Services
         /// </summary>
         private async Task SaveSingleReconciliationAsync(OleDbConnection connection, OleDbTransaction transaction, Reconciliation reconciliation)
         {
-            // Vérifier si l'enregistrement existe
-            var checkQuery = "SELECT COUNT(*) FROM T_Reconciliation WHERE ROWGUID = ?";
+            // Vérifier si l'enregistrement existe (par ID)
+            var checkQuery = "SELECT COUNT(*) FROM T_Reconciliation WHERE ID = ?";
             using (var checkCmd = new OleDbCommand(checkQuery, connection, transaction))
             {
-                checkCmd.Parameters.AddWithValue("@ROWGUID", reconciliation.ROWGUID);
+                checkCmd.Parameters.AddWithValue("@ID", reconciliation.ID);
                 var exists = (int)await checkCmd.ExecuteScalarAsync() > 0;
 
                 string query;
@@ -622,16 +622,16 @@ namespace RecoTool.Services
                              [ACK] = ?, [SwiftCode] = ?, [PaymentReference] = ?, [KPI] = ?,
                              [IncidentType] = ?, [RiskyItem] = ?, [ReasonNonRisky] = ?,
                              [ModifiedBy] = ?, [LastModified] = ?
-                             WHERE [ROWGUID] = ?";
+                             WHERE [ID] = ?";
                 }
                 else
                 {
                     query = @"INSERT INTO T_Reconciliation 
-                             ([ROWGUID], [ID], [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_CommissionID],
+                             ([ID], [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_CommissionID],
                               [Action], [Comments], [InternalInvoiceReference], [FirstClaimDate], [LastClaimDate],
                               [ToRemind], [ToRemindDate], [ACK], [SwiftCode], [PaymentReference], [KPI],
                               [IncidentType], [RiskyItem], [ReasonNonRisky], [CreationDate], [ModifiedBy], [LastModified])
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
                 }
 
                 using (var cmd = new OleDbCommand(query, connection, transaction))
@@ -649,9 +649,7 @@ namespace RecoTool.Services
         {
             if (isInsert)
             {
-                // ROWGUID first (used as stable key)
-                cmd.Parameters.AddWithValue("@ROWGUID", reconciliation.ROWGUID ?? (object)DBNull.Value);
-                // Keep legacy ID for backward compatibility (may be null)
+                // ID as stable key
                 cmd.Parameters.AddWithValue("@ID", reconciliation.ID ?? (object)DBNull.Value);
             }
 
@@ -680,7 +678,7 @@ namespace RecoTool.Services
             cmd.Parameters.AddWithValue("@LastModified", reconciliation.LastModified.HasValue ? reconciliation.LastModified.Value.ToOADate() : (object)DBNull.Value);
 
             if (!isInsert)
-                cmd.Parameters.AddWithValue("@ROWGUID", reconciliation.ROWGUID);
+                cmd.Parameters.AddWithValue("@ID", reconciliation.ID);
         }
 
         #endregion

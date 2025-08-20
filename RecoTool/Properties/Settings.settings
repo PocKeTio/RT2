@@ -5,5 +5,8 @@
     <Setting Name="ReferentialDB" Type="System.String" Scope="User">
       <Value Profile="(Default)">C:\Users\Gianni\OneDrive\Desktop\RT\Referential_Common.accdb</Value>
     </Setting>
+    <Setting Name="AppIcon" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
   </Settings>
 </SettingsFile>

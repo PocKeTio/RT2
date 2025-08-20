@@ -384,7 +384,6 @@ namespace RecoTool.Windows
                 return new DataAmbre
                 {
                     ID = entity.ID?.ToString(),
-                    ROWGUID = entity.ROWGUID?.ToString(),
                     Account_ID = entity.Account_ID?.ToString(),
                     CCY = entity.CCY?.ToString(),
                     Country = entity.Country?.ToString(),
@@ -416,7 +415,6 @@ namespace RecoTool.Windows
                 return new Reconciliation
                 {
                     ID = entity.ID?.ToString(),
-                    ROWGUID = entity.ROWGUID?.ToString(),
                     DWINGS_GuaranteeID = entity.DWINGS_GuaranteeID?.ToString(),
                     DWINGS_InvoiceID = entity.DWINGS_InvoiceID?.ToString(),
                     DWINGS_CommissionID = entity.DWINGS_CommissionID?.ToString(),

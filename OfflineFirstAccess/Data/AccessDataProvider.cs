@@ -97,31 +97,31 @@ namespace OfflineFirstAccess.Data
                         foreach (var record in changesToApply)
                         {
                             var isDeleted = record.ContainsKey(_config.IsDeletedColumn) && (bool)record[_config.IsDeletedColumn];
-                            var guid = record[_config.PrimaryKeyGuidColumn].ToString();
+                            var id = record[_config.PrimaryKeyColumn].ToString();
 
                             if (isDeleted)
                             {
-                                var deleteSql = $"DELETE FROM [{tableName}] WHERE [{_config.PrimaryKeyGuidColumn}] = @guid";
+                                var deleteSql = $"DELETE FROM [{tableName}] WHERE [{_config.PrimaryKeyColumn}] = @id";
                                 using (var command = new OleDbCommand(deleteSql, connection, transaction))
                                 {
-                                    command.Parameters.AddWithValue("@guid", guid);
+                                    command.Parameters.AddWithValue("@id", id);
                                     await command.ExecuteNonQueryAsync();
                                 }
                             }
                             else
                             {
                                 // Optimized Upsert logic: Try UPDATE first, then INSERT.
-                                var updateSetClause = string.Join(", ", record.Keys.Where(k => k != _config.PrimaryKeyGuidColumn).Select(k => $"[{k}] = @{k}"));
-                                var updateSql = $"UPDATE [{tableName}] SET {updateSetClause} WHERE [{_config.PrimaryKeyGuidColumn}] = @guid";
+                                var updateSetClause = string.Join(", ", record.Keys.Where(k => k != _config.PrimaryKeyColumn).Select(k => $"[{k}] = @{k}"));
+                                var updateSql = $"UPDATE [{tableName}] SET {updateSetClause} WHERE [{_config.PrimaryKeyColumn}] = @id";
                                 int rowsAffected;
 
                                 using (var updateCommand = new OleDbCommand(updateSql, connection, transaction))
                                 {
-                                    foreach (var key in record.Keys.Where(k => k != _config.PrimaryKeyGuidColumn))
+                                    foreach (var key in record.Keys.Where(k => k != _config.PrimaryKeyColumn))
                                     {
                                         updateCommand.Parameters.AddWithValue($"@{key}", PrepareValueForDatabase(record[key]));
                                     }
-                                    updateCommand.Parameters.AddWithValue("@guid", guid);
+                                    updateCommand.Parameters.AddWithValue("@id", id);
                                     rowsAffected = await updateCommand.ExecuteNonQueryAsync();
                                 }
 
@@ -153,15 +153,15 @@ namespace OfflineFirstAccess.Data
             }
         }
 
-        public async Task<IEnumerable<GenericRecord>> GetRecordsByGuid(string tableName, IEnumerable<string> guids)
+        public async Task<IEnumerable<GenericRecord>> GetRecordsByIds(string tableName, IEnumerable<string> ids)
         {
             var records = new List<GenericRecord>();
-            if (guids == null)
+            if (ids == null)
                 return records;
 
-            // Sanitize GUID list: remove null/empty and duplicates
-            var guidList = guids.Where(g => !string.IsNullOrWhiteSpace(g)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            if (guidList.Count == 0)
+            // Sanitize ID list: remove null/empty and duplicates
+            var idList = ids.Where(g => !string.IsNullOrWhiteSpace(g)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (idList.Count == 0)
                 return records;
 
             using (var connection = new OleDbConnection(_connectionString))
@@ -181,22 +181,22 @@ namespace OfflineFirstAccess.Data
                 // Validate column exists
                 var colSchema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Columns, new object[] { null, null, tableName, null });
                 bool columnExists = colSchema != null && colSchema.Rows.OfType<DataRow>()
-                    .Any(r => string.Equals(r["COLUMN_NAME"].ToString(), _config.PrimaryKeyGuidColumn, StringComparison.OrdinalIgnoreCase));
+                    .Any(r => string.Equals(r["COLUMN_NAME"].ToString(), _config.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase));
                 if (!columnExists)
                 {
-                    throw new InvalidOperationException($"Colonne '{_config.PrimaryKeyGuidColumn}' introuvable dans la table '{tableName}'. Colonnes: " +
+                    throw new InvalidOperationException($"Colonne '{_config.PrimaryKeyColumn}' introuvable dans la table '{tableName}'. Colonnes: " +
                         string.Join(", ", colSchema?.Rows.OfType<DataRow>().Select(r => r["COLUMN_NAME"].ToString()) ?? Array.Empty<string>()));
                 }
 
                 // Build query and parameters
-                var parameterPlaceholders = string.Join(",", guidList.Select((_, i) => $"@p{i}"));
-                var query = $"SELECT * FROM [{tableName}] WHERE [{_config.PrimaryKeyGuidColumn}] IN ({parameterPlaceholders})";
+                var parameterPlaceholders = string.Join(",", idList.Select((_, i) => $"@p{i}"));
+                var query = $"SELECT * FROM [{tableName}] WHERE [{_config.PrimaryKeyColumn}] IN ({parameterPlaceholders})";
 
                 using (var command = new OleDbCommand(query, connection))
                 {
-                    for (int i = 0; i < guidList.Count; i++)
+                    for (int i = 0; i < idList.Count; i++)
                     {
-                        command.Parameters.AddWithValue($"@p{i}", guidList[i]);
+                        command.Parameters.AddWithValue($"@p{i}", idList[i]);
                     }
 
                     using (var reader = await command.ExecuteReaderAsync())

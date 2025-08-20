@@ -720,7 +720,6 @@ namespace RecoTool.Windows
                     // Sauvegarder les modifications
                     var reconciliation = new Reconciliation
                     {
-                        ROWGUID = item.ROWGUID,
                         ID = item.ID, // legacy compatibility
                         DWINGS_GuaranteeID = item.DWINGS_GuaranteeID,
                         DWINGS_InvoiceID = item.DWINGS_InvoiceID,
@@ -755,18 +754,17 @@ namespace RecoTool.Windows
                 {
                     try
                     {
-                        // Empty or default => clear
+                        // Empty or default => clear (do NOT reload page data)
                         if (string.IsNullOrWhiteSpace(selectedFilter?.UFI_SQL))
                         {
                             _currentFilter = null;
                             _currentFilterName = null;
-                            _skipReloadSavedLists = true;
-                            try { _ = LoadDataAsync(); }
-                            finally { _skipReloadSavedLists = false; }
                         }
                         else
                         {
-                            ApplySavedFilter(selectedFilter);
+                            // Apply for next added view only (do NOT reload page data)
+                            _currentFilter = selectedFilter.UFI_SQL;
+                            _currentFilterName = selectedFilter.UFI_Name;
                         }
                     }
                     catch (Exception ex)
@@ -793,21 +791,18 @@ namespace RecoTool.Windows
                     {
                         if (string.IsNullOrWhiteSpace(preset.WhereClause))
                         {
-                            // None selected -> clear view filter
+                            // None selected -> clear view filter (do NOT reload page data)
                             _currentFilter = null;
                             _currentFilterName = null;
                         }
                         else
                         {
+                            // Set for next added view only (do NOT reload page data)
                             _currentFilter = preset.WhereClause;
                             _currentFilterName = preset.Name;
                         }
                     }
-
-                    // Recharger les données pour appliquer la sélection
-                    _skipReloadSavedLists = true;
-                    try { await LoadDataAsync(); }
-                    finally { _skipReloadSavedLists = false; }
+                    // Intentionally no LoadDataAsync here to avoid impacting account/top filters
                 }
                 catch (Exception ex)
                 {
@@ -1139,13 +1134,13 @@ namespace RecoTool.Windows
 
         #endregion
 
-        private void AddView_Click(object sender, RoutedEventArgs e)
+        private async void AddView_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 // Le type de vue est déterminé par SelectedViewType
                 var popup = string.Equals(SelectedViewType, "Popup", StringComparison.OrdinalIgnoreCase);
-                AddReconciliationView(popup);
+                await AddReconciliationView(popup);
             }
             catch (Exception ex)
             {
@@ -1153,7 +1148,7 @@ namespace RecoTool.Windows
             }
         }
 
-        private void AddReconciliationView(bool asPopup = false)
+        private async Task AddReconciliationView(bool asPopup = false)
         {
             if (_reconciliationService == null)
             {
@@ -1206,6 +1201,19 @@ namespace RecoTool.Windows
                     view.ApplySavedFilterSql(_currentFilter);
                     if (!string.IsNullOrWhiteSpace(_currentFilterName))
                         view.SetViewTitle(_currentFilterName);
+                    // Try to apply saved layout for the selected view
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(_currentFilterName))
+                        {
+                            var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(_currentFilterName);
+                            if (!string.IsNullOrWhiteSpace(pref?.UPF_ColumnWidths))
+                            {
+                                view.ApplyLayoutJson(pref.UPF_ColumnWidths);
+                            }
+                        }
+                    }
+                    catch { }
                 }
                 view.Refresh();
                 wnd.Show();
@@ -1230,6 +1238,19 @@ namespace RecoTool.Windows
                 view.ApplySavedFilterSql(_currentFilter);
                 if (!string.IsNullOrWhiteSpace(_currentFilterName))
                     view.SetViewTitle(_currentFilterName);
+                // Try to apply saved layout for the selected view
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(_currentFilterName))
+                    {
+                        var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(_currentFilterName);
+                        if (!string.IsNullOrWhiteSpace(pref?.UPF_ColumnWidths))
+                        {
+                            view.ApplyLayoutJson(pref.UPF_ColumnWidths);
+                        }
+                    }
+                }
+                catch { }
             }
             view.Refresh();
 

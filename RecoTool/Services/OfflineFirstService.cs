@@ -51,6 +51,21 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Chaîne de connexion vers la base locale d'un pays donné.
+        /// Ne nécessite pas que le pays soit le courant.
+        /// </summary>
+        public string GetCountryConnectionString(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+            string dataDirectory = GetParameter("DataDirectory");
+            string countryPrefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            if (string.IsNullOrWhiteSpace(dataDirectory))
+                throw new InvalidOperationException("Paramètre DataDirectory manquant (T_Param)");
+            string localDbPath = Path.Combine(dataDirectory, $"{countryPrefix}{countryId}.accdb");
+            return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={localDbPath};";
+        }
+
+        /// <summary>
         /// Applique en lot des ajouts/mises à jour/archivages dans une seule connexion et transaction.
         /// Réduit drastiquement le coût des imports volumineux.
         /// </summary>
@@ -69,7 +84,7 @@ namespace RecoTool.Services
                 await connection.OpenAsync();
                 using (var tx = connection.BeginTransaction())
                 {
-                    var changeTuples = new List<(string TableName, string RowGuid, string OperationType)>();
+                    var changeTuples = new List<(string TableName, string RecordId, string OperationType)>();
                     // Caches must be declared outside try to be visible in finally
                     var tableColsCache = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
                     var archiveCmdCache = new Dictionary<string, OleDbCommand>(StringComparer.OrdinalIgnoreCase);
@@ -100,20 +115,15 @@ namespace RecoTool.Services
                             return pk;
                         };
 
-                        // Helpers
-                        Func<Entity, HashSet<string>, string> getRowGuidCol = (e, cols) =>
-                            cols.Contains(_syncConfig.PrimaryKeyGuidColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.PrimaryKeyGuidColumn : null;
+                        // No RowGuid usage anymore; rely on primary key
 
                         // INSERTS
                         foreach (var entity in toAdd)
                         {
                             var cols = await getColsAsync(entity.TableName);
-                            var rowGuidCol = getRowGuidCol(entity, cols);
                             var lastModCol = cols.Contains(_syncConfig.LastModifiedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.LastModifiedColumn : (cols.Contains("LastModified", StringComparer.OrdinalIgnoreCase) ? "LastModified" : null);
                             var isDeletedCol = cols.Contains(_syncConfig.IsDeletedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.IsDeletedColumn : (cols.Contains("DeleteDate", StringComparer.OrdinalIgnoreCase) ? "DeleteDate" : null);
 
-                            if (rowGuidCol != null && (!entity.Properties.ContainsKey(rowGuidCol) || entity.Properties[rowGuidCol] == null))
-                                entity.Properties[rowGuidCol] = Guid.NewGuid().ToString();
                             if (lastModCol != null)
                                 entity.Properties[lastModCol] = nowUtc;
                             if (isDeletedCol != null)
@@ -148,10 +158,21 @@ namespace RecoTool.Services
                                 tup.Cmd.Parameters[i].Value = prepared;
                             }
                             await tup.Cmd.ExecuteNonQueryAsync();
-                            // Avoid extra PK lookup: RowGuid is ensured when available and used for change tracking
-                            string chKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol)
-                                ? entity.Properties[rowGuidCol]?.ToString()
-                                : null;
+                            // Determine PK value for change logging: prefer provided PK else fetch last identity
+                            var pkColumn = await getPkColAsync(entity.TableName);
+                            object keyVal = null;
+                            if (entity.Properties.ContainsKey(pkColumn) && entity.Properties[pkColumn] != null)
+                            {
+                                keyVal = entity.Properties[pkColumn];
+                            }
+                            else
+                            {
+                                using (var idCmd = new OleDbCommand("SELECT @@IDENTITY", connection, tx))
+                                {
+                                    keyVal = await idCmd.ExecuteScalarAsync();
+                                }
+                            }
+                            string chKey = keyVal?.ToString();
                             changeTuples.Add((entity.TableName, chKey, "INSERT"));
                         }
 
@@ -159,24 +180,19 @@ namespace RecoTool.Services
                         foreach (var entity in toUpdate)
                         {
                             var cols = await getColsAsync(entity.TableName);
-                            var rowGuidCol = getRowGuidCol(entity, cols);
                             var lastModCol = cols.Contains(_syncConfig.LastModifiedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.LastModifiedColumn : (cols.Contains("LastModified", StringComparer.OrdinalIgnoreCase) ? "LastModified" : null);
                             if (lastModCol != null)
                                 entity.Properties[lastModCol] = nowUtc;
 
-                            var updatable = entity.Properties.Keys.Where(k => (rowGuidCol == null || !k.Equals(rowGuidCol, StringComparison.OrdinalIgnoreCase)) && cols.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
+                            var pkColumn = await getPkColAsync(entity.TableName);
+                            var updatable = entity.Properties.Keys.Where(k => !string.Equals(k, pkColumn, StringComparison.OrdinalIgnoreCase) && cols.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
                             if (updatable.Count == 0) continue;
 
                             // Determine key
-                            string keyColumn = rowGuidCol;
-                            object keyValue = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol] : null;
-                            if (keyColumn == null || keyValue == null)
-                            {
-                                keyColumn = await getPkColAsync(entity.TableName);
-                                if (!entity.Properties.ContainsKey(keyColumn))
-                                    throw new InvalidOperationException($"Valeur de clé introuvable pour la table {entity.TableName} (colonne {keyColumn})");
-                                keyValue = entity.Properties[keyColumn];
-                            }
+                            string keyColumn = pkColumn;
+                            if (!entity.Properties.ContainsKey(keyColumn))
+                                throw new InvalidOperationException($"Valeur de clé introuvable pour la table {entity.TableName} (colonne {keyColumn})");
+                            object keyValue = entity.Properties[keyColumn];
 
                             var upSig = $"{entity.TableName}||{string.Join("|", updatable)}||{keyColumn}";
                             if (!updateCmdCache.TryGetValue(upSig, out var upd))
@@ -201,7 +217,7 @@ namespace RecoTool.Services
                             }
                             upd.Cmd.Parameters[upd.KeyIndex].Value = keyValue ?? DBNull.Value;
                             await upd.Cmd.ExecuteNonQueryAsync();
-                            string chKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol]?.ToString() : keyValue?.ToString();
+                            string chKey = keyValue?.ToString();
                             changeTuples.Add((entity.TableName, chKey, "UPDATE"));
                         }
 
@@ -209,21 +225,15 @@ namespace RecoTool.Services
                         foreach (var entity in toArchive)
                         {
                             var cols = await getColsAsync(entity.TableName);
-                            var rowGuidCol = getRowGuidCol(entity, cols);
                             var lastModCol = cols.Contains(_syncConfig.LastModifiedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.LastModifiedColumn : (cols.Contains("LastModified", StringComparer.OrdinalIgnoreCase) ? "LastModified" : null);
                             var hasIsDeleted = cols.Contains(_syncConfig.IsDeletedColumn, StringComparer.OrdinalIgnoreCase);
                             var hasDeleteDate = cols.Contains("DeleteDate", StringComparer.OrdinalIgnoreCase);
 
                             // Determine key
-                            string keyColumn = rowGuidCol;
-                            object keyValue = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol] : null;
-                            if (keyColumn == null || keyValue == null)
-                            {
-                                keyColumn = await GetPrimaryKeyColumnAsync(connection, entity.TableName) ?? "ID";
-                                if (!entity.Properties.ContainsKey(keyColumn))
-                                    throw new InvalidOperationException($"Valeur de clé introuvable pour la table {entity.TableName} (colonne {keyColumn})");
-                                keyValue = entity.Properties[keyColumn];
-                            }
+                            string keyColumn = await GetPrimaryKeyColumnAsync(connection, entity.TableName) ?? "ID";
+                            if (!entity.Properties.ContainsKey(keyColumn))
+                                throw new InvalidOperationException($"Valeur de clé introuvable pour la table {entity.TableName} (colonne {keyColumn})");
+                            object keyValue = entity.Properties[keyColumn];
 
                             if (hasIsDeleted || hasDeleteDate)
                             {
@@ -265,7 +275,7 @@ namespace RecoTool.Services
                                     await cmd.ExecuteNonQueryAsync();
                                 }
                             }
-                            string chKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol]?.ToString() : keyValue?.ToString();
+                            string chKey = keyValue?.ToString();
                             changeTuples.Add((entity.TableName, chKey, "DELETE"));
                         }
 
@@ -426,6 +436,43 @@ namespace RecoTool.Services
                             cleanup.Parameters.AddWithValue("@ExpiresAt", now.ToOADate());
                             await cleanup.ExecuteNonQueryAsync();
                         }
+
+                        // Purge stale self-locks: same machine, process no longer alive
+                        try
+                        {
+                            using (var selectSelf = new OleDbCommand("SELECT LockID, ProcessId FROM SyncLocks WHERE (ExpiresAt IS NULL OR ExpiresAt > ?) AND MachineName = ?", connection))
+                            {
+                                selectSelf.Parameters.AddWithValue("@Now", now.ToOADate());
+                                selectSelf.Parameters.AddWithValue("@MachineName", Environment.MachineName);
+                                using (var reader = await selectSelf.ExecuteReaderAsync())
+                                {
+                                    var staleIds = new List<string>();
+                                    while (await reader.ReadAsync())
+                                    {
+                                        string id = reader["LockID"]?.ToString();
+                                        int pid = 0;
+                                        try { pid = Convert.ToInt32(reader["ProcessId"]); } catch { pid = 0; }
+                                        bool alive = false;
+                                        if (pid > 0)
+                                        {
+                                            try { var p = System.Diagnostics.Process.GetProcessById(pid); alive = (p != null && !p.HasExited); } catch { alive = false; }
+                                        }
+                                        if (!alive && !string.IsNullOrEmpty(id)) staleIds.Add(id);
+                                    }
+                                    reader.Close();
+
+                                    foreach (var id in staleIds)
+                                    {
+                                        using (var del = new OleDbCommand("DELETE FROM SyncLocks WHERE LockID = ?", connection))
+                                        {
+                                            del.Parameters.AddWithValue("@LockID", id);
+                                            await del.ExecuteNonQueryAsync();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch { /* best-effort cleanup */ }
 
                         // Check if a global lock is already held
                         using (var check = new OleDbCommand("SELECT COUNT(*) FROM SyncLocks WHERE ExpiresAt IS NULL OR ExpiresAt > ?", connection))
@@ -594,6 +641,30 @@ namespace RecoTool.Services
             }
         }
 
+        /// <summary>
+        /// Pays actuellement sélectionné (lecture seule)
+        /// </summary>
+        public Country CurrentCountry => _currentCountry;
+
+        /// <summary>
+        /// Identifiant du pays actuellement sélectionné (lecture seule)
+        /// </summary>
+        public string CurrentCountryId => _currentCountryId;
+
+        /// <summary>
+        /// Liste des pays depuis les référentiels (copie pour immutabilité côté appelant)
+        /// </summary>
+        public List<Country> Countries
+        {
+            get
+            {
+                lock (_referentialLock)
+                {
+                    return new List<Country>(_countries);
+                }
+            }
+        }
+
         #endregion
 
         #region Constructor
@@ -614,6 +685,154 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Charge toutes les tables référentielles en mémoire une seule fois, de manière thread-safe.
+        /// </summary>
+        public async Task LoadReferentialsAsync()
+        {
+            // Double-checked locking pour éviter les rechargements inutiles
+            if (_referentialsLoaded) return;
+
+            List<AmbreImportField> ambreImportFields = new List<AmbreImportField>();
+            List<AmbreTransactionCode> ambreTransactionCodes = new List<AmbreTransactionCode>();
+            List<AmbreTransform> ambreTransforms = new List<AmbreTransform>();
+            List<Country> countries = new List<Country>();
+            List<UserField> userFields = new List<UserField>();
+            List<UserFilter> userFilters = new List<UserFilter>();
+            List<Param> parameters = new List<Param>();
+
+            try
+            {
+                using (var connection = new OleDbConnection(ReferentialDatabasePath))
+                {
+                    await connection.OpenAsync();
+
+                    // Helpers locaux
+                    async Task LoadListAsync<T>(string sql, Func<IDataReader, T> map, List<T> target)
+                    {
+                        using (var cmd = new OleDbCommand(sql, connection))
+                        using (var reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                                target.Add(map(reader));
+                        }
+                    }
+
+                    await LoadListAsync(
+                        "SELECT AMB_Source, AMB_Destination FROM T_Ref_Ambre_ImportFields ORDER BY AMB_Source",
+                        r => new AmbreImportField
+                        {
+                            AMB_Source = r["AMB_Source"]?.ToString(),
+                            AMB_Destination = r["AMB_Destination"]?.ToString()
+                        },
+                        ambreImportFields);
+
+                    await LoadListAsync(
+                        "SELECT ATC_ID, ATC_CODE, ATC_TAG FROM T_Ref_Ambre_TransactionCodes ORDER BY ATC_ID",
+                        r => new AmbreTransactionCode
+                        {
+                            ATC_ID = Convert.ToInt32(r["ATC_ID"]),
+                            ATC_CODE = r["ATC_CODE"]?.ToString(),
+                            ATC_TAG = r["ATC_TAG"]?.ToString()
+                        },
+                        ambreTransactionCodes);
+
+                    await LoadListAsync(
+                        "SELECT AMB_Source, AMB_Destination, AMB_TransformationFunction, AMB_Description FROM T_Ref_Ambre_Transform",
+                        r => new AmbreTransform
+                        {
+                            AMB_Source = r["AMB_Source"]?.ToString(),
+                            AMB_Destination = r["AMB_Destination"]?.ToString(),
+                            AMB_TransformationFunction = r["AMB_TransformationFunction"]?.ToString(),
+                            AMB_Description = r["AMB_Description"]?.ToString()
+                        },
+                        ambreTransforms);
+
+                    await LoadListAsync(
+                        "SELECT CNT_Id, CNT_Name, CNT_AmbrePivotCountryId, CNT_AmbrePivot, CNT_AmbreReceivable, CNT_AmbreReceivableCountryId, CNT_ServiceCode, CNT_BIC FROM T_Ref_Country ORDER BY CNT_Name",
+                        r => new Country
+                        {
+                            CNT_Id = r["CNT_Id"]?.ToString(),
+                            CNT_Name = r["CNT_Name"]?.ToString(),
+                            CNT_AmbrePivotCountryId = SafeInt(r["CNT_AmbrePivotCountryId"]),
+                            CNT_AmbrePivot = r["CNT_AmbrePivot"]?.ToString(),
+                            CNT_AmbreReceivable = r["CNT_AmbreReceivable"]?.ToString(),
+                            CNT_AmbreReceivableCountryId = SafeInt(r["CNT_AmbreReceivableCountryId"]),
+                            CNT_ServiceCode = r["CNT_ServiceCode"]?.ToString(),
+                            CNT_BIC = r["CNT_BIC"]?.ToString()
+                        },
+                        countries);
+
+                    await LoadListAsync(
+                        "SELECT USR_ID, USR_Category, USR_FieldName, USR_FieldDescription, USR_Pivot, USR_Receivable, USR_Color FROM T_Ref_User_Fields ORDER BY USR_Category, USR_FieldName",
+                        r => new UserField
+                        {
+                            USR_ID = SafeInt(r["USR_ID"]),
+                            USR_Category = r["USR_Category"]?.ToString(),
+                            USR_FieldName = r["USR_FieldName"]?.ToString(),
+                            USR_FieldDescription = r["USR_FieldDescription"]?.ToString(),
+                            USR_Pivot = SafeBool(r["USR_Pivot"]),
+                            USR_Receivable = SafeBool(r["USR_Receivable"]),
+                            USR_Color = r["USR_Color"]?.ToString()
+                        },
+                        userFields);
+
+                    await LoadListAsync(
+                        "SELECT UFI_id, UFI_Name, UFI_SQL, UFI_CreatedBy FROM T_Ref_User_Filter ORDER BY UFI_Name",
+                        r => new UserFilter
+                        {
+                            UFI_id = SafeInt(r["UFI_id"]),
+                            UFI_Name = r["UFI_Name"]?.ToString(),
+                            UFI_SQL = r["UFI_SQL"]?.ToString(),
+                            UFI_CreatedBy = r["UFI_CreatedBy"]?.ToString()
+                        },
+                        userFilters);
+
+                    await LoadListAsync(
+                        "SELECT PAR_Key, PAR_Value, PAR_Description FROM T_Param",
+                        r => new Param
+                        {
+                            PAR_Key = r["PAR_Key"]?.ToString(),
+                            PAR_Value = r["PAR_Value"]?.ToString(),
+                            PAR_Description = r["PAR_Description"]?.ToString()
+                        },
+                        parameters);
+                }
+
+                lock (_referentialLock)
+                {
+                    if (_referentialsLoaded) return; // quelqu'un a déjà chargé
+                    _ambreImportFields = ambreImportFields;
+                    _ambreTransactionCodes = ambreTransactionCodes;
+                    _ambreTransforms = ambreTransforms;
+                    _countries = countries;
+                    _userFields = userFields;
+                    _userFilters = userFilters;
+                    _params = parameters;
+                    _referentialsLoaded = true;
+                    _referentialsLoadTime = DateTime.UtcNow;
+                }
+
+                // Initialiser des propriétés dépendantes des paramètres (ajoute valeurs défaut si nécessaires)
+                InitializePropertiesFromParams();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[REF LOAD] Erreur lors du chargement des référentiels: {ex.Message}");
+                throw;
+            }
+
+            // Helpers locaux pour mapping
+            static int SafeInt(object o)
+            {
+                try { return o == null || o == DBNull.Value ? 0 : Convert.ToInt32(o); } catch { return 0; }
+            }
+            static bool SafeBool(object o)
+            {
+                try { return o != null && o != DBNull.Value && Convert.ToBoolean(o); } catch { return false; }
+            }
+        }
+
+        /// <summary>
         /// Valide l'existence des colonnes métadonnées requises sur les tables à synchroniser
         /// </summary>
         /// <param name="localDbPath">Chemin de la base locale</param>
@@ -623,14 +842,13 @@ namespace RecoTool.Services
             try
             {
                 if (tables == null) return;
-                using (var connection = new OleDbConnection($"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={localDbPath};"))
+                using (var connection = new OleDbConnection(GetLocalConnectionString()))
                 {
                     await connection.OpenAsync();
-
                     foreach (var table in tables)
                     {
                         if (string.IsNullOrWhiteSpace(table)) continue;
-                        var required = new[] { "RowGuid", "LastModified", "IsDeleted" };
+                        var required = new[] { "LastModified", "IsDeleted" };
                         var missing = new List<string>();
 
                         using (var schema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Columns, new object[] { null, null, table, null }))
@@ -658,858 +876,7 @@ namespace RecoTool.Services
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Erreur ValidateSyncTablesAsync: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Constructeur avec country spécifique
-        /// </summary>
-        /// <param name="countryId">ID du pays à gérer</param>
-        public OfflineFirstService(string countryId)
-        {
-            _currentUser = Environment.UserName;
-            _lastSyncTimes = new ConcurrentDictionary<string, DateTime>();
-            
-            // Charger la configuration depuis App.config
-            LoadConfiguration();
-            
-            // Charger les référentiels en mémoire
-            _ = LoadReferentialsAsync();
-            
-            // Initialiser pour le pays spécifié
-            _ = SetCurrentCountryAsync(countryId);
-        }
-
-        /// <summary>
-        /// Définit le pays courant et initialise la connexion pour ce pays
-        /// </summary>
-        /// <param name="countryId">ID du pays à activer</param>
-        public async Task<bool> SetCurrentCountryAsync(string countryId)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(countryId))
-                    return false;
-
-                // Charger les informations du pays depuis la base référentielle
-                var country = await GetCountryByIdAsync(countryId);
-                if (country == null)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Pays {countryId} non trouvé dans la base référentielle");
-                    return false;
-                }
-
-                // Initialiser la base locale pour ce pays avec notre logique personnalisée
-                bool initSuccess = await InitializeLocalDatabaseAsync(country.CNT_Id);
-                if (!initSuccess)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Échec de l'initialisation de la base locale pour {countryId}");
-                    return false;
-                }
-
-                // Nouvelle approche README: préparer la configuration et le service de synchro
-                _syncConfig = BuildSyncConfiguration(countryId);
-
-                // Assurer l'existence et la normalisation de la base de lock sans passer par l'ancien service
-                try
-                {
-                    string remoteDir = GetParameter("CountryDatabaseDirectory");
-                    string countryPrefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
-                    string lockDbPath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}_lock.accdb");
-                    if (!File.Exists(lockDbPath))
-                    {
-                        CreateLockDatabase(lockDbPath);
-                    }
-                    EnsureLockTablesExist(lockDbPath);
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[LOCK INIT] Erreur préparation base lock: {ex.Message}");
-                }
-
-                // Valider les tables à synchroniser (colonnes métadonnées requises)
-                await ValidateSyncTablesAsync(_syncConfig.LocalDatabasePath, _syncConfig.TablesToSync);
-
-                _syncService = new SynchronizationService();
-                await _syncService.InitializeAsync(_syncConfig);
-
-                // Mettre à jour le pays courant
-                _currentCountry = country;
-                _currentCountryId = countryId;
-                _isInitialized = true;
-                
-                System.Diagnostics.Debug.WriteLine($"OfflineFirstService initialisé pour le pays: {country.CNT_Name} ({countryId})");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Erreur lors de l'initialisation pour le pays {countryId}: {ex.Message}");
-                _isInitialized = false;
-                return false;
-            }
-        }
-        
-        /// <summary>
-        /// Obtient le pays actuellement actif
-        /// </summary>
-        public Country CurrentCountry => _currentCountry;
-        
-        /// <summary>
-        /// Obtient l'ID du pays actuellement actif
-        /// </summary>
-        public string CurrentCountryId => _currentCountryId;
-
-        #endregion
-
-        #region Propriétés d'accès aux référentiels (en mémoire)
-
-        /// <summary>
-        /// Accès aux champs d'import Ambre
-        /// </summary>
-        public IReadOnlyList<AmbreImportField> AmbreImportFields => _ambreImportFields.AsReadOnly();
-
-        /// <summary>
-        /// Accès aux codes de transaction Ambre
-        /// </summary>
-        public IReadOnlyList<AmbreTransactionCode> AmbreTransactionCodes => _ambreTransactionCodes.AsReadOnly();
-
-        /// <summary>
-        /// Accès aux transformations Ambre
-        /// </summary>
-        public IReadOnlyList<AmbreTransform> AmbreTransforms => _ambreTransforms.AsReadOnly();
-
-        /// <summary>
-        /// Accès aux pays
-        /// </summary>
-        public IReadOnlyList<Country> Countries => _countries.AsReadOnly();
-
-        /// <summary>
-        /// Accès aux champs utilisateur
-        /// </summary>
-        public IReadOnlyList<UserField> UserFields => _userFields.AsReadOnly();
-
-        
-
-        /// <summary>
-        /// Accès aux filtres utilisateur
-        /// </summary>
-        public IReadOnlyList<UserFilter> UserFilters => _userFilters.AsReadOnly();
-
-        /// <summary>
-        /// Accès aux paramètres de configuration
-        /// </summary>
-        public IReadOnlyList<Param> Params => _params.AsReadOnly();
-
-        /// <summary>
-        /// Indique si les référentiels sont chargés
-        /// </summary>
-        public bool AreReferentialsLoaded => _referentialsLoaded;
-
-        /// <summary>
-        /// Date/heure du dernier chargement des référentiels
-        /// </summary>
-        public DateTime? ReferentialsLoadTime => _referentialsLoaded ? _referentialsLoadTime : (DateTime?)null;
-
-        #endregion
-
-        #region Chargement des référentiels en mémoire
-
-        /// <summary>
-        /// Charge toutes les tables référentielles en mémoire (une seule fois)
-        /// </summary>
-        private async Task<bool> LoadReferentialsAsync()
-        {
-            lock (_referentialLock)
-            {
-                if (_referentialsLoaded)
-                    return true; // Déjà chargé
-            }
-
-            try
-            {
-                using (var connection = new OleDbConnection(ReferentialDatabasePath))
-                {
-                    await connection.OpenAsync();
-
-                    // Charger T_Ref_Ambre_ImportFields
-                    await LoadAmbreImportFieldsAsync(connection);
-                    
-                    // Charger T_Ref_Ambre_TransactionCodes
-                    await LoadAmbreTransactionCodesAsync(connection);
-                    
-                    // Charger T_Ref_Ambre_Transform
-                    await LoadAmbreTransformsAsync(connection);
-                    
-                    // Charger T_Ref_Country
-                    await LoadCountriesAsync(connection);
-                    
-                    // Charger T_Ref_User_Fields
-                    await LoadUserFieldsAsync(connection);
-                    
-                    // [Deprecated] Ancien modèle de préférences par champ (UPF_FieldName...).
-                    // Ne plus charger: remplacé par les "Saved Views" via ReconciliationService.
-                    // await LoadUserFieldPreferencesAsync(connection);
-                    
-                    // Charger T_Ref_User_Filter
-                    await LoadUserFiltersAsync(connection);
-                    
-                    // Charger la table des paramètres
-                    await LoadParamsAsync(connection);
-                }
-                
-                // Initialiser les propriétés depuis les paramètres chargés
-                InitializePropertiesFromParams();
-                // Note: DWINGS n'est plus chargé en mémoire. Accès direct via GetDW*Async()/QueryDWDatabaseAsync().
-
-                lock (_referentialLock)
-                {
-                    _referentialsLoaded = true;
-                    _referentialsLoadTime = DateTime.Now;
-                }
-
-                System.Diagnostics.Debug.WriteLine($"Référentiels chargés en mémoire à {_referentialsLoadTime:HH:mm:ss}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Erreur lors du chargement des référentiels: {ex.Message}");
-                return false;
-            }
-        }
-
-        private async Task LoadAmbreImportFieldsAsync(OleDbConnection connection)
-        {
-            var query = "SELECT AMB_Source, AMB_Destination FROM T_Ref_Ambre_ImportFields";
-            using (var cmd = new OleDbCommand(query, connection))
-            using (var reader = await cmd.ExecuteReaderAsync())
-            {
-                var list = new List<AmbreImportField>();
-                while (await reader.ReadAsync())
-                {
-                    list.Add(new AmbreImportField
-                    {
-                        AMB_Source = reader["AMB_Source"]?.ToString(),
-                        AMB_Destination = reader["AMB_Destination"]?.ToString()
-                    });
-                }
-                _ambreImportFields = list;
-            }
-        }
-
-        private async Task LoadAmbreTransactionCodesAsync(OleDbConnection connection)
-        {
-            var query = "SELECT ATC_ID, ATC_CODE, ATC_TAG FROM T_Ref_Ambre_TransactionCodes";
-            using (var cmd = new OleDbCommand(query, connection))
-            using (var reader = await cmd.ExecuteReaderAsync())
-            {
-                var list = new List<AmbreTransactionCode>();
-                while (await reader.ReadAsync())
-                {
-                    list.Add(new AmbreTransactionCode
-                    {
-                        ATC_ID = Convert.ToInt32(reader["ATC_ID"]),
-                        ATC_CODE = reader["ATC_CODE"]?.ToString(),
-                        ATC_TAG = reader["ATC_TAG"]?.ToString()
-                    });
-                }
-                _ambreTransactionCodes = list;
-            }
-        }
-
-        private async Task LoadAmbreTransformsAsync(OleDbConnection connection)
-        {
-            var query = "SELECT AMB_Source, AMB_Destination, AMB_TransformationFunction, AMB_Description FROM T_Ref_Ambre_Transform";
-            using (var cmd = new OleDbCommand(query, connection))
-            using (var reader = await cmd.ExecuteReaderAsync())
-            {
-                var list = new List<AmbreTransform>();
-                while (await reader.ReadAsync())
-                {
-                    list.Add(new AmbreTransform
-                    {
-                        AMB_Source = reader["AMB_Source"]?.ToString(),
-                        AMB_Destination = reader["AMB_Destination"]?.ToString(),
-                        AMB_TransformationFunction = reader["AMB_TransformationFunction"]?.ToString(),
-                        AMB_Description = reader["AMB_Description"]?.ToString()
-                    });
-                }
-                _ambreTransforms = list;
-            }
-        }
-
-        private async Task LoadCountriesAsync(OleDbConnection connection)
-        {
-            var query = @"SELECT CNT_Id, CNT_Name, CNT_AmbrePivotCountryId, CNT_AmbrePivot, 
-                                CNT_AmbreReceivable, CNT_AmbreReceivableCountryId, 
-                                CNT_ServiceCode, CNT_BIC 
-                         FROM T_Ref_Country";
-            using (var cmd = new OleDbCommand(query, connection))
-            using (var reader = await cmd.ExecuteReaderAsync())
-            {
-                var list = new List<Country>();
-                while (await reader.ReadAsync())
-                {
-                    list.Add(new Country
-                    {
-                        CNT_Id = reader["CNT_Id"]?.ToString(),
-                        CNT_Name = reader["CNT_Name"]?.ToString(),
-                        CNT_AmbrePivotCountryId = Convert.ToInt32(reader["CNT_AmbrePivotCountryId"] ?? 0),
-                        CNT_AmbrePivot = reader["CNT_AmbrePivot"]?.ToString(),
-                        CNT_AmbreReceivable = reader["CNT_AmbreReceivable"]?.ToString(),
-                        CNT_AmbreReceivableCountryId = Convert.ToInt32(reader["CNT_AmbreReceivableCountryId"] ?? 0),
-                        CNT_ServiceCode = reader["CNT_ServiceCode"]?.ToString(),
-                        CNT_BIC = reader["CNT_BIC"]?.ToString()
-                    });
-                }
-                _countries = list;
-            }
-        }
-
-        private async Task LoadUserFieldsAsync(OleDbConnection connection)
-        {
-            var query = "SELECT USR_ID, USR_Category, USR_FieldName, USR_FieldDescription, USR_Pivot, USR_Receivable, USR_Color FROM T_Ref_User_Fields";
-            using (var cmd = new OleDbCommand(query, connection))
-            using (var reader = await cmd.ExecuteReaderAsync())
-            {
-                var list = new List<UserField>();
-                while (await reader.ReadAsync())
-                {
-                    list.Add(new UserField
-                    {
-                        USR_ID = Convert.ToInt32(reader["USR_ID"]),
-                        USR_Category = reader["USR_Category"]?.ToString(),
-                        USR_FieldName = reader["USR_FieldName"]?.ToString(),
-                        USR_FieldDescription = reader["USR_FieldDescription"]?.ToString(),
-                        USR_Pivot = Convert.ToBoolean(reader["USR_Pivot"] ?? false),
-                        USR_Receivable = Convert.ToBoolean(reader["USR_Receivable"] ?? false),
-                        USR_Color = reader["USR_Color"] == DBNull.Value ? null : reader["USR_Color"].ToString()
-                    });
-                }
-                _userFields = list;
-            }
-        }
-
-        
-
-        private async Task LoadUserFiltersAsync(OleDbConnection connection)
-        {
-            var query = "SELECT UFI_id, UFI_Name, UFI_SQL, UFI_CreatedBy FROM T_Ref_User_Filter";
-            using (var cmd = new OleDbCommand(query, connection))
-            using (var reader = await cmd.ExecuteReaderAsync())
-            {
-                var list = new List<UserFilter>();
-                while (await reader.ReadAsync())
-                {
-                    list.Add(new UserFilter
-                    {
-                        UFI_id = Convert.ToInt32(reader["UFI_id"]),
-                        UFI_Name = reader["UFI_Name"]?.ToString(),
-                        UFI_SQL = reader["UFI_SQL"]?.ToString(),
-                        UFI_CreatedBy = reader["UFI_CreatedBy"]?.ToString()
-                    });
-                }
-                _userFilters = list;
-            }
-        }
-
-        private async Task LoadParamsAsync(OleDbConnection connection)
-        {
-            var query = "SELECT PAR_Key, PAR_Value, PAR_Description FROM T_Param";
-            using (var cmd = new OleDbCommand(query, connection))
-            using (var reader = await cmd.ExecuteReaderAsync())
-            {
-                var list = new List<Param>();
-                while (await reader.ReadAsync())
-                {
-                    list.Add(new Param
-                    {
-                        PAR_Key = reader["PAR_Key"]?.ToString(),
-                        PAR_Value = reader["PAR_Value"]?.ToString(),
-                        PAR_Description = reader["PAR_Description"]?.ToString()
-                    });
-                }
-                _params = list;
-            }
-        }
-
-        #endregion
-
-        #region Conflict Management
-
-        /// <summary>
-        /// Détecte les conflits dans les données
-        /// </summary>
-        /// <returns>Liste des conflits détectés</returns>
-        public async Task<List<object>> DetectConflicts()
-        {
-            try
-            {
-                if (!_isInitialized || _syncService == null)
-                {
-                    System.Diagnostics.Debug.WriteLine("Service non initialisé pour la détection de conflits");
-                    return new List<object>();
-                }
-
-                // TODO: Implémenter la vraie détection de conflits via l'API OfflineFirstAccess
-                // Pour l'instant, retourner une liste vide
-                return new List<object>();
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Erreur lors de la détection de conflits: {ex.Message}");
-                return new List<object>();
-            }
-        }
-
-        /// <summary>
-        /// Synchronise les données avec le serveur
-        /// </summary>
-        /// <returns>True si la synchronisation a réussi</returns>
-        public async Task<bool> SynchronizeData()
-        {
-            try
-            {
-                // Utilise désormais le SynchronizationService basé sur SyncConfiguration
-                if (!_isInitialized || _syncService == null)
-                {
-                    System.Diagnostics.Debug.WriteLine("Service non initialisé pour la synchronisation");
-                    return false;
-                }
-
-                var result = await _syncService.SynchronizeAsync();
-                if (!result.Success)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Synchronisation échouée: {result.Message}");
-                    return false;
-                }
-
-                // Mettre à jour le timestamp de dernière synchronisation
-                if (_currentCountryId != null)
-                {
-                    _lastSyncTimes[_currentCountryId] = DateTime.Now;
-                }
-
-                System.Diagnostics.Debug.WriteLine($"Synchronisation réussie pour le pays: {_currentCountryId}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Erreur lors de la synchronisation: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Résout un conflit spécifique
-        /// </summary>
-        /// <param name="conflict">Conflit à résoudre</param>
-        /// <param name="resolution">Résolution choisie</param>
-        /// <returns>True si le conflit a été résolu</returns>
-        public async Task<bool> ResolveConflict(object conflict, string resolution)
-        {
-            try
-            {
-                if (!_isInitialized || _syncService == null)
-                {
-                    System.Diagnostics.Debug.WriteLine("Service non initialisé pour la résolution de conflits");
-                    return false;
-                }
-
-                // TODO: Implémenter la vraie résolution de conflits via l'API OfflineFirstAccess
-                System.Diagnostics.Debug.WriteLine($"Conflit résolu avec la résolution: {resolution}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Erreur lors de la résolution de conflit: {ex.Message}");
-                return false;
-            }
-        }
-
-        #endregion
-
-        #region Helper Methods
-
-        /// <summary>
-        /// Récupère un pays spécifique par son ID depuis le cache mémoire
-        /// </summary>
-        /// <param name="countryId">ID du pays à récupérer</param>
-        /// <returns>Pays trouvé ou null</returns>
-        public async Task<Country> GetCountryByIdAsync(string countryId)
-        {
-            try
-            {
-                // S'assurer que les référentiels sont chargés
-                if (_countries.Count == 0)
-                {
-                    await LoadReferentialsAsync();
-                }
-
-                // Chercher dans le cache mémoire
-                var country = _countries.FirstOrDefault(c => c.CNT_Id == countryId);
-                
-                if (country != null)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Pays {countryId} trouvé en mémoire: {country.CNT_Name}");
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine($"Pays {countryId} non trouvé dans le cache mémoire");
-                }
-                
-                return country;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Erreur lors de la récupération du pays {countryId}: {ex.Message}");
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Récupère la liste des pays disponibles depuis le cache mémoire
-        /// </summary>
-        /// <returns>Liste des pays</returns>
-        public async Task<List<Country>> GetCountries()
-        {
-            try
-            {
-                // S'assurer que les référentiels sont chargés
-                if (!_referentialsLoaded)
-                {
-                    await LoadReferentialsAsync();
-                }
-
-                // Retourner une copie de la liste en mémoire
-                var countries = _countries.ToList();
-                
-                System.Diagnostics.Debug.WriteLine($"{countries.Count} pays disponibles dans le cache mémoire");
-                return countries;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Erreur lors de la récupération des pays : {ex.Message}");
-                return new List<Country>();
-            }
-        }
-
-        #endregion
-
-        #region OfflineFirst API Methods
-
-        /// <summary>
-        /// Retourne la liste des filtres sauvegardés (référentiel en mémoire)
-        /// </summary>
-        /// <param name="createdBy">Optionnel: filtre par créateur (insensible à la casse). Si null, retourne tous les filtres.</param>
-        public async Task<List<UserFilter>> GetUserFilters(string createdBy = null)
-        {
-            try
-            {
-                // S'assurer que les référentiels sont chargés
-                if (!_referentialsLoaded)
-                {
-                    await LoadReferentialsAsync();
-                }
-
-                var list = _userFilters?.ToList() ?? new List<UserFilter>();
-                if (!string.IsNullOrWhiteSpace(createdBy))
-                {
-                    list = list.Where(f => string.IsNullOrEmpty(f.UFI_CreatedBy) ||
-                                           f.UFI_CreatedBy.Equals(createdBy, StringComparison.OrdinalIgnoreCase))
-                               .ToList();
-                }
-                return list;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Erreur lors de la récupération des filtres utilisateur: {ex.Message}");
-                return new List<UserFilter>();
-            }
-        }
-
-        /// <summary>
-        /// Recharge la liste des filtres utilisateur depuis la base référentielle (met à jour le cache mémoire)
-        /// </summary>
-        public async Task<bool> RefreshUserFiltersAsync()
-        {
-            try
-            {
-                using (var connection = new OleDbConnection(ReferentialDatabasePath))
-                {
-                    await connection.OpenAsync();
-                    var query = "SELECT UFI_id, UFI_Name, UFI_SQL, UFI_CreatedBy FROM T_Ref_User_Filter";
-                    using (var cmd = new OleDbCommand(query, connection))
-                    using (var reader = await cmd.ExecuteReaderAsync())
-                    {
-                        var list = new List<UserFilter>();
-                        while (await reader.ReadAsync())
-                        {
-                            list.Add(new UserFilter
-                            {
-                                UFI_id = Convert.ToInt32(reader["UFI_id"]),
-                                UFI_Name = reader["UFI_Name"]?.ToString(),
-                                UFI_SQL = reader["UFI_SQL"]?.ToString(),
-                                UFI_CreatedBy = reader["UFI_CreatedBy"]?.ToString()
-                            });
-                        }
-                        _userFilters = list;
-                    }
-                }
-                return true;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Erreur lors du rafraîchissement des filtres utilisateur: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Synchronise les données avec la base distante
-        /// </summary>
-        /// <param name="identifier">Identifiant de contexte (pays)</param>
-        /// <param name="tables">Tables à synchroniser (null pour toutes)</param>
-        /// <param name="onProgress">Callback de progression</param>
-        /// <param name="cancellationToken">Token d'annulation</param>
-        /// <returns>Résultat de la synchronisation</returns>
-        public async Task<OfflineFirstAccess.Models.SyncResult> SynchronizeAsync(string identifier, List<string> tables = null, 
-            Action<int, string> onProgress = null, CancellationToken? cancellationToken = null)
-        {
-            if (!_isInitialized)
-            {
-                throw new InvalidOperationException("Le service n'est pas encore initialisé");
-            }
-
-            try
-            {
-                // Utilise désormais SynchronizationService (les tables prises en compte proviennent de _syncConfig)
-                if (_syncService == null)
-                    throw new InvalidOperationException("_syncService non initialisé");
-                var result = await _syncService.SynchronizeAsync(onProgress);
-
-                // Mettre à jour le temps de dernière synchronisation
-                _lastSyncTimes[identifier] = DateTime.Now;
-
-                return result;
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException($"Erreur lors de la synchronisation pour {identifier}: {ex.Message}", ex);
-            }
-        }
-
-        /// <summary>
-        /// Récupère toutes les entités d'une table
-        /// </summary>
-        /// <param name="identifier">Identifiant de contexte</param>
-        /// <param name="tableName">Nom de la table</param>
-        /// <returns>Liste des entités</returns>
-        public async Task<List<Entity>> GetEntitiesAsync(string identifier, string tableName)
-        {
-            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("tableName");
-            EnsureInitialized();
-            var results = new List<Entity>();
-            using (var connection = new OleDbConnection(GetLocalConnectionString()))
-            {
-                await connection.OpenAsync();
-                var cols = await GetTableColumnsAsync(connection, tableName);
-                string where = string.Empty;
-                if (cols.Contains(_syncConfig.IsDeletedColumn, StringComparer.OrdinalIgnoreCase))
-                {
-                    where = $" WHERE [{_syncConfig.IsDeletedColumn}] = false OR [{_syncConfig.IsDeletedColumn}] IS NULL";
-                }
-                else if (cols.Contains("DeleteDate", StringComparer.OrdinalIgnoreCase))
-                {
-                    where = " WHERE [DeleteDate] IS NULL";
-                }
-                var sql = $"SELECT * FROM [{tableName}]" + where;
-                using (var cmd = new OleDbCommand(sql, connection))
-                using (var reader = await cmd.ExecuteReaderAsync())
-                {
-                    while (await reader.ReadAsync())
-                    {
-                        var ent = new Entity { TableName = tableName };
-                        for (int i = 0; i < reader.FieldCount; i++)
-                        {
-                            var col = reader.GetName(i);
-                            var val = reader.IsDBNull(i) ? null : reader.GetValue(i);
-                            ent.Properties[col] = val;
-                        }
-                        results.Add(ent);
-                    }
-                }
-            }
-            return results;
-        }
-
-        /// <summary>
-        /// Récupère une entité par son ID
-        /// </summary>
-        /// <param name="identifier">Identifiant de contexte</param>
-        /// <param name="tableName">Nom de la table</param>
-        /// <param name="primaryKeyColumn">Colonne de clé primaire</param>
-        /// <param name="id">ID de l'entité</param>
-        /// <returns>L'entité ou null</returns>
-        public async Task<Entity> GetEntityByIdAsync(string identifier, string tableName, string primaryKeyColumn, object id)
-        {
-            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("tableName");
-            if (string.IsNullOrWhiteSpace(primaryKeyColumn)) throw new ArgumentException("primaryKeyColumn");
-            EnsureInitialized();
-            using (var connection = new OleDbConnection(GetLocalConnectionString()))
-            {
-                await connection.OpenAsync();
-                var sql = $"SELECT * FROM [{tableName}] WHERE [{primaryKeyColumn}] = @p0";
-                using (var cmd = new OleDbCommand(sql, connection))
-                {
-                    cmd.Parameters.AddWithValue("@p0", id ?? DBNull.Value);
-                    using (var reader = await cmd.ExecuteReaderAsync())
-                    {
-                        if (await reader.ReadAsync())
-                        {
-                            var ent = new Entity { TableName = tableName };
-                            for (int i = 0; i < reader.FieldCount; i++)
-                            {
-                                var col = reader.GetName(i);
-                                var val = reader.IsDBNull(i) ? null : reader.GetValue(i);
-                                ent.Properties[col] = val;
-                            }
-                            return ent;
-                        }
-                    }
-                }
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// Ajoute une entité
-        /// </summary>
-        /// <param name="identifier">Identifiant de contexte</param>
-        /// <param name="entity">Entité à ajouter</param>
-        /// <returns>True si ajouté avec succès</returns>
-        public async Task<bool> AddEntityAsync(string identifier, Entity entity)
-        {
-            if (entity == null) throw new ArgumentNullException(nameof(entity));
-            if (string.IsNullOrWhiteSpace(entity.TableName)) throw new ArgumentException("Entity.TableName is required");
-            EnsureInitialized();
-
-            using (var connection = new OleDbConnection(GetLocalConnectionString()))
-            {
-                await connection.OpenAsync();
-                var tableCols = await GetTableColumnsAsync(connection, entity.TableName);
-
-                // Ensure metadata columns if present in table schema
-                var rowGuidCol = tableCols.Contains(_syncConfig.PrimaryKeyGuidColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.PrimaryKeyGuidColumn : null;
-                var lastModCol = tableCols.Contains(_syncConfig.LastModifiedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.LastModifiedColumn : (tableCols.Contains("LastModified", StringComparer.OrdinalIgnoreCase) ? "LastModified" : null);
-                var isDeletedCol = tableCols.Contains(_syncConfig.IsDeletedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.IsDeletedColumn : (tableCols.Contains("DeleteDate", StringComparer.OrdinalIgnoreCase) ? "DeleteDate" : null);
-
-                if (rowGuidCol != null && (!entity.Properties.ContainsKey(rowGuidCol) || entity.Properties[rowGuidCol] == null))
-                    entity.Properties[rowGuidCol] = Guid.NewGuid().ToString();
-                if (lastModCol != null)
-                    entity.Properties[lastModCol] = DateTime.UtcNow;
-                if (isDeletedCol != null)
-                {
-                    if (isDeletedCol.Equals(_syncConfig.IsDeletedColumn, StringComparison.OrdinalIgnoreCase))
-                        entity.Properties[isDeletedCol] = false;
-                    else if (isDeletedCol.Equals("DeleteDate", StringComparison.OrdinalIgnoreCase))
-                        entity.Properties[isDeletedCol] = DBNull.Value; // null delete date
-                }
-
-                var cols = entity.Properties.Keys.Where(k => tableCols.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
-                if (cols.Count == 0) return false;
-                var colList = string.Join(", ", cols.Select(c => $"[{c}]"));
-                var paramList = string.Join(", ", cols.Select((c, i) => $"@p{i}"));
-                var sql = $"INSERT INTO [{entity.TableName}] ({colList}) VALUES ({paramList})";
-                using (var cmd = new OleDbCommand(sql, connection))
-                {
-                    for (int i = 0; i < cols.Count; i++)
-                    {
-                        var preparedValue = PrepareValueForDatabase(entity.Properties[cols[i]]);
-                        cmd.Parameters.AddWithValue($"@p{i}", preparedValue);
-                    }
-                    var affected = await cmd.ExecuteNonQueryAsync();
-                    // record change (prefer RowGuid, else primary key if available)
-                    string changeKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol]?.ToString() : await GetPrimaryKeyValueAsync(connection, entity);
-                    await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "INSERT");
-                    return affected > 0;
-                }
-            }
-        }
-
-        private object PrepareValueForDatabase(object value)
-        {
-            if (value == null || value == DBNull.Value)
-            {
-                return DBNull.Value;
-            }
-
-            if (value is DateTime dt)
-            {
-                // Convertit la date en un double universellement compris par Access
-                return dt.ToOADate();
-            }
-
-            if (value is bool b)
-            {
-                // Convertit le booléen en entier (1 pour true, 0 pour false)
-                return b ? 1 : 0;
-            }
-
-            // Pour tous les autres types (string, int, etc.), on retourne la valeur telle quelle
-            return value;
-        }
-
-        /// <summary>
-        /// Met à jour une entité
-        /// </summary>
-        /// <param name="identifier">Identifiant de contexte</param>
-        /// <param name="entity">Entité à mettre à jour</param>
-        /// <returns>True si mis à jour avec succès</returns>
-        public async Task<bool> UpdateEntityAsync(string identifier, Entity entity)
-        {
-            if (entity == null) throw new ArgumentNullException(nameof(entity));
-            if (string.IsNullOrWhiteSpace(entity.TableName)) throw new ArgumentException("Entity.TableName is required");
-            EnsureInitialized();
-
-            using (var connection = new OleDbConnection(GetLocalConnectionString()))
-            {
-                await connection.OpenAsync();
-                var tableCols = await GetTableColumnsAsync(connection, entity.TableName);
-
-                var rowGuidCol = tableCols.Contains(_syncConfig.PrimaryKeyGuidColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.PrimaryKeyGuidColumn : null;
-                var lastModCol = tableCols.Contains(_syncConfig.LastModifiedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.LastModifiedColumn : (tableCols.Contains("LastModified", StringComparer.OrdinalIgnoreCase) ? "LastModified" : null);
-
-                if (lastModCol != null)
-                    entity.Properties[lastModCol] = DateTime.UtcNow;
-
-                var updatable = entity.Properties.Keys.Where(k => (rowGuidCol == null || !k.Equals(rowGuidCol, StringComparison.OrdinalIgnoreCase)) && tableCols.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
-                if (updatable.Count == 0) return false;
-                var setList = string.Join(", ", updatable.Select((c, i) => $"[{c}] = @p{i}"));
-                // Determine key
-                string keyColumn = rowGuidCol;
-                object keyValue = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol] : null;
-                if (keyColumn == null || keyValue == null)
-                {
-                    keyColumn = await GetPrimaryKeyColumnAsync(connection, entity.TableName) ?? "ID";
-                    if (!entity.Properties.ContainsKey(keyColumn))
-                        throw new InvalidOperationException($"Valeur de clé introuvable pour la table {entity.TableName} (colonne {keyColumn})");
-                    keyValue = entity.Properties[keyColumn];
-                }
-                var sql = $"UPDATE [{entity.TableName}] SET {setList} WHERE [{keyColumn}] = @key";
-                using (var cmd = new OleDbCommand(sql, connection))
-                {
-                    for (int i = 0; i < updatable.Count; i++)
-                    {
-                        var preparedValue = PrepareValueForDatabase(entity.Properties[updatable[i]]);
-                        cmd.Parameters.AddWithValue($"@p{i}", preparedValue);
-                    }
-                    cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
-                    var affected = await cmd.ExecuteNonQueryAsync();
-                    string changeKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol]?.ToString() : keyValue?.ToString();
-                    await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "UPDATE");
-                    return affected > 0;
-                }
+                System.Diagnostics.Debug.WriteLine($"[SYNC VALIDATION] Erreur: {ex.Message}");
             }
         }
 
@@ -1521,6 +888,14 @@ namespace RecoTool.Services
         /// <returns>True si supprimé avec succès</returns>
         public async Task<bool> DeleteEntityAsync(string identifier, Entity entity)
         {
+            return await DeleteEntityAsync(identifier, entity, null);
+        }
+
+        /// <summary>
+        /// Supprime une entité (avec session de change-log optionnelle)
+        /// </summary>
+        public async Task<bool> DeleteEntityAsync(string identifier, Entity entity, OfflineFirstAccess.ChangeTracking.IChangeLogSession changeLogSession)
+        {
             if (entity == null) throw new ArgumentNullException(nameof(entity));
             if (string.IsNullOrWhiteSpace(entity.TableName)) throw new ArgumentException("Entity.TableName is required");
             EnsureInitialized();
@@ -1529,21 +904,15 @@ namespace RecoTool.Services
             {
                 await connection.OpenAsync();
                 var tableCols = await GetTableColumnsAsync(connection, entity.TableName);
-                var rowGuidCol = tableCols.Contains(_syncConfig.PrimaryKeyGuidColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.PrimaryKeyGuidColumn : null;
                 var lastModCol = tableCols.Contains(_syncConfig.LastModifiedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.LastModifiedColumn : (tableCols.Contains("LastModified", StringComparer.OrdinalIgnoreCase) ? "LastModified" : null);
                 var hasIsDeleted = tableCols.Contains(_syncConfig.IsDeletedColumn, StringComparer.OrdinalIgnoreCase);
                 var hasDeleteDate = tableCols.Contains("DeleteDate", StringComparer.OrdinalIgnoreCase);
 
                 // Determine key
-                string keyColumn = rowGuidCol;
-                object keyValue = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol] : null;
-                if (keyColumn == null || keyValue == null)
-                {
-                    keyColumn = await GetPrimaryKeyColumnAsync(connection, entity.TableName) ?? "ID";
-                    if (!entity.Properties.ContainsKey(keyColumn))
-                        throw new InvalidOperationException($"Valeur de clé introuvable pour la table {entity.TableName} (colonne {keyColumn})");
-                    keyValue = entity.Properties[keyColumn];
-                }
+                string keyColumn = await GetPrimaryKeyColumnAsync(connection, entity.TableName) ?? "ID";
+                if (!entity.Properties.ContainsKey(keyColumn))
+                    throw new InvalidOperationException($"Valeur de clé introuvable pour la table {entity.TableName} (colonne {keyColumn})");
+                object keyValue = entity.Properties[keyColumn];
 
                 if (hasIsDeleted || hasDeleteDate)
                 {
@@ -1563,8 +932,11 @@ namespace RecoTool.Services
                         }
                         cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
                         var affected = await cmd.ExecuteNonQueryAsync();
-                        string changeKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol]?.ToString() : keyValue?.ToString();
-                        await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "DELETE");
+                        string changeKey = keyValue?.ToString();
+                        if (changeLogSession != null)
+                            await changeLogSession.AddAsync(entity.TableName, changeKey, "DELETE");
+                        else
+                            await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "DELETE");
                         return affected > 0;
                     }
                 }
@@ -1576,8 +948,11 @@ namespace RecoTool.Services
                     {
                         cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
                         var affected = await cmd.ExecuteNonQueryAsync();
-                        string changeKey = rowGuidCol != null && entity.Properties.ContainsKey(rowGuidCol) ? entity.Properties[rowGuidCol]?.ToString() : keyValue?.ToString();
-                        await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "DELETE");
+                        string changeKey = keyValue?.ToString();
+                        if (changeLogSession != null)
+                            await changeLogSession.AddAsync(entity.TableName, changeKey, "DELETE");
+                        else
+                            await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "DELETE");
                         return affected > 0;
                     }
                 }
@@ -1626,6 +1001,17 @@ namespace RecoTool.Services
                 }
             }
             return results;
+        }
+
+        /// <summary>
+        /// Opens a change-log session against the remote lock database for the specified country.
+        /// Call CommitAsync() to commit, otherwise Dispose() will rollback.
+        /// </summary>
+        public async Task<OfflineFirstAccess.ChangeTracking.IChangeLogSession> BeginChangeLogSessionAsync(string countryId)
+        {
+            EnsureInitialized();
+            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(countryId));
+            return await tracker.BeginSessionAsync();
         }
 
         private void EnsureInitialized()
@@ -1808,6 +1194,19 @@ namespace RecoTool.Services
         }
         
         /// <summary>
+        /// Retourne la liste des pays référentiels (copie). Charge les référentiels si nécessaire.
+        /// </summary>
+        public async Task<List<Country>> GetCountries()
+        {
+            if (!_referentialsLoaded)
+                await LoadReferentialsAsync();
+            lock (_referentialLock)
+            {
+                return new List<Country>(_countries);
+            }
+        }
+        
+        /// <summary>
         /// Initialise les paramètres depuis T_Param et charge la dernière country utilisée
         /// </summary>
         private void InitializePropertiesFromParams()
@@ -1971,26 +1370,6 @@ namespace RecoTool.Services
             }
         }
         
-        /// <summary>
-        /// Construit la chaîne de connexion pour une base country spécifique
-        /// </summary>
-        /// <param name="countryId">ID du pays</param>
-        /// <returns>Chaîne de connexion OLE DB pour la base country</returns>
-        public string GetCountryConnectionString(string countryId)
-        {
-            string countryDatabaseDirectory = GetParameter("CountryDatabaseDirectory");
-            if (string.IsNullOrEmpty(countryDatabaseDirectory))
-            {
-                throw new InvalidOperationException("Le répertoire des bases country n'est pas configuré dans T_Param");
-            }
-            
-            // Construire le nom du fichier : Préfixe + CountryId + .accdb
-            string countryDatabasePrefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
-            string databaseFileName = $"{countryDatabasePrefix}{countryId}.accdb";
-            string databasePath = Path.Combine(countryDatabaseDirectory, databaseFileName);
-            
-            return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={databasePath};";
-        }
         
         /// <summary>
         /// Exécute une requête sur la base DW (lecture seule)
@@ -2045,7 +1424,197 @@ namespace RecoTool.Services
             return File.Exists(databasePath);
         }
         
-        
+        /// <summary>
+        /// Récupère une entité par clé primaire depuis la base locale du pays courant.
+        /// </summary>
+        public async Task<Entity> GetEntityByIdAsync(string countryId, string tableName, string keyColumn, object keyValue)
+        {
+            EnsureInitialized();
+            if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Le pays demandé ne correspond pas au pays courant initialisé.");
+
+            using (var connection = new OleDbConnection(GetLocalConnectionString()))
+            {
+                await connection.OpenAsync();
+                var sql = $"SELECT * FROM [{tableName}] WHERE [{keyColumn}] = @key";
+                using (var cmd = new OleDbCommand(sql, connection))
+                {
+                    cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
+                    using (var reader = await cmd.ExecuteReaderAsync())
+                    {
+                        if (await reader.ReadAsync())
+                        {
+                            var ent = new Entity { TableName = tableName };
+                            for (int i = 0; i < reader.FieldCount; i++)
+                            {
+                                var col = reader.GetName(i);
+                                var val = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                                ent.Properties[col] = val;
+                            }
+                            return ent;
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Ajoute une entité (avec session de change-log optionnelle)
+        /// </summary>
+        public async Task<bool> AddEntityAsync(string countryId, Entity entity, OfflineFirstAccess.ChangeTracking.IChangeLogSession changeLogSession)
+        {
+            if (entity == null) throw new ArgumentNullException(nameof(entity));
+            if (string.IsNullOrWhiteSpace(entity.TableName)) throw new ArgumentException("Entity.TableName is required");
+            EnsureInitialized();
+            if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Le pays demandé ne correspond pas au pays courant initialisé.");
+
+            using (var connection = new OleDbConnection(GetLocalConnectionString()))
+            {
+                await connection.OpenAsync();
+                var cols = await GetTableColumnsAsync(connection, entity.TableName);
+                var nowUtc = DateTime.UtcNow;
+                var lastModCol = cols.Contains(_syncConfig.LastModifiedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.LastModifiedColumn : (cols.Contains("LastModified", StringComparer.OrdinalIgnoreCase) ? "LastModified" : null);
+                var isDeletedCol = cols.Contains(_syncConfig.IsDeletedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.IsDeletedColumn : (cols.Contains("DeleteDate", StringComparer.OrdinalIgnoreCase) ? "DeleteDate" : null);
+
+                if (lastModCol != null) entity.Properties[lastModCol] = nowUtc;
+                if (isDeletedCol != null)
+                {
+                    if (isDeletedCol.Equals(_syncConfig.IsDeletedColumn, StringComparison.OrdinalIgnoreCase))
+                        entity.Properties[isDeletedCol] = false;
+                    else if (isDeletedCol.Equals("DeleteDate", StringComparison.OrdinalIgnoreCase))
+                        entity.Properties[isDeletedCol] = DBNull.Value;
+                }
+
+                var validCols = entity.Properties.Keys.Where(k => cols.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
+                if (validCols.Count == 0) return false;
+
+                var colList = string.Join(", ", validCols.Select(c => $"[{c}]"));
+                var paramList = string.Join(", ", validCols.Select((c, i) => $"@p{i}"));
+                var sql = $"INSERT INTO [{entity.TableName}] ({colList}) VALUES ({paramList})";
+                using (var cmd = new OleDbCommand(sql, connection))
+                {
+                    for (int i = 0; i < validCols.Count; i++)
+                    {
+                        var prepared = PrepareValueForDatabase(entity.Properties[validCols[i]]);
+                        cmd.Parameters.AddWithValue($"@p{i}", prepared);
+                    }
+                    var affected = await cmd.ExecuteNonQueryAsync();
+
+                    // Determine PK value for change logging
+                    var pkColumn = await GetPrimaryKeyColumnAsync(connection, entity.TableName) ?? "ID";
+                    object keyVal = entity.Properties.ContainsKey(pkColumn) ? entity.Properties[pkColumn] : null;
+                    if (keyVal == null)
+                    {
+                        using (var idCmd = new OleDbCommand("SELECT @@IDENTITY", connection))
+                        {
+                            keyVal = await idCmd.ExecuteScalarAsync();
+                        }
+                    }
+                    string changeKey = keyVal?.ToString();
+                    if (changeLogSession != null)
+                        await changeLogSession.AddAsync(entity.TableName, changeKey, "INSERT");
+                    else
+                        await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "INSERT");
+
+                    return affected > 0;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Ajoute une entité (surcharge sans session de change-log)
+        /// </summary>
+        public async Task<bool> AddEntityAsync(string countryId, Entity entity)
+        {
+            return await AddEntityAsync(countryId, entity, null);
+        }
+
+        /// <summary>
+        /// Met à jour une entité (avec session de change-log optionnelle)
+        /// </summary>
+        public async Task<bool> UpdateEntityAsync(string countryId, Entity entity, OfflineFirstAccess.ChangeTracking.IChangeLogSession changeLogSession)
+        {
+            if (entity == null) throw new ArgumentNullException(nameof(entity));
+            if (string.IsNullOrWhiteSpace(entity.TableName)) throw new ArgumentException("Entity.TableName is required");
+            EnsureInitialized();
+            if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Le pays demandé ne correspond pas au pays courant initialisé.");
+
+            using (var connection = new OleDbConnection(GetLocalConnectionString()))
+            {
+                await connection.OpenAsync();
+                var cols = await GetTableColumnsAsync(connection, entity.TableName);
+                var nowUtc = DateTime.UtcNow;
+                var lastModCol = cols.Contains(_syncConfig.LastModifiedColumn, StringComparer.OrdinalIgnoreCase) ? _syncConfig.LastModifiedColumn : (cols.Contains("LastModified", StringComparer.OrdinalIgnoreCase) ? "LastModified" : null);
+                if (lastModCol != null) entity.Properties[lastModCol] = nowUtc;
+
+                var pkColumn = await GetPrimaryKeyColumnAsync(connection, entity.TableName) ?? "ID";
+                if (!entity.Properties.ContainsKey(pkColumn))
+                    throw new InvalidOperationException($"Valeur de clé introuvable pour la table {entity.TableName} (colonne {pkColumn})");
+                object keyValue = entity.Properties[pkColumn];
+
+                var updatable = entity.Properties.Keys.Where(k => !k.Equals(pkColumn, StringComparison.OrdinalIgnoreCase) && cols.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
+                if (updatable.Count == 0) return false;
+
+                var setList = string.Join(", ", updatable.Select((c, i) => $"[{c}] = @p{i}"));
+                var sql = $"UPDATE [{entity.TableName}] SET {setList} WHERE [{pkColumn}] = @key";
+                using (var cmd = new OleDbCommand(sql, connection))
+                {
+                    for (int i = 0; i < updatable.Count; i++)
+                    {
+                        var prepared = PrepareValueForDatabase(entity.Properties[updatable[i]]);
+                        cmd.Parameters.AddWithValue($"@p{i}", prepared);
+                    }
+                    cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
+                    var affected = await cmd.ExecuteNonQueryAsync();
+
+                    string changeKey = keyValue?.ToString();
+                    if (changeLogSession != null)
+                        await changeLogSession.AddAsync(entity.TableName, changeKey, "UPDATE");
+                    else
+                        await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "UPDATE");
+
+                    return affected > 0;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Met à jour une entité (surcharge sans session de change-log)
+        /// </summary>
+        public async Task<bool> UpdateEntityAsync(string countryId, Entity entity)
+        {
+            return await UpdateEntityAsync(countryId, entity, null);
+        }
+
+        /// <summary>
+        /// Définit le pays courant et initialise la configuration/synchronisation locale si nécessaire.
+        /// </summary>
+        public async Task<bool> SetCurrentCountryAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId))
+                throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            // Mettre à jour le pays courant depuis le référentiel si disponible
+            lock (_referentialLock)
+            {
+                _currentCountry = _countries?.FirstOrDefault(c => string.Equals(c?.CNT_Id, countryId, StringComparison.OrdinalIgnoreCase))
+                                  ?? _currentCountry; // conserver si non trouvé
+            }
+
+            // Construire la configuration et initialiser les couches locales
+            _syncConfig = BuildSyncConfiguration(countryId);
+            _syncService = new SynchronizationService();
+
+            var initialized = await InitializeLocalDatabaseAsync(countryId);
+            if (initialized)
+            {
+                _currentCountryId = countryId;
+            }
+            return initialized;
+        }
 
         /// <summary>
         /// Construit la SyncConfiguration à partir des paramètres T_Param et d'un pays donné
@@ -2509,17 +2078,167 @@ namespace RecoTool.Services
         }
         
         /// <summary>
+        /// Expose les champs utilisateur en mémoire (copie pour immutabilité côté appelant)
+        /// </summary>
+        public List<UserField> UserFields
+        {
+            get
+            {
+                lock (_referentialLock)
+                {
+                    return new List<UserField>(_userFields);
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Récupère la liste des filtres utilisateur en mémoire (copie)
+        /// </summary>
+        public Task<List<UserFilter>> GetUserFilters()
+        {
+            lock (_referentialLock)
+            {
+                return Task.FromResult(new List<UserFilter>(_userFilters));
+            }
+        }
+
+        /// <summary>
         /// Exécute une requête sur la base de données d'une country
         /// </summary>
         /// <param name="countryId">ID du pays</param>
         /// <param name="query">Requête SQL</param>
         /// <param name="parameters">Paramètres de la requête</param>
         /// <param name="readerAction">Action à exécuter avec le DataReader</param>
-        
+
         #endregion
-        
+
         #region Private Helper Methods
+
+        /// <summary>
+        /// Prépare une valeur .NET pour l'envoyer à OLE DB (gère les null/DBNull/DateTime/bool/etc.)
+        /// </summary>
+        private object PrepareValueForDatabase(object value)
+        {
+            if (value == null || value == DBNull.Value)
+            {
+                return DBNull.Value;
+            }
+
+            if (value is DateTime dt)
+            {
+                // Convertit la date en un double universellement compris par Access
+                return dt.ToOADate();
+            }
+
+            if (value is bool b)
+            {
+                // Convertit le booléen en entier (1 pour true, 0 pour false)
+                return b ? 1 : 0;
+            }
+
+            // Pour tous les autres types (string, int, etc.), on retourne la valeur telle quelle
+            return value;
+        }
+
+
+        /// <summary>
+        /// Récupère un pays par son identifiant depuis le cache. Charge les référentiels si nécessaire.
+        /// </summary>
+        public async Task<Country> GetCountryByIdAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) return null;
+            if (!_referentialsLoaded)
+                await LoadReferentialsAsync();
+            lock (_referentialLock)
+            {
+                return _countries.FirstOrDefault(c => string.Equals(c?.CNT_Id, countryId, StringComparison.OrdinalIgnoreCase));
+            }
+        }
         
+        /// <summary>
+        /// Récupère toutes les lignes d'une table en entités, depuis la base locale du pays spécifié.
+        /// </summary>
+        public async Task<List<Entity>> GetEntitiesAsync(string countryId, string tableName)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("tableName est requis", nameof(tableName));
+
+            // Si nécessaire, basculer sur le bon pays
+            if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
+            {
+                var ok = await SetCurrentCountryAsync(countryId);
+                if (!ok) throw new InvalidOperationException($"Impossible d'initialiser la base locale pour {countryId}");
+            }
+            EnsureInitialized();
+
+            var list = new List<Entity>();
+            using (var connection = new OleDbConnection(GetLocalConnectionString()))
+            {
+                await connection.OpenAsync();
+                using (var cmd = new OleDbCommand($"SELECT * FROM [{tableName}]", connection))
+                using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        var ent = new Entity { TableName = tableName };
+                        for (int i = 0; i < reader.FieldCount; i++)
+                        {
+                            var col = reader.GetName(i);
+                            var val = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                            ent.Properties[col] = val;
+                        }
+                        list.Add(ent);
+                    }
+                }
+            }
+            return list;
+        }
+        
+        /// <summary>
+        /// Lance une synchronisation avec retour de résultat et progression.
+        /// </summary>
+        public async Task<SyncResult> SynchronizeAsync(string countryId, CancellationToken? cancellationToken = null, Action<int, string> onProgress = null)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            // S'assurer que la configuration est prête pour le pays demandé
+            if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
+            {
+                var ok = await SetCurrentCountryAsync(countryId);
+                if (!ok)
+                    return new SyncResult { Success = false, Message = $"Initialisation impossible pour {countryId}" };
+            }
+
+            try
+            {
+                onProgress?.Invoke(0, "Initialisation de la synchronisation...");
+                await _syncService.InitializeAsync(_syncConfig);
+
+                var token = cancellationToken ?? default;
+                onProgress?.Invoke(5, "Démarrage...");
+                var result = await _syncService.SynchronizeAsync(onProgress);
+                if (result != null && result.Success)
+                {
+                    _lastSyncTimes[_currentCountryId] = DateTime.UtcNow;
+                }
+                return result;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SYNC] Erreur: {ex.Message}");
+                return new SyncResult { Success = false, Message = ex.Message };
+            }
+        }
+        
+        /// <summary>
+        /// Lance une synchronisation simple sans progression. Retourne true si succès.
+        /// </summary>
+        public async Task<bool> SynchronizeData()
+        {
+            if (string.IsNullOrEmpty(_currentCountryId)) return false;
+            var res = await SynchronizeAsync(_currentCountryId, null, null);
+            return res != null && res.Success;
+        }
         
         #endregion
         

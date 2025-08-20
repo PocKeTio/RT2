@@ -49,6 +49,30 @@ namespace RecoTool
 
             ServiceProvider = services.BuildServiceProvider();
 
+            // Ensure OfflineFirstService is fully initialized BEFORE constructing any services/windows
+            try
+            {
+                var offline = ServiceProvider.GetRequiredService<OfflineFirstService>();
+                // Complete referential load
+                offline.LoadReferentialsAsync().GetAwaiter().GetResult();
+
+                // Ensure a current country is set (prefer LastCountryUsed from T_Param)
+                var currentCountry = offline.CurrentCountryId;
+                if (string.IsNullOrWhiteSpace(currentCountry))
+                {
+                    var last = offline.GetParameter("LastCountryUsed");
+                    if (!string.IsNullOrWhiteSpace(last))
+                    {
+                        offline.SetCurrentCountryAsync(last).GetAwaiter().GetResult();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Do not block app start, but log for diagnostics
+                System.Diagnostics.Debug.WriteLine($"[Startup] OfflineFirst initialization warning: {ex.Message}");
+            }
+
             var main = ServiceProvider.GetRequiredService<MainWindow>();
             main.Show();
         }

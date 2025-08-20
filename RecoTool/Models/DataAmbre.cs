@@ -1,4 +1,5 @@
 using System;
+using System.Windows.Markup;
 
 namespace RecoTool.Models
 {
@@ -9,7 +10,6 @@ namespace RecoTool.Models
     public class DataAmbre : BaseEntity
     {
         public string ID { get; set; }
-        public string ROWGUID { get; set; }
         public string Account_ID { get; set; }
         public string CCY { get; set; }
         public string Country { get; set; }
@@ -54,7 +54,7 @@ namespace RecoTool.Models
         /// </summary>
         public string GetUniqueKey()
         {
-            return $"{Account_ID}_{Event_Num}_{ReconciliationOrigin_Num}_{RawLabel}";
+            return $"{Country}_{Account_ID}_{Event_Num}_{ReconciliationOrigin_Num}_{Operation_Date?.ToString("yyyyMMdd")}_{SignedAmount}";
         }
     }
 }

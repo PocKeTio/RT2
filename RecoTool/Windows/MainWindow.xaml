@@ -219,12 +219,6 @@
                                 <TextBlock Text="Reports" Foreground="White" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
-                        <Button x:Name="AccountConfigButton" Click="AccountConfigButton_Click" Style="{StaticResource HeaderNavigationButton}" Margin="8,0,8,0" MinWidth="130">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE8C9;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                <TextBlock Text="Accounts" Foreground="White" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Button>
                         <Button x:Name="SettingsButton" Click="SettingsButton_Click" Style="{StaticResource HeaderNavigationButton}" Margin="8,0,8,0" MinWidth="90">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"/>
@@ -241,12 +235,6 @@
                     
                     <!-- Right side - Window Controls and Brand with improved styling -->
                     <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <Border Background="#E8F5EE" CornerRadius="20" Height="32" Margin="0,0,15,0" Padding="10,0" VerticalAlignment="Center">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#006A4D" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <TextBlock Text="BNP PARIBAS" Foreground="#006A4D" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Border>
                         <Button x:Name="MinimizeButton" Style="{StaticResource WindowControlButton}" Click="MinimizeButton_Click">
                             <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
                         </Button>

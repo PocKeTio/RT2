@@ -226,11 +226,12 @@ namespace RecoTool.Services
                     // Copie des champs directs (non transformés)
                     CopyDirectFields(row, dataAmbre);
 
-                    // Génération de l'ID unique si nécessaire
-                    if (string.IsNullOrEmpty(dataAmbre.ID))
-                    {
+                    // Génération de l'ID unique  si nécessaire
+                    //FIX => TOUJOURS ICI POUR LINSTANT OSEF DE LA TABLE
+                    //if (string.IsNullOrEmpty(dataAmbre.ID))
+                    //{
                         dataAmbre.ID = dataAmbre.GetUniqueKey();
-                    }
+                    //}
 
                     // Application de la catégorisation automatique
                     ApplyAutomaticCategorization(dataAmbre, country);
@@ -537,13 +538,13 @@ namespace RecoTool.Services
                 var changes = new ImportChanges();
                 
                 // Créer des dictionnaires pour accélérer les recherches
-                var existingByKey = existingData.ToDictionary(d => GetUniqueKey(d), d => d);
-                var newByKey = newData.ToDictionary(d => GetUniqueKey(d), d => d);
+                var existingByKey = existingData.ToDictionary(d => d.ID, d => d);
+                var newByKey = newData.ToDictionary(d => d.GetUniqueKey(), d => d);
                 
                 // Identifier les ajouts et modifications
                 foreach (var newItem in newData)
                 {
-                    var key = GetUniqueKey(newItem);
+                    var key = newItem.GetUniqueKey();
                     
                     if (existingByKey.ContainsKey(key))
                     {
@@ -566,7 +567,7 @@ namespace RecoTool.Services
                     else
                     {
                         // Nouvel enregistrement
-                        newItem.ID = GetUniqueKey(newItem);
+                        newItem.ID = newItem.GetUniqueKey();
                         newItem.Version = 1;
                         newItem.CreationDate = DateTime.Now;
                         newItem.LastModified = DateTime.Now;
@@ -579,7 +580,7 @@ namespace RecoTool.Services
                 // Identifier les suppressions (enregistrements présents dans existing mais pas dans new)
                 foreach (var existingItem in existingData)
                 {
-                    var key = GetUniqueKey(existingItem);
+                    var key = existingItem.ID;
                     
                     if (!newByKey.ContainsKey(key))
                     {
@@ -647,7 +648,7 @@ namespace RecoTool.Services
                     toArchive.Add(ConvertDataAmbreToEntity(item));
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var ok = await _offlineFirstService.ApplyEntitiesBatchAsync(countryId, toAdd, toUpdate, toArchive);
+                  var ok = await _offlineFirstService.ApplyEntitiesBatchAsync(countryId, toAdd, toUpdate, toArchive);
                 sw.Stop();
 
                 if (!ok)
@@ -700,14 +701,6 @@ namespace RecoTool.Services
             };
             
             return entity;
-        }
-
-        /// <summary>
-        /// Détermine une clé unique pour identifier un enregistrement DataAmbre
-        /// </summary>
-        private string GetUniqueKey(DataAmbre data)
-        {
-            return $"{data.Country}_{data.Account_ID}_{data.Event_Num}_{data.ReconciliationOrigin_Num}_{data.Operation_Date?.ToString("yyyyMMdd")}_{data.SignedAmount}";
         }
 
         /// <summary>
@@ -769,22 +762,28 @@ namespace RecoTool.Services
             {
                 LogManager.Info($"Mise à jour de T_Reconciliation pour {countryId} - Nouveaux: {newRecords.Count}, Modifiés: {updatedRecords.Count}, Supprimés: {deletedRecords.Count}");
 
-                // Traiter les nouveaux enregistrements
-                foreach (var dataAmbre in newRecords)
+                // Ouvrir une session de change-log unique pour toutes les opérations
+                using (var session = await _offlineFirstService.BeginChangeLogSessionAsync(countryId))
                 {
-                    await CreateOrUpdateReconciliationAsync(dataAmbre, countryId);
-                }
+                    // Traiter les nouveaux enregistrements
+                    foreach (var dataAmbre in newRecords)
+                    {
+                        await CreateOrUpdateReconciliationAsync(dataAmbre, countryId, session);
+                    }
 
-                // Traiter les enregistrements mis à jour
-                foreach (var dataAmbre in updatedRecords)
-                {
-                    await CreateOrUpdateReconciliationAsync(dataAmbre, countryId);
-                }
+                    // Traiter les enregistrements mis à jour
+                    foreach (var dataAmbre in updatedRecords)
+                    {
+                        await CreateOrUpdateReconciliationAsync(dataAmbre, countryId, session);
+                    }
 
-                // Traiter les enregistrements supprimés (archivage logique)
-                foreach (var dataAmbre in deletedRecords)
-                {
-                    await ArchiveReconciliationAsync(dataAmbre, countryId);
+                    // Traiter les enregistrements supprimés (archivage logique)
+                    foreach (var dataAmbre in deletedRecords)
+                    {
+                        await ArchiveReconciliationAsync(dataAmbre, countryId, session);
+                    }
+
+                    await session.CommitAsync();
                 }
 
                 LogManager.Info($"Table T_Reconciliation mise à jour avec succès pour {countryId}: {newRecords.Count} nouveaux, {updatedRecords.Count} modifiés, {deletedRecords.Count} supprimés");
@@ -800,6 +799,12 @@ namespace RecoTool.Services
         /// Crée ou met à jour un enregistrement de réconciliation via les API natives d'OfflineFirstService
         /// </summary>
         private async Task CreateOrUpdateReconciliationAsync(DataAmbre dataAmbre, string countryId)
+        {
+            await CreateOrUpdateReconciliationAsync(dataAmbre, countryId, null);
+        }
+
+        // Overload that accepts a change-log session to batch change logging
+        private async Task CreateOrUpdateReconciliationAsync(DataAmbre dataAmbre, string countryId, OfflineFirstAccess.ChangeTracking.IChangeLogSession changeLogSession)
         {
             try
             {
@@ -824,7 +829,9 @@ namespace RecoTool.Services
                     reconciliationEntity.Properties["LastModified"] = DateTime.Now.ToOADate();
                     reconciliationEntity.Properties["ModifiedBy"] = _currentUser;
                     
-                    var success = await _offlineFirstService.UpdateEntityAsync(countryId, reconciliationEntity);
+                    var success = changeLogSession != null
+                        ? await _offlineFirstService.UpdateEntityAsync(countryId, reconciliationEntity, changeLogSession)
+                        : await _offlineFirstService.UpdateEntityAsync(countryId, reconciliationEntity);
                     if (!success)
                     {
                         LogManager.Warning($"Échec de la mise à jour de réconciliation pour {dataAmbre.ID}");
@@ -838,7 +845,9 @@ namespace RecoTool.Services
                     reconciliationEntity.Properties["LastModified"] = DateTime.Now.ToOADate();
                     reconciliationEntity.Properties["ModifiedBy"] = _currentUser;
                     
-                    var success = await _offlineFirstService.AddEntityAsync(countryId, reconciliationEntity);
+                    var success = changeLogSession != null
+                        ? await _offlineFirstService.AddEntityAsync(countryId, reconciliationEntity, changeLogSession)
+                        : await _offlineFirstService.AddEntityAsync(countryId, reconciliationEntity);
                     if (!success)
                     {
                         LogManager.Warning($"Échec de la création de réconciliation pour {dataAmbre.ID}");
@@ -885,6 +894,12 @@ namespace RecoTool.Services
         /// </summary>
         private async Task ArchiveReconciliationAsync(DataAmbre dataAmbre, string countryId)
         {
+            await ArchiveReconciliationAsync(dataAmbre, countryId, null);
+        }
+
+        // Overload that accepts a change-log session to batch change logging
+        private async Task ArchiveReconciliationAsync(DataAmbre dataAmbre, string countryId, OfflineFirstAccess.ChangeTracking.IChangeLogSession changeLogSession)
+        {
             try
             {
                 // Récupérer l'enregistrement existant
@@ -907,7 +922,9 @@ namespace RecoTool.Services
                         existingEntity.Properties["Version"] = 1;
                     }
                     
-                    var success = await _offlineFirstService.UpdateEntityAsync(countryId, existingEntity);
+                    var success = changeLogSession != null
+                        ? await _offlineFirstService.UpdateEntityAsync(countryId, existingEntity, changeLogSession)
+                        : await _offlineFirstService.UpdateEntityAsync(countryId, existingEntity);
                     if (!success)
                     {
                         LogManager.Warning($"Échec de l'archivage de réconciliation pour {dataAmbre.ID}");

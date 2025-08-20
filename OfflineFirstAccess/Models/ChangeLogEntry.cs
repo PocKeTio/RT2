@@ -6,7 +6,7 @@ namespace OfflineFirstAccess.Models
     {
         public long Id { get; set; }
         public string TableName { get; set; }
-        public string RowGuid { get; set; }
+        public string RecordId { get; set; }
         public string OperationType { get; set; } // e.g., "INSERT", "UPDATE", "DELETE"
         public DateTime TimestampUTC { get; set; }
     }

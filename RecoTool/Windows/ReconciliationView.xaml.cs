@@ -109,6 +109,21 @@ namespace RecoTool.Windows
             catch { }
         }
 
+        /// <summary>
+        /// Public helper to apply a saved grid layout from its JSON representation.
+        /// This is used by the host page when instantiating a new view from a saved preset.
+        /// </summary>
+        public void ApplyLayoutJson(string layoutJson)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(layoutJson)) return;
+                var layout = JsonSerializer.Deserialize<GridLayout>(layoutJson);
+                ApplyGridLayout(layout);
+            }
+            catch { /* ignore invalid layout JSON */ }
+        }
+
         #region Column Layout Capture/Apply and Header Menu
 
         private class ColumnSetting
@@ -274,6 +289,35 @@ namespace RecoTool.Windows
 
         #endregion
 
+        // Single-click to edit cells
+        private void DataGridCell_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            try
+            {
+                var cell = sender as DataGridCell;
+                if (cell == null) return;
+                if (cell.IsEditing || cell.IsReadOnly) return;
+
+                if (!cell.IsFocused)
+                    cell.Focus();
+
+                var dataGrid = FindParent<DataGrid>(cell);
+                if (dataGrid == null) return;
+                // Ensure single selection by selecting the owning row item directly
+                var row = FindParent<DataGridRow>(cell);
+                if (row != null)
+                {
+                    dataGrid.SelectedItem = row.Item;
+                }
+
+                dataGrid.BeginEdit(e);
+                e.Handled = true;
+            }
+            catch { }
+        }
+
+        
+
         #region Save/Load View Handlers
 
         private async void SaveView_Click(object sender, RoutedEventArgs e)
@@ -395,17 +439,19 @@ namespace RecoTool.Windows
                 {
                     // Restaurer l'UI de la vue selon le snapshot
                     ApplyFilterPreset(preset);
-                    _backendFilterSql = pureWhere;
+                    // Recalculer une WHERE clause propre basée sur l'état courant (sans compte du preset)
+                    _backendFilterSql = GenerateWhereClause();
                 }
                 else
                 {
-                    _backendFilterSql = sql;
+                    // Aucun snapshot: transmettre au backend en retirant le filtre compte s'il est présent
+                    _backendFilterSql = StripAccountFromWhere(sql);
                 }
             }
             catch
             {
                 // En cas d'erreur de parsing, fallback sur le SQL brut
-                _backendFilterSql = sql;
+                _backendFilterSql = StripAccountFromWhere(sql);
             }
         }
 
@@ -481,10 +527,10 @@ namespace RecoTool.Windows
             if (p == null) return;
             try
             {
-                // Use public properties where available to trigger UI updates and debounce
-                FilterAccountId = p.AccountId;
+                // Ne pas appliquer le compte depuis un preset de vue/filtre (compte géré en dehors)
+                // FilterAccountId = p.AccountId;
                 FilterCurrency = p.Currency;
-                FilterCountry = p.Country;
+                _filterCountry = p.Country; // informational
                 FilterMinAmount = p.MinAmount;
                 FilterMaxAmount = p.MaxAmount;
                 FilterFromDate = p.FromDate;
@@ -504,6 +550,50 @@ namespace RecoTool.Windows
                 FilterDwCommissionId = p.DwCommissionId;
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Removes any Account_ID = '...' predicate from a WHERE or full SQL fragment.
+        /// Preserves other predicates and keeps/strips the WHERE keyword appropriately.
+        /// </summary>
+        private string StripAccountFromWhere(string whereOrSql)
+        {
+            if (string.IsNullOrWhiteSpace(whereOrSql)) return whereOrSql;
+            try
+            {
+                var s = whereOrSql.Trim();
+                var hasWhere = s.StartsWith("WHERE ", StringComparison.OrdinalIgnoreCase);
+                if (hasWhere) s = s.Substring(6).Trim();
+
+                // Regex for Account_ID with optional alias/brackets: [Alias.]?[Account_ID] = '...'
+                var pred = new System.Text.RegularExpressions.Regex(@"(?i)(\b[\w\[\]]+\.)?\[?Account_ID\]?\s*=\s*'[^']*'");
+
+                string RemovePredicate(string input)
+                {
+                    if (string.IsNullOrWhiteSpace(input)) return input;
+                    var text = input;
+
+                    // 1) Predicate at start followed by AND/OR
+                    text = System.Text.RegularExpressions.Regex.Replace(text, @"^(\s*\(*\s*)" + pred + @"(\s*\)*\s*(AND|OR)\s*)", string.Empty, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    // 2) Predicate at end preceded by AND/OR
+                    text = System.Text.RegularExpressions.Regex.Replace(text, @"(\s*(AND|OR)\s*\(*\s*)" + pred + @"(\s*\)*\s*)$", string.Empty, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    // 3) Predicate in the middle with AND neighbors -> collapse to single AND
+                    text = System.Text.RegularExpressions.Regex.Replace(text, @"(\s*(AND|OR)\s*)" + pred + @"(\s*(AND|OR)\s*)", m => m.Groups[1].Value, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    // 4) Bare predicate alone
+                    text = System.Text.RegularExpressions.Regex.Replace(text, @"^\s*" + pred + @"\s*$", string.Empty, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+                    // Cleanup doubled spaces and trim parentheses
+                    text = System.Text.RegularExpressions.Regex.Replace(text, @"\s{2,}", " ").Trim();
+                    text = System.Text.RegularExpressions.Regex.Replace(text, @"^\((.*)\)$", "$1");
+                    text = text.Trim();
+                    return text;
+                }
+
+                var cleaned = RemovePredicate(s);
+                if (string.IsNullOrWhiteSpace(cleaned)) return string.Empty;
+                return hasWhere ? ("WHERE " + cleaned) : cleaned;
+            }
+            catch { return whereOrSql; }
         }
 
         private string BuildSqlWithJsonComment(FilterPreset preset, string whereClause)
@@ -809,7 +899,7 @@ namespace RecoTool.Windows
                 }
 
                 if (_reconciliationService == null) return;
-                var reco = await _reconciliationService.GetOrCreateReconciliationAsync(row.ROWGUID);
+                var reco = await _reconciliationService.GetOrCreateReconciliationAsync(row.ID);
 
                 if (string.Equals(category, "Action", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1325,7 +1415,7 @@ namespace RecoTool.Windows
 
                 // Load current reconciliation from DB to avoid overwriting unrelated fields
                 if (_reconciliationService == null) return;
-                var reco = await _reconciliationService.GetOrCreateReconciliationAsync(row.ROWGUID);
+                var reco = await _reconciliationService.GetOrCreateReconciliationAsync(row.ID);
 
                 if (string.Equals(tag, "Action", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1365,7 +1455,21 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur de sauvegarde: {ex.Message}");
+                // Enrichir le message avec des infos de diagnostic de connexion
+                try
+                {
+                    string country = _offlineFirstService?.CurrentCountryId ?? "<null>";
+                    bool isInit = _offlineFirstService?.IsInitialized ?? false;
+                    string cs = null;
+                    try { cs = _offlineFirstService?.GetCurrentLocalConnectionString(); } catch (Exception csex) { cs = $"<error: {csex.Message}>"; }
+                    string dw = null;
+                    try { dw = _offlineFirstService?.GetLocalDWDatabasePath(); } catch { }
+                    ShowError($"Erreur de sauvegarde: {ex.Message}\nPays: {country} | Init: {isInit}\nCS: {cs}\nDW: {dw}");
+                }
+                catch
+                {
+                    ShowError($"Erreur de sauvegarde: {ex.Message}");
+                }
             }
         }
 

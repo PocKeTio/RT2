@@ -169,10 +169,10 @@ namespace RecoTool.UI.Views.Windows
         {
             try
             {
-                if (_reconciliationService == null || _item == null || string.IsNullOrWhiteSpace(_item.ROWGUID))
+                if (_reconciliationService == null || _item == null || string.IsNullOrWhiteSpace(_item.ID))
                     return;
 
-                _reconciliation = await _reconciliationService.GetOrCreateReconciliationAsync(_item.ROWGUID);
+                _reconciliation = await _reconciliationService.GetOrCreateReconciliationAsync(_item.ID);
 
                 // Populate editable fields
                 if (CommentTextBox != null)
@@ -316,7 +316,7 @@ namespace RecoTool.UI.Views.Windows
 
         private async void SaveButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_item == null || _reconciliationService == null || string.IsNullOrWhiteSpace(_item.ROWGUID))
+            if (_item == null || _reconciliationService == null || string.IsNullOrWhiteSpace(_item.ID))
             {
                 MessageBox.Show("Cannot save: missing context.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
@@ -324,11 +324,10 @@ namespace RecoTool.UI.Views.Windows
 
             try
             {
-                var reco = _reconciliation ?? await _reconciliationService.GetOrCreateReconciliationAsync(_item.ROWGUID);
+                var reco = _reconciliation ?? await _reconciliationService.GetOrCreateReconciliationAsync(_item.ID);
 
                 // Map editable fields
-                reco.ROWGUID = _item.ROWGUID; // ensure stable key
-                reco.ID = _item.ID; // legacy
+                reco.ID = _item.ID;
                 if (CommentTextBox != null)
                     reco.Comments = CommentTextBox.Text?.Trim();
 

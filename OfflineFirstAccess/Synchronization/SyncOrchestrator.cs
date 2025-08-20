@@ -51,7 +51,7 @@ namespace OfflineFirstAccess.Synchronization
                 {
                     var tableName = tableGroup.Key;
                     onProgress?.Invoke(20, $"Pushing changes for table {tableName}...");
-                    var recordsToPush = await _localProvider.GetRecordsByGuid(tableName, tableGroup.Select(c => c.RowGuid));
+                    var recordsToPush = await _localProvider.GetRecordsByIds(tableName, tableGroup.Select(c => c.RecordId));
                     await _remoteProvider.ApplyChangesAsync(tableName, recordsToPush);
                     await _changeTracker.MarkChangesAsSyncedAsync(tableGroup.Select(c => c.Id));
                 }
@@ -68,22 +68,22 @@ namespace OfflineFirstAccess.Synchronization
                     if (remoteChanges.Any())
                     {
                         var localChangesForTable = allLocalChanges.Where(c => c.TableName == tableName).ToList();
-                        var localGuids = new HashSet<string>(localChangesForTable.Select(c => c.RowGuid));
+                        var localIds = new HashSet<string>(localChangesForTable.Select(c => c.RecordId));
 
-                        // Partition remote changes based on GUID membership
+                        // Partition remote changes based on ID membership
                         var cleanRemoteChanges = new System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>();
                         var potentialConflictRemoteChanges = new System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>();
 
                         foreach (var r in remoteChanges)
                         {
-                            if (!r.TryGetValue(_config.PrimaryKeyGuidColumn, out var guidObj) || guidObj == null)
+                            if (!r.TryGetValue(_config.PrimaryKeyColumn, out var idObj) || idObj == null)
                             {
-                                // No guid -> treat as clean to avoid dropping data
+                                // No ID -> treat as clean to avoid dropping data
                                 cleanRemoteChanges.Add(r);
                                 continue;
                             }
-                            var guid = guidObj.ToString();
-                            if (localGuids.Contains(guid)) potentialConflictRemoteChanges.Add(r);
+                            var id = idObj.ToString();
+                            if (localIds.Contains(id)) potentialConflictRemoteChanges.Add(r);
                             else cleanRemoteChanges.Add(r);
                         }
 

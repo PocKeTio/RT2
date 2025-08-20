@@ -15,6 +15,6 @@ namespace OfflineFirstAccess.Models
         // Standard metadata columns
         public string LastModifiedColumn { get; set; } = "LastModified";
         public string IsDeletedColumn { get; set; } = "IsDeleted";
-        public string PrimaryKeyGuidColumn { get; set; } = "RowGuid";
+        public string PrimaryKeyColumn { get; set; } = "ID";
     }
 }

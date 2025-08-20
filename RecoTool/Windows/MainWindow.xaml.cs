@@ -13,6 +13,8 @@ using RecoTool.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using System.Windows.Media;
+using System.IO;
+using System.Windows.Media.Imaging;
 
 namespace RecoTool.Windows
 {
@@ -40,6 +42,9 @@ namespace RecoTool.Windows
 
             // DataContext pour bindings (OFFLINE, etc.)
             this.DataContext = this;
+
+            // Appliquer une icône personnalisée si paramétrée
+            ApplyCustomIconIfAny();
 
             InitializeServices();
             SetupEventHandlers();
@@ -284,7 +289,6 @@ namespace RecoTool.Windows
                 if (HomeButton != null) HomeButton.IsEnabled = true; // Home toujours accessible
                 if (ReconciliationButton != null) ReconciliationButton.IsEnabled = enable;
                 if (ReportsButton != null) ReportsButton.IsEnabled = enable;
-                if (AccountConfigButton != null) AccountConfigButton.IsEnabled = enable;
                 if (SettingsButton != null) SettingsButton.IsEnabled = true; // paramètres toujours accessibles
                 if (SynchronizeButton != null) SynchronizeButton.IsEnabled = enable;
             }
@@ -477,7 +481,6 @@ namespace RecoTool.Windows
             if (HomeButton != null) HomeButton.Tag = "Inactive";
             if (ReconciliationButton != null) ReconciliationButton.Tag = "Inactive";
             if (ReportsButton != null) ReportsButton.Tag = "Inactive";
-            if (AccountConfigButton != null) AccountConfigButton.Tag = "Inactive";
             if (SettingsButton != null) SettingsButton.Tag = "Inactive";
 
             // Set active button
@@ -491,9 +494,6 @@ namespace RecoTool.Windows
                     break;
                 case "Reports":
                     if (ReportsButton != null) ReportsButton.Tag = "Active";
-                    break;
-                case "AccountConfig":
-                    if (AccountConfigButton != null) AccountConfigButton.Tag = "Active";
                     break;
                 case "Settings":
                     if (SettingsButton != null) SettingsButton.Tag = "Active";
@@ -798,6 +798,37 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
         #endregion
 
         #region Helper Methods
+
+        /// <summary>
+        /// Applique l'icône personnalisée si la clé AppIcon est renseignée (chemin .ico)
+        /// </summary>
+        private void ApplyCustomIconIfAny()
+        {
+            try
+            {
+                string iconPath = null;
+
+                try
+                {
+                    var settings = RecoTool.Properties.Settings.Default;
+                    var prop = settings?.GetType()?.GetProperty("AppIcon");
+                    if (prop != null)
+                    {
+                        iconPath = prop.GetValue(settings) as string;
+                    }
+                }
+                catch { /* ignore */ }
+
+                 if (!string.IsNullOrWhiteSpace(iconPath)
+                    && File.Exists(iconPath)
+                    && string.Equals(Path.GetExtension(iconPath), ".ico", StringComparison.OrdinalIgnoreCase))
+                {
+                    var uri = new Uri(iconPath, UriKind.Absolute);
+                    this.Icon = BitmapFrame.Create(uri);
+                }
+            }
+            catch { /* ne pas bloquer l'UI si l'icône est invalide */ }
+        }
 
         /// <summary>
         /// Affiche un message d'erreur

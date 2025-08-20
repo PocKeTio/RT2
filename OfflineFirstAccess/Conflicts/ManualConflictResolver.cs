@@ -22,26 +22,26 @@ namespace OfflineFirstAccess.Conflicts
             var nonConflicts = new List<Dictionary<string, object>>();
 
             var localChangesDict = localChanges
-                .Where(c => !string.IsNullOrEmpty(c.RowGuid))
-                .GroupBy(c => c.RowGuid)
+                .Where(c => !string.IsNullOrEmpty(c.RecordId))
+                .GroupBy(c => c.RecordId)
                 .ToDictionary(g => g.Key, g => g.First());
 
             foreach (var remoteChange in remoteChanges)
             {
-                if (!remoteChange.TryGetValue(_config.PrimaryKeyGuidColumn, out var guidObj) || guidObj == null)
+                if (!remoteChange.TryGetValue(_config.PrimaryKeyColumn, out var idObj) || idObj == null)
                 {
-                    // No GUID -> cannot determine conflict, consider as non-conflict to avoid data loss
+                    // No ID -> cannot determine conflict, consider as non-conflict to avoid data loss
                     nonConflicts.Add(remoteChange);
                     continue;
                 }
 
-                var remoteGuid = guidObj.ToString();
-                if (!string.IsNullOrEmpty(remoteGuid) && localChangesDict.TryGetValue(remoteGuid, out var localChange))
+                var remoteId = idObj.ToString();
+                if (!string.IsNullOrEmpty(remoteId) && localChangesDict.TryGetValue(remoteId, out var localChange))
                 {
                     // Build a simple Conflict object
                     conflicts.Add(new Conflict
                     {
-                        RowGuid = remoteGuid,
+                        RecordId = remoteId,
                         LocalVersion = null,   // Optional: could be fetched if needed
                         RemoteVersion = remoteChange,
                         ConflictType = localChange.OperationType

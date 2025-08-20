@@ -23,9 +23,9 @@ namespace OfflineFirstAccess.Data
         Task ApplyChangesAsync(string tableName, IEnumerable<GenericRecord> changesToApply);
 
         /// <summary>
-        /// Retrieves full records based on their GUIDs.
+        /// Retrieves full records based on their primary key IDs.
         /// </summary>
-        Task<IEnumerable<GenericRecord>> GetRecordsByGuid(string tableName, IEnumerable<string> guids);
+        Task<IEnumerable<GenericRecord>> GetRecordsByIds(string tableName, IEnumerable<string> ids);
 
         /// <summary>
         /// Retrieves a configuration parameter value from the database.

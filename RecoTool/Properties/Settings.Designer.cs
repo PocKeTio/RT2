@@ -34,5 +34,17 @@ namespace RecoTool.Properties {
                 this["ReferentialDB"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string AppIcon {
+            get {
+                return ((string)(this["AppIcon"]));
+            }
+            set {
+                this["AppIcon"] = value;
+            }
+        }
     }
 }

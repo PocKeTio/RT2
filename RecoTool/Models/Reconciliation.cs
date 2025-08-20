@@ -9,7 +9,6 @@ namespace RecoTool.Models
     public class Reconciliation : BaseEntity
     {
         public string ID { get; set; }
-        public string ROWGUID { get; set; }
         public string DWINGS_GuaranteeID { get; set; }
         public string DWINGS_InvoiceID { get; set; }
         public string DWINGS_CommissionID { get; set; }
@@ -42,10 +41,8 @@ namespace RecoTool.Models
         {
             return new Reconciliation
             {
-                // Historique: certains environnements lient via ID, d'autres via ROWGUID.
-                // Pour compat, initialiser les deux si possible.
-                ID = ambreLineId,
-                ROWGUID = ambreLineId
+                // Utiliser uniquement l'ID comme clé primaire stable
+                ID = ambreLineId
             };
         }
 

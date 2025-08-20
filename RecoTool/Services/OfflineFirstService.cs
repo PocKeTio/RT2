@@ -1014,6 +1014,18 @@ namespace RecoTool.Services
             return await tracker.BeginSessionAsync();
         }
 
+        /// <summary>
+        /// Returns the number of unsynchronized change-log entries for the specified country
+        /// from the remote lock database (where ChangeLog resides).
+        /// </summary>
+        public async Task<int> GetUnsyncedChangeCountAsync(string countryId)
+        {
+            EnsureInitialized();
+            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(countryId));
+            var entries = await tracker.GetUnsyncedChangesAsync();
+            return entries?.Count() ?? 0;
+        }
+
         private void EnsureInitialized()
         {
             if (!_isInitialized || _syncConfig == null)
@@ -2336,6 +2348,18 @@ namespace RecoTool.Services
                 if (!ok)
                     return new SyncResult { Success = false, Message = $"Initialisation impossible pour {countryId}" };
             }
+
+            // Pause automatique de la synchronisation si un verrou d'import global est actif
+            try
+            {
+                var lockActive = await IsGlobalLockActiveAsync();
+                if (lockActive)
+                {
+                    onProgress?.Invoke(0, "Synchronisation en pause: verrou d'import actif");
+                    return new SyncResult { Success = false, Message = "Import lock active - sync paused" };
+                }
+            }
+            catch { /* ignorer les erreurs lors de la vérification du verrou */ }
 
             try
             {

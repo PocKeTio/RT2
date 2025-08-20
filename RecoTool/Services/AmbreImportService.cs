@@ -78,6 +78,33 @@ namespace RecoTool.Services
                     return result;
                 }
 
+                // Pré-validation: vérifier l'absence de changements locaux non synchronisés
+                progressCallback?.Invoke("Vérification des modifications locales non synchronisées...", 15);
+                try
+                {
+                    // S'assurer que le pays courant est correctement initialisé pour obtenir la chaîne locale
+                    var switched = await _offlineFirstService.SetCurrentCountryAsync(countryId);
+                    if (!switched)
+                    {
+                        result.Errors.Add($"Impossible d'initialiser la base locale pour {countryId}");
+                        return result;
+                    }
+
+                    var unsyncedCount = await _offlineFirstService.GetUnsyncedChangeCountAsync(countryId);
+                    if (unsyncedCount > 0)
+                    {
+                        LogManager.Warning($"Import annulé: {unsyncedCount} changement(s) non synchronisé(s) détecté(s) dans la base lock.");
+                        result.Errors.Add($"Import annulé: {unsyncedCount} changement(s) non synchronisé(s) détecté(s). Veuillez synchroniser avant de relancer l'import.");
+                        return result;
+                    }
+                }
+                catch (Exception preCheckEx)
+                {
+                    LogManager.Error("Erreur lors de la vérification des changements non synchronisés", preCheckEx);
+                    result.Errors.Add($"Erreur lors de la vérification des changements non synchronisés: {preCheckEx.Message}");
+                    return result;
+                }
+
                 progressCallback?.Invoke("Lecture du fichier Excel...", 20);
 
                 // Lecture du fichier Excel avec progression (20% -> 40%)
@@ -132,6 +159,22 @@ namespace RecoTool.Services
                 result.NewRecords = syncResult.newCount;
                 result.UpdatedRecords = syncResult.updatedCount;
                 result.DeletedRecords = syncResult.deletedCount;
+
+                // Rafraîchir la configuration/cache local(e) de façon atomique après import local réussi
+                progressCallback?.Invoke("Rafraîchissement de la configuration locale...", 90);
+                try
+                {
+                    await _offlineFirstService.RefreshConfigurationAsync();
+                    // S'assurer que le pays courant reste celui de l'import après rafraîchissement
+                    await _offlineFirstService.SetCurrentCountryAsync(countryId);
+                }
+                catch (Exception refreshEx)
+                {
+                    LogManager.Error("Erreur lors du rafraîchissement de la configuration après import", refreshEx);
+                    result.Errors.Add($"Erreur lors du rafraîchissement de la configuration locale: {refreshEx.Message}");
+                    result.EndTime = DateTime.Now;
+                    return result;
+                }
 
                 progressCallback?.Invoke("Finalisation...", 100);
 
@@ -805,6 +848,48 @@ namespace RecoTool.Services
                 }
 
                 LogManager.Info($"[Staging] T_Reconciliation mis à jour pour {countryId}: Staged={staged}, Updated={mergeRes.updated}, Inserted={mergeRes.inserted}, Archived={archived}");
+
+                // 6) Change-tracking en lot (INSERT / UPDATE / DELETE)
+                try
+                {
+                    var insertedIds = (newRecords ?? new List<DataAmbre>()).Select(r => r.ID)
+                        .Where(id => !string.IsNullOrWhiteSpace(id));
+                    var updatedIds = (updatedRecords ?? new List<DataAmbre>()).Select(r => r.ID)
+                        .Where(id => !string.IsNullOrWhiteSpace(id));
+                    var deletedIds = (deletedRecords ?? new List<DataAmbre>()).Select(r => r.ID)
+                        .Where(id => !string.IsNullOrWhiteSpace(id));
+
+                    // Éviter les doublons éventuels
+                    var ins = new HashSet<string>(insertedIds);
+                    var upd = new HashSet<string>(updatedIds);
+                    var del = new HashSet<string>(deletedIds);
+
+                    int totalToLog = ins.Count + upd.Count + del.Count;
+                    if (totalToLog > 0)
+                    {
+                        using (var session = await _offlineFirstService.BeginChangeLogSessionAsync(countryId))
+                        {
+                            foreach (var id in ins)
+                                await session.AddAsync("T_Reconciliation", id, "INSERT");
+                            foreach (var id in upd)
+                                await session.AddAsync("T_Reconciliation", id, "UPDATE");
+                            foreach (var id in del)
+                                await session.AddAsync("T_Reconciliation", id, "DELETE");
+
+                            await session.CommitAsync();
+                        }
+                        LogManager.Info($"[ChangeLog] Enregistrements consignés: INSERT={ins.Count}, UPDATE={upd.Count}, DELETE={del.Count}");
+                    }
+                    else
+                    {
+                        LogManager.Info("[ChangeLog] Aucun changement à consigner pour T_Reconciliation.");
+                    }
+                }
+                catch (Exception chEx)
+                {
+                    // Ne pas échouer l'import si la consignation échoue; journaliser uniquement
+                    LogManager.Warning($"[ChangeLog] Échec de la consignation des changements: {chEx.Message}");
+                }
             }
             catch (Exception ex)
             {

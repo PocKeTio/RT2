@@ -762,31 +762,63 @@ namespace RecoTool.Services
             {
                 LogManager.Info($"Mise à jour de T_Reconciliation pour {countryId} - Nouveaux: {newRecords.Count}, Modifiés: {updatedRecords.Count}, Supprimés: {deletedRecords.Count}");
 
-                // Ouvrir une session de change-log unique pour toutes les opérations
-                using (var session = await _offlineFirstService.BeginChangeLogSessionAsync(countryId))
+                // Préparer les entités pour un traitement en lot (une seule connexion/transaction)
+                var toAdd = new List<OfflineFirstAccess.Models.Entity>();
+                var toUpdate = new List<OfflineFirstAccess.Models.Entity>();
+                var toArchive = new List<OfflineFirstAccess.Models.Entity>();
+
+                var now = DateTime.Now;
+
+                // Nouveaux enregistrements
+                foreach (var dataAmbre in newRecords)
                 {
-                    // Traiter les nouveaux enregistrements
-                    foreach (var dataAmbre in newRecords)
-                    {
-                        await CreateOrUpdateReconciliationAsync(dataAmbre, countryId, session);
-                    }
-
-                    // Traiter les enregistrements mis à jour
-                    foreach (var dataAmbre in updatedRecords)
-                    {
-                        await CreateOrUpdateReconciliationAsync(dataAmbre, countryId, session);
-                    }
-
-                    // Traiter les enregistrements supprimés (archivage logique)
-                    foreach (var dataAmbre in deletedRecords)
-                    {
-                        await ArchiveReconciliationAsync(dataAmbre, countryId, session);
-                    }
-
-                    await session.CommitAsync();
+                    var rec = CreateReconciliationFromDataAmbre(dataAmbre);
+                    rec.Version = 1;
+                    rec.CreationDate = now;
+                    rec.LastModified = now;
+                    rec.ModifiedBy = _currentUser;
+                    var ent = ConvertReconciliationToEntity(rec);
+                    toAdd.Add(ent);
                 }
 
-                LogManager.Info($"Table T_Reconciliation mise à jour avec succès pour {countryId}: {newRecords.Count} nouveaux, {updatedRecords.Count} modifiés, {deletedRecords.Count} supprimés");
+                // Versions existantes pour les mises à jour (lookup en masse)
+                var updateIds = updatedRecords?.Select(r => r.ID)?.ToList() ?? new List<string>();
+                var versions = updateIds.Count > 0
+                    ? await _offlineFirstService.GetExistingVersionsAsync(countryId, "T_Reconciliation", "ID", updateIds)
+                    : new Dictionary<string, int?>();
+
+                foreach (var dataAmbre in updatedRecords)
+                {
+                    var rec = CreateReconciliationFromDataAmbre(dataAmbre);
+                    rec.LastModified = now;
+                    rec.ModifiedBy = _currentUser;
+                    int currentVersion = 0;
+                    if (versions.TryGetValue(dataAmbre.ID, out var v) && v.HasValue) currentVersion = v.Value;
+                    rec.Version = currentVersion + 1;
+                    var ent = ConvertReconciliationToEntity(rec);
+                    toUpdate.Add(ent);
+                }
+
+                // Archivage logique pour les supprimés (seule la clé est nécessaire)
+                foreach (var dataAmbre in deletedRecords)
+                {
+                    var ent = new OfflineFirstAccess.Models.Entity
+                    {
+                        TableName = "T_Reconciliation",
+                        PrimaryKeyColumn = "ID",
+                        Properties = new Dictionary<string, object>
+                        {
+                            ["ID"] = dataAmbre.ID
+                        }
+                    };
+                    toArchive.Add(ent);
+                }
+
+                var ok = await _offlineFirstService.ApplyEntitiesBatchAsync(countryId, toAdd, toUpdate, toArchive);
+                if (!ok)
+                    throw new InvalidOperationException("Echec de l'application en lot des réconciliations.");
+
+                LogManager.Info($"Table T_Reconciliation mise à jour avec succès pour {countryId}: {toAdd.Count} nouveaux, {toUpdate.Count} modifiés, {toArchive.Count} supprimés");
             }
             catch (Exception ex)
             {

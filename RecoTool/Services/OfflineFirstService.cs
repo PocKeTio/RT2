@@ -1460,6 +1460,134 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Récupère les clés existantes pour une table et une liste de valeurs de clé primaire en une ou plusieurs requêtes.
+        /// Optimisé pour éviter un aller-retour par enregistrement lors des imports massifs.
+        /// </summary>
+        /// <param name="countryId">Pays courant</param>
+        /// <param name="tableName">Nom de la table</param>
+        /// <param name="keyColumn">Colonne de clé primaire</param>
+        /// <param name="keys">Ensemble de valeurs à vérifier</param>
+        /// <returns>Ensemble des clés trouvées dans la base locale</returns>
+        public async Task<HashSet<string>> GetExistingKeysAsync(string countryId, string tableName, string keyColumn, IEnumerable<string> keys)
+        {
+            EnsureInitialized();
+            if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Le pays demandé ne correspond pas au pays courant initialisé.");
+
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (keys == null) return result;
+
+            var distinctKeys = keys.Where(k => !string.IsNullOrWhiteSpace(k)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (distinctKeys.Count == 0) return result;
+
+            // Limiter le nombre de paramètres par requête (sécurité pour OleDb/Access).
+            const int batchSize = 200; // prudent pour Access
+
+            using (var connection = new OleDbConnection(GetLocalConnectionString()))
+            {
+                await connection.OpenAsync();
+
+                for (int i = 0; i < distinctKeys.Count; i += batchSize)
+                {
+                    var chunk = distinctKeys.Skip(i).Take(batchSize).ToList();
+                    var placeholders = string.Join(", ", chunk.Select((_, idx) => $"@p{idx}"));
+                    var sql = $"SELECT [{keyColumn}] FROM [{tableName}] WHERE [{keyColumn}] IN ({placeholders})";
+                    using (var cmd = new OleDbCommand(sql, connection))
+                    {
+                        foreach (var (val, idx) in chunk.Select((v, idx) => (v, idx)))
+                        {
+                            cmd.Parameters.AddWithValue($"@p{idx}", val);
+                        }
+                        using (var reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var val = reader.IsDBNull(0) ? null : reader.GetValue(0)?.ToString();
+                                if (!string.IsNullOrEmpty(val)) result.Add(val);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Récupère les versions existantes (colonne Version par défaut) pour une liste de clés d'une table donnée.
+        /// </summary>
+        /// <param name="countryId">Pays courant</param>
+        /// <param name="tableName">Nom de la table</param>
+        /// <param name="keyColumn">Nom de la colonne clé primaire</param>
+        /// <param name="keys">Liste des clés à interroger</param>
+        /// <param name="versionColumn">Nom de la colonne de version (par défaut: "Version")</param>
+        /// <returns>Dictionnaire ID -> Version (nullable si absent)</returns>
+        public async Task<Dictionary<string, int?>> GetExistingVersionsAsync(string countryId, string tableName, string keyColumn, IEnumerable<string> keys, string versionColumn = "Version")
+        {
+            EnsureInitialized();
+            if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Le pays demandé ne correspond pas au pays courant initialisé.");
+
+            var map = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
+            if (keys == null) return map;
+
+            var list = keys.Where(k => !string.IsNullOrWhiteSpace(k)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (list.Count == 0) return map;
+
+            const int batchSize = 200;
+            using (var connection = new OleDbConnection(GetLocalConnectionString()))
+            {
+                await connection.OpenAsync();
+                // Check table schema to avoid "No value given for one or more required parameters" when a column name is wrong/missing
+                var cols = await GetTableColumnsAsync(connection, tableName);
+                // Validate key column; fallback to ID if available
+                if (!cols.Contains(keyColumn, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (cols.Contains("ID", StringComparer.OrdinalIgnoreCase))
+                        keyColumn = "ID";
+                    else
+                        throw new InvalidOperationException($"Colonne clé '{keyColumn}' introuvable dans la table {tableName}.");
+                }
+                bool hasVersion = cols.Contains(versionColumn, StringComparer.OrdinalIgnoreCase);
+
+                for (int i = 0; i < list.Count; i += batchSize)
+                {
+                    var chunk = list.Skip(i).Take(batchSize).ToList();
+                    var placeholders = string.Join(", ", chunk.Select((_, idx) => $"@p{idx}"));
+                    var sql = hasVersion
+                        ? $"SELECT [{keyColumn}], [{versionColumn}] FROM [{tableName}] WHERE [{keyColumn}] IN ({placeholders})"
+                        : $"SELECT [{keyColumn}] FROM [{tableName}] WHERE [{keyColumn}] IN ({placeholders})";
+                    using (var cmd = new OleDbCommand(sql, connection))
+                    {
+                        foreach (var (val, idx) in chunk.Select((v, idx) => (v, idx)))
+                        {
+                            cmd.Parameters.AddWithValue($"@p{idx}", val);
+                        }
+                        using (var reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var id = reader.IsDBNull(0) ? null : reader.GetValue(0)?.ToString();
+                                int? ver = null;
+                                if (hasVersion)
+                                {
+                                    if (!reader.IsDBNull(1))
+                                    {
+                                        try { ver = Convert.ToInt32(reader.GetValue(1)); }
+                                        catch { ver = null; }
+                                    }
+                                }
+                                if (!string.IsNullOrEmpty(id)) map[id] = ver;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return map;
+        }
+
+        /// <summary>
         /// Ajoute une entité (avec session de change-log optionnelle)
         /// </summary>
         public async Task<bool> AddEntityAsync(string countryId, Entity entity, OfflineFirstAccess.ChangeTracking.IChangeLogSession changeLogSession)

@@ -760,65 +760,51 @@ namespace RecoTool.Services
         {
             try
             {
-                LogManager.Info($"Mise à jour de T_Reconciliation pour {countryId} - Nouveaux: {newRecords.Count}, Modifiés: {updatedRecords.Count}, Supprimés: {deletedRecords.Count}");
+                LogManager.Info($"[Staging] Mise à jour de T_Reconciliation pour {countryId} - Nouveaux: {newRecords.Count}, Modifiés: {updatedRecords.Count}, Supprimés: {deletedRecords.Count}");
 
-                // Préparer les entités pour un traitement en lot (une seule connexion/transaction)
-                var toAdd = new List<OfflineFirstAccess.Models.Entity>();
-                var toUpdate = new List<OfflineFirstAccess.Models.Entity>();
-                var toArchive = new List<OfflineFirstAccess.Models.Entity>();
-
+                // 1) Préparer les lignes à upserter (nouveaux + modifiés)
                 var now = DateTime.Now;
+                var upserts = new List<Reconciliation>();
 
-                // Nouveaux enregistrements
                 foreach (var dataAmbre in newRecords)
                 {
                     var rec = CreateReconciliationFromDataAmbre(dataAmbre);
-                    rec.Version = 1;
                     rec.CreationDate = now;
                     rec.LastModified = now;
                     rec.ModifiedBy = _currentUser;
-                    var ent = ConvertReconciliationToEntity(rec);
-                    toAdd.Add(ent);
+                    upserts.Add(rec);
                 }
-
-                // Versions existantes pour les mises à jour (lookup en masse)
-                var updateIds = updatedRecords?.Select(r => r.ID)?.ToList() ?? new List<string>();
-                var versions = updateIds.Count > 0
-                    ? await _offlineFirstService.GetExistingVersionsAsync(countryId, "T_Reconciliation", "ID", updateIds)
-                    : new Dictionary<string, int?>();
 
                 foreach (var dataAmbre in updatedRecords)
                 {
                     var rec = CreateReconciliationFromDataAmbre(dataAmbre);
                     rec.LastModified = now;
                     rec.ModifiedBy = _currentUser;
-                    int currentVersion = 0;
-                    if (versions.TryGetValue(dataAmbre.ID, out var v) && v.HasValue) currentVersion = v.Value;
-                    rec.Version = currentVersion + 1;
-                    var ent = ConvertReconciliationToEntity(rec);
-                    toUpdate.Add(ent);
+                    upserts.Add(rec);
                 }
 
-                // Archivage logique pour les supprimés (seule la clé est nécessaire)
-                foreach (var dataAmbre in deletedRecords)
+                // 2) Instancier le service de staging pour la base du pays
+                var connectionString = _offlineFirstService.GetCountryConnectionString(countryId);
+                var staging = new StagingImportService(connectionString, _currentUser);
+
+                // 3) Assurer l'existence et l'indexation des tables nécessaires
+                await staging.EnsureStagingForReconciliationAsync();
+                await staging.EnsureTargetIndexesAsync();
+
+                // 4) Charger le staging et fusionner
+                await staging.TruncateStagingAsync();
+                var staged = await staging.InsertStagingRowsAsync(upserts, chunkSize: 2000);
+                var mergeRes = await staging.MergeStagingIntoReconciliationAsync();
+
+                // 5) Archivage des enregistrements supprimés
+                int archived = 0;
+                if (deletedRecords != null && deletedRecords.Count > 0)
                 {
-                    var ent = new OfflineFirstAccess.Models.Entity
-                    {
-                        TableName = "T_Reconciliation",
-                        PrimaryKeyColumn = "ID",
-                        Properties = new Dictionary<string, object>
-                        {
-                            ["ID"] = dataAmbre.ID
-                        }
-                    };
-                    toArchive.Add(ent);
+                    var ids = deletedRecords.Select(d => d.ID).Where(id => !string.IsNullOrWhiteSpace(id));
+                    archived = await staging.ArchiveByIdsAsync(ids);
                 }
 
-                var ok = await _offlineFirstService.ApplyEntitiesBatchAsync(countryId, toAdd, toUpdate, toArchive);
-                if (!ok)
-                    throw new InvalidOperationException("Echec de l'application en lot des réconciliations.");
-
-                LogManager.Info($"Table T_Reconciliation mise à jour avec succès pour {countryId}: {toAdd.Count} nouveaux, {toUpdate.Count} modifiés, {toArchive.Count} supprimés");
+                LogManager.Info($"[Staging] T_Reconciliation mis à jour pour {countryId}: Staged={staged}, Updated={mergeRes.updated}, Inserted={mergeRes.inserted}, Archived={archived}");
             }
             catch (Exception ex)
             {

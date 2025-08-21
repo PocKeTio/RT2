@@ -60,20 +60,23 @@ namespace OfflineFirstAccess.Helpers
             // Table T_Ref_Ambre_ImportFields
             builder.AddTable("T_Ref_Ambre_ImportFields")
                 .WithColumn("AMB_Source", typeof(string), false)
-                .WithColumn("AMB_Destination", typeof(string), false);
+                .WithColumn("AMB_Destination", typeof(string), false)
+                .EndTable();
             
             // Table T_Ref_Ambre_TransactionCodes
             builder.AddTable("T_Ref_Ambre_TransactionCodes")
                 .WithPrimaryKey("ID", typeof(int), true)
                 .WithColumn("CODE", typeof(string), false)
-                .WithColumn("TAG", typeof(string), false);
+                .WithColumn("TAG", typeof(string), false)
+                .EndTable();
             
             // Table T_Ref_Ambre_Transform
             builder.AddTable("T_Ref_Ambre_Transform")
                 .WithColumn("AMB_Source", typeof(string), false)
                 .WithColumn("AMB_Destination", typeof(string), false)
                 .WithColumn("AMB_TransformationFunction", typeof(string), false)
-                .WithColumn("AMB_Description", typeof(string), true);
+                .WithColumn("AMB_Description", typeof(string), true)
+                .EndTable();
             
             // Table T_Ref_User_Fields
             builder.AddTable("T_Ref_User_Fields")
@@ -83,7 +86,8 @@ namespace OfflineFirstAccess.Helpers
                 .WithColumn("FieldDescription", typeof(string), true)
                 .WithColumn("Pivot", typeof(bool), false)
                 .WithColumn("Receivable", typeof(bool), false)
-                .WithColumn("IsClickable", typeof(bool), false);
+                .WithColumn("IsClickable", typeof(bool), false)
+                .EndTable();
             
             // Table T_Ref_Country
             builder.AddTable("T_Ref_Country")
@@ -94,7 +98,8 @@ namespace OfflineFirstAccess.Helpers
                 .WithColumn("CNT_AmbreReceivable", typeof(string), true)
                 .WithColumn("CNT_AmbrePivotCountry", typeof(int), true)
                 .WithColumn("CNT_ServiceCode", typeof(string), true)
-                .WithColumn("CNT_BIC", typeof(string), true);
+                .WithColumn("CNT_BIC", typeof(string), true)
+                .EndTable();
             
             return await builder.CreateTemplateAsync();
         }

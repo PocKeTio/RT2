@@ -41,9 +41,14 @@ namespace OfflineFirstAccess.Helpers
             // Table des verrous (SyncLocks)
             AddTable("SyncLocks")
                 .WithPrimaryKey("LockID", typeof(string), false)
-                .WithColumn("UserID", typeof(string), false)
-                .WithColumn("LockTime", typeof(DateTime), false)
-                .WithColumn("ExpiresAt", typeof(DateTime), false);
+                .WithColumn("Reason", typeof(string), false)
+                .WithColumn("CreatedAt", typeof(DateTime), false)
+                .WithColumn("ExpiresAt", typeof(DateTime), true)
+                .WithColumn("MachineName", typeof(string), "TEXT(100)", true)
+                .WithColumn("ProcessId", typeof(long), true)
+                .WithColumn("SyncStatus", typeof(string), "TEXT(50)", true)
+                .WithLastModifiedColumn("CreatedAt")
+                .EndTable();
 
             // Table des sessions (Sessions)
             AddTable("Sessions")
@@ -52,7 +57,9 @@ namespace OfflineFirstAccess.Helpers
                 .WithColumn("MachineName", typeof(string), false)
                 .WithColumn("StartTime", typeof(DateTime), false)
                 .WithColumn("LastActivity", typeof(DateTime), false)
-                .WithColumn("IsActive", typeof(bool), false);
+                .WithColumn("IsActive", typeof(bool), false)
+                .WithLastModifiedColumn("LastActivity")
+                .EndTable();
         }
 
         /// <summary>
@@ -167,6 +174,28 @@ namespace OfflineFirstAccess.Helpers
             }
 
             /// <summary>
+            /// Ajoute une colonne à la table avec un type SQL personnalisé
+            /// </summary>
+            /// <param name="columnName">Nom de la colonne</param>
+            /// <param name="dataType">Type de données .NET</param>
+            /// <param name="sqlType">Type SQL à utiliser (ex: TEXT(50))</param>
+            /// <param name="isNullable">Indique si la colonne peut être nulle</param>
+            /// <returns>Le builder de table pour chaîner les appels</returns>
+            public TableBuilder WithColumn(string columnName, Type dataType, string sqlType, bool isNullable = true)
+            {
+                _tableConfig.Columns.Add(new ColumnDefinition(
+                    columnName,
+                    dataType,
+                    sqlType,
+                    isNullable,
+                    false,
+                    false
+                ));
+
+                return this;
+            }
+
+            /// <summary>
             /// Définit la colonne de date de dernière modification
             /// </summary>
             /// <param name="columnName">Nom de la colonne (par défaut: LastModified)</param>
@@ -250,7 +279,7 @@ namespace OfflineFirstAccess.Helpers
             private string GetSqlType(Type type)
             {
                 if (type == typeof(int) || type == typeof(long))
-                    return "INTEGER";
+                    return "LONG";
                 if (type == typeof(string))
                     return "TEXT(255)";
                 if (type == typeof(DateTime))

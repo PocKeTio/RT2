@@ -144,6 +144,9 @@
     <Compile Include="Windows\ReconciliationView.xaml.cs">
       <DependentUpon>ReconciliationView.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Windows\ReconciliationImportWindow.xaml.cs">
+      <DependentUpon>ReconciliationImportWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Windows\FilterPickerWindow.xaml.cs">
       <DependentUpon>FilterPickerWindow.xaml</DependentUpon>
     </Compile>
@@ -179,6 +182,10 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Include="Windows\ReconciliationView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Windows\ReconciliationImportWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

@@ -319,6 +319,90 @@ namespace RecoTool.Helpers
         }
 
         /// <summary>
+        /// Lit une feuille par lettres de colonnes (ex: A, B, AA) à partir d'une ligne de départ.
+        /// Arrête à la première ligne où l'ID (colonne idColumnLetter) est vide.
+        /// Retourne des dictionnaires avec au minimum la clé "ID" et les clés de destination fournies.
+        /// </summary>
+        /// <param name="sheetName">Nom de la feuille (ex: PIVOT, RECEIVABLE)</param>
+        /// <param name="letterToDestination">Mapping lettre de colonne -> nom de champ destination</param>
+        /// <param name="startRow">Ligne de départ des données (1-based)</param>
+        /// <param name="idColumnLetter">Lettre de la colonne contenant l'ID (par défaut A)</param>
+        /// <returns>Liste de lignes (dictionnaires)</returns>
+        public List<Dictionary<string, object>> ReadSheetByColumns(string sheetName,
+            Dictionary<string, string> letterToDestination,
+            int startRow,
+            string idColumnLetter = "A")
+        {
+            if (_workbook == null)
+                throw new InvalidOperationException("Aucun fichier Excel ouvert.");
+
+            if (string.IsNullOrWhiteSpace(sheetName))
+                throw new ArgumentException("sheetName est requis");
+
+            try
+            {
+                Worksheet worksheet = _workbook.Sheets[sheetName];
+                var usedRange = worksheet.UsedRange;
+                int lastRow = usedRange.Rows.Count;
+
+                int idColIndex = ColumnLetterToIndex(idColumnLetter);
+                var destToColIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                foreach (var kv in letterToDestination)
+                {
+                    var letter = (kv.Key ?? string.Empty).Trim();
+                    if (string.IsNullOrEmpty(letter)) continue;
+                    destToColIndex[kv.Value] = ColumnLetterToIndex(letter);
+                }
+
+                var rows = new List<Dictionary<string, object>>();
+                if (startRow < 1) startRow = 1;
+                for (int r = startRow; r <= lastRow; r++)
+                {
+                    var idVal = worksheet.Cells[r, idColIndex].Value2;
+                    var idStr = idVal?.ToString();
+                    if (string.IsNullOrWhiteSpace(idStr))
+                    {
+                        // Stop at first empty ID
+                        break;
+                    }
+
+                    var dict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["ID"] = idStr
+                    };
+
+                    foreach (var dest in destToColIndex.Keys)
+                    {
+                        int c = destToColIndex[dest];
+                        object v = worksheet.Cells[r, c].Value2;
+                        dict[dest] = v;
+                    }
+
+                    rows.Add(dict);
+                }
+
+                return rows;
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Erreur lors de la lecture de la feuille '{sheetName}': {ex.Message}", ex);
+            }
+        }
+
+        private static int ColumnLetterToIndex(string letter)
+        {
+            if (string.IsNullOrWhiteSpace(letter)) throw new ArgumentException("Lettre de colonne invalide");
+            letter = letter.Trim().ToUpperInvariant();
+            int sum = 0;
+            foreach (char c in letter)
+            {
+                if (c < 'A' || c > 'Z') throw new ArgumentException($"Lettre de colonne invalide: {letter}");
+                sum = sum * 26 + (c - 'A' + 1);
+            }
+            return sum;
+        }
+
+        /// <summary>
         /// Ferme le fichier Excel
         /// </summary>
         public void CloseFile()

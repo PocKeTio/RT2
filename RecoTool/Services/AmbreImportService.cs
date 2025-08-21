@@ -26,7 +26,6 @@ namespace RecoTool.Services
         private readonly OfflineFirstService _offlineFirstService;
         private readonly TransformationService _transformationService;
         private readonly string _currentUser;
-        private static readonly System.Threading.SemaphoreSlim _backgroundSyncGate = new System.Threading.SemaphoreSlim(1, 1);
 
         /// <summary>
         /// Constructeur avec OfflineFirstService
@@ -105,6 +104,9 @@ namespace RecoTool.Services
                     return result;
                 }
 
+                // Mise à jour d'état (best-effort) après initialisation réussie et pré-vérifications
+                try { await _offlineFirstService.SetSyncStatusAsync("Importing"); } catch { }
+
                 progressCallback?.Invoke("Lecture du fichier Excel...", 20);
 
                 // Lecture du fichier Excel avec progression (20% -> 40%)
@@ -182,52 +184,20 @@ namespace RecoTool.Services
                 result.EndTime = DateTime.Now;
                 result.ProcessedRecords = validData.Count;
 
-                // Démarrer la synchronisation réseau en arrière-plan (une seule instance à la fois)
-                _ = StartBackgroundSyncIfIdle(countryId);
+                // Synchronisation réseau en arrière-plan supprimée (flux simplifié)
 
                 return result;
             }
             catch (Exception ex)
             {
                 result.Errors.Add($"Erreur durant l'import: {ex.Message}");
+                try { await _offlineFirstService.SetSyncStatusAsync("Error"); } catch { }
                 result.EndTime = DateTime.Now;
                 return result;
             }
         }
 
-        /// <summary>
-        /// Lance une synchronisation réseau en arrière-plan si aucune n'est déjà en cours.
-        /// Empêche les verrous persistants en évitant les synchros concurrentes.
-        /// </summary>
-        private async Task StartBackgroundSyncIfIdle(string countryId)
-        {
-            if (!await _backgroundSyncGate.WaitAsync(0))
-            {
-                LogManager.Info("Synchronisation réseau déjà en cours en arrière-plan - nouvelle demande ignorée");
-                return;
-            }
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    LogManager.Info($"Démarrage de la synchronisation réseau en arrière-plan pour {countryId}");
-                    bool syncSuccess = await _offlineFirstService.SynchronizeData();
-                    if (syncSuccess)
-                        LogManager.Info($"Synchronisation réseau réussie (arrière-plan) pour {countryId}");
-                    else
-                        LogManager.Warning($"Synchronisation réseau échouée (arrière-plan) pour {countryId}");
-                }
-                catch (Exception syncEx)
-                {
-                    LogManager.Error($"Erreur lors de la synchronisation réseau (arrière-plan) pour {countryId}", syncEx);
-                }
-                finally
-                {
-                    _backgroundSyncGate.Release();
-                }
-            });
-        }
+        
 
         /// <summary>
         /// Lit le fichier Excel en appliquant le mapping des champs
@@ -417,7 +387,6 @@ namespace RecoTool.Services
         private async Task<(int newCount, int updatedCount, int deletedCount)> SynchronizeWithDatabase(List<DataAmbre> newData, string countryId, bool performNetworkSync)
         {
             ImportChanges changes;
-            var gateHeld = false;
             try
             {
                 // 1) Charger les données existantes et calculer les changements SANS verrou global
@@ -426,16 +395,7 @@ namespace RecoTool.Services
                 LogManager.Info($"Changements calculés pour {countryId} - Nouveaux: {changes.ToAdd.Count}, Modifiés: {changes.ToUpdate.Count}, Supprimés: {changes.ToArchive.Count}");
 
                 // 2) Protéger uniquement la phase d'écriture (apply + reconciliation)
-                try
-                {
-                    LogManager.Info("Vérification des synchronisations réseau en cours avant l'acquisition du verrou global...");
-                    await _backgroundSyncGate.WaitAsync();
-                    gateHeld = true;
-                }
-                catch (Exception ex)
-                {
-                    LogManager.Warning($"Impossible d'acquérir le sémaphore de synchro réseau: {ex.Message}. Poursuite de l'opération locale.");
-                }
+                // Plus de synchronisation réseau concurrente: on acquiert directement le verrou global
 
                 var lockWaitStart = DateTime.Now;
                 var lockTimeout = TimeSpan.FromMinutes(2); // Timeout explicite pour éviter l'attente infinie
@@ -465,17 +425,39 @@ namespace RecoTool.Services
 
                     try
                     {
+                        // Statut: application des changements
+                        try { await _offlineFirstService.SetSyncStatusAsync("ApplyingChanges"); } catch { }
+
                         // Appliquer les changements via les API natives d'OfflineFirstService
                         await ApplyChangesAsync(changes);
+
+                        // Statut: réconciliation
+                        try { await _offlineFirstService.SetSyncStatusAsync("Reconciling"); } catch { }
 
                         // Mettre à jour T_Reconciliation
                         await UpdateReconciliationTable(changes.ToAdd, changes.ToUpdate, changes.ToArchive, countryId);
 
                         LogManager.Info($"Import local terminé avec succès pour {countryId}");
+
+                        // Publier la base locale vers le réseau tant que le verrou global est détenu
+                        try { await _offlineFirstService.SetSyncStatusAsync("Publishing"); } catch { }
+                        await _offlineFirstService.CopyLocalToNetworkAsync(countryId);
+
+                        // Finaliser: les changements de l'import sont déjà publiés (copie fichier). Marquer comme synchronisés dans le ChangeLog.
+                        try { await _offlineFirstService.SetSyncStatusAsync("Finalizing"); } catch { }
+                        await _offlineFirstService.MarkAllLocalChangesAsSyncedAsync(countryId);
+
+                        // Rafraîchir la base locale depuis le réseau (copie atomique) pour garantir un état propre et incluant les pending appliqués
+                        try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
+                        await _offlineFirstService.CopyNetworkToLocalAsync(countryId);
+
+                        // Terminé
+                        try { await _offlineFirstService.SetSyncStatusAsync("Completed"); } catch { }
                     }
                     catch (Exception ex)
                     {
                         LogManager.Error($"Erreur lors de l'import local pour {countryId}", ex);
+                        try { await _offlineFirstService.SetSyncStatusAsync("Error"); } catch { }
                         throw new InvalidOperationException($"Erreur lors de la synchronisation avec la base de données: {ex.Message}", ex);
                     }
                     // Le verrou global est libéré automatiquement par Dispose() à la fin du using
@@ -508,13 +490,7 @@ namespace RecoTool.Services
 
                 return (changes.ToAdd.Count, changes.ToUpdate.Count, changes.ToArchive.Count);
             }
-            finally
-            {
-                if (gateHeld)
-                {
-                    try { _backgroundSyncGate.Release(); } catch { }
-                }
-            }
+            finally { }
         }
 
         /// <summary>

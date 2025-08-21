@@ -187,6 +187,23 @@ namespace RecoTool.Windows
             }
         }
 
+        /// <summary>
+        /// Ouvre la fenêtre d'import de réconciliation
+        /// </summary>
+        private void OpenReconciliationImportButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var window = new ReconciliationImportWindow(_offlineFirstService);
+                window.Owner = this;
+                window.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Unable to open Reconciliation Import: {ex.Message}");
+            }
+        }
+
         #endregion
 
         #region File Processing

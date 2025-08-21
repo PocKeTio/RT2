@@ -120,7 +120,8 @@ namespace OfflineFirstAccess.Models
                     CreatedAt DATETIME NOT NULL,
                     ExpiresAt DATETIME,
                     MachineName TEXT(100),
-                    ProcessId LONG
+                    ProcessId LONG,
+                    SyncStatus TEXT(50)
                 )"
             };
             
@@ -130,6 +131,7 @@ namespace OfflineFirstAccess.Models
             syncLocksTable.Columns.Add(new ColumnDefinition("ExpiresAt", typeof(DateTime), "DATETIME", true));
             syncLocksTable.Columns.Add(new ColumnDefinition("MachineName", typeof(string), "TEXT(100)", true));
             syncLocksTable.Columns.Add(new ColumnDefinition("ProcessId", typeof(long), "LONG", true));
+            syncLocksTable.Columns.Add(new ColumnDefinition("SyncStatus", typeof(string), "TEXT(50)", true));
             
             // Ajouter la table des sessions (Sessions)
             var sessionsTable = new TableConfiguration

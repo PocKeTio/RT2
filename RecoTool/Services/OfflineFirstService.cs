@@ -325,10 +325,37 @@ namespace RecoTool.Services
                     "CreatedAt DATETIME, " +
                     "ExpiresAt DATETIME, " +
                     "MachineName TEXT, " +
-                    "ProcessId INTEGER)", connection))
+                    "ProcessId INTEGER, " +
+                    "SyncStatus TEXT(50))", connection))
                 {
                     await cmd.ExecuteNonQueryAsync();
                 }
+            }
+
+            // Ensure SyncStatus column exists in any case (upgrade path)
+            var colRestrictions = new string[4];
+            colRestrictions[2] = "SyncLocks";
+            DataTable columns = connection.GetSchema("Columns", colRestrictions);
+            bool hasSyncStatus = false;
+            foreach (DataRow r in columns.Rows)
+            {
+                var colName = r["COLUMN_NAME"]?.ToString();
+                if (string.Equals(colName, "SyncStatus", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasSyncStatus = true;
+                    break;
+                }
+            }
+            if (!hasSyncStatus)
+            {
+                try
+                {
+                    using (var alter = new OleDbCommand("ALTER TABLE SyncLocks ADD COLUMN SyncStatus TEXT(50)", connection))
+                    {
+                        await alter.ExecuteNonQueryAsync();
+                    }
+                }
+                catch { /* best-effort upgrade */ }
             }
         }
 
@@ -498,6 +525,18 @@ namespace RecoTool.Services
                                     await command.ExecuteNonQueryAsync();
                                 }
 
+                                // Best-effort initial status
+                                try
+                                {
+                                    using (var set = new OleDbCommand("UPDATE SyncLocks SET SyncStatus = ? WHERE LockID = ?", connection))
+                                    {
+                                        set.Parameters.AddWithValue("@SyncStatus", "Acquired");
+                                        set.Parameters.AddWithValue("@LockID", lockId);
+                                        await set.ExecuteNonQueryAsync();
+                                    }
+                                }
+                                catch { /* column may not exist yet */ }
+
                                 return new GlobalLockHandle(connStr, lockId, expirySeconds);
                             }
                         }
@@ -586,6 +625,60 @@ namespace RecoTool.Services
                 await Task.Delay(pollInterval, token);
             }
             return false;
+        }
+
+        /// <summary>
+        /// Met à jour le champ SyncStatus pour le verrou global actif détenu par ce processus.
+        /// </summary>
+        public async Task SetSyncStatusAsync(string status, CancellationToken token = default)
+        {
+            if (string.IsNullOrEmpty(_currentCountryId)) return;
+            try
+            {
+                string connStr = GetRemoteLockConnectionString(_currentCountryId);
+                var now = DateTime.UtcNow;
+                using (var connection = new OleDbConnection(connStr))
+                {
+                    await connection.OpenAsync(token);
+                    await EnsureSyncLocksTableExistsAsync(connection);
+                    using (var cmd = new OleDbCommand("UPDATE SyncLocks SET SyncStatus = ? WHERE MachineName = ? AND ProcessId = ? AND (ExpiresAt IS NULL OR ExpiresAt > ?)", connection))
+                    {
+                        cmd.Parameters.AddWithValue("@SyncStatus", status ?? "Unknown");
+                        cmd.Parameters.AddWithValue("@MachineName", Environment.MachineName);
+                        cmd.Parameters.AddWithValue("@ProcessId", System.Diagnostics.Process.GetCurrentProcess().Id);
+                        cmd.Parameters.AddWithValue("@Now", now.ToOADate());
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                }
+            }
+            catch { /* best-effort */ }
+        }
+
+        /// <summary>
+        /// Récupère le SyncStatus courant pour le verrou global actif de ce processus, s'il existe.
+        /// </summary>
+        public async Task<string> GetCurrentSyncStatusAsync(CancellationToken token = default)
+        {
+            if (string.IsNullOrEmpty(_currentCountryId)) return null;
+            try
+            {
+                string connStr = GetRemoteLockConnectionString(_currentCountryId);
+                var now = DateTime.UtcNow;
+                using (var connection = new OleDbConnection(connStr))
+                {
+                    await connection.OpenAsync(token);
+                    await EnsureSyncLocksTableExistsAsync(connection);
+                    using (var cmd = new OleDbCommand("SELECT TOP 1 SyncStatus FROM SyncLocks WHERE MachineName = ? AND ProcessId = ? AND (ExpiresAt IS NULL OR ExpiresAt > ?) ORDER BY CreatedAt DESC", connection))
+                    {
+                        cmd.Parameters.AddWithValue("@MachineName", Environment.MachineName);
+                        cmd.Parameters.AddWithValue("@ProcessId", System.Diagnostics.Process.GetCurrentProcess().Id);
+                        cmd.Parameters.AddWithValue("@Now", now.ToOADate());
+                        var obj = await cmd.ExecuteScalarAsync();
+                        return obj == null || obj == DBNull.Value ? null : obj.ToString();
+                    }
+                }
+            }
+            catch { return null; }
         }
 
         #region Configuration Properties
@@ -1752,6 +1845,22 @@ namespace RecoTool.Services
             if (initialized)
             {
                 _currentCountryId = countryId;
+
+                // Au démarrage/changement de pays, pousser d'éventuels changements en attente
+                try
+                {
+                    var pending = await GetUnsyncedChangeCountAsync(countryId);
+                    if (pending > 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Pending changes detected ({pending}) for {countryId} on startup. Pushing to network...");
+                        await PushPendingChangesToNetworkAsync(countryId);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Erreur lors du push des changements en attente pour {countryId} au démarrage: {ex.Message}");
+                    // Ne pas interrompre l'initialisation si le push échoue; l'utilisateur pourra réessayer manuellement
+                }
             }
             return initialized;
         }
@@ -2065,6 +2174,370 @@ namespace RecoTool.Services
             {
                 // En cas d'autre erreur, considérer la base comme verrouillée par précaution
                 return true;
+            }
+        }
+
+        /// <summary>
+        /// Copie la base locale du pays vers l'emplacement réseau de manière atomique.
+        /// Suppose que le verrou global a été acquis en amont pour éviter les accès concurrents.
+        /// </summary>
+        /// <param name="countryId">ID du pays</param>
+        public async Task CopyLocalToNetworkAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId))
+                throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            // Récupérer chemins
+            string dataDirectory = GetParameter("DataDirectory");
+            string remoteDir = GetParameter("CountryDatabaseDirectory");
+            string countryPrefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+
+            if (string.IsNullOrWhiteSpace(dataDirectory) || string.IsNullOrWhiteSpace(remoteDir))
+                throw new InvalidOperationException("Paramètres DataDirectory ou CountryDatabaseDirectory manquants (T_Param)");
+
+            string localDbPath = Path.Combine(dataDirectory, $"{countryPrefix}{countryId}.accdb");
+            string networkDbPath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}.accdb");
+
+            if (!File.Exists(localDbPath))
+                throw new FileNotFoundException($"Base locale introuvable pour {countryId}", localDbPath);
+
+            // S'assurer que le répertoire réseau existe
+            if (!Directory.Exists(remoteDir))
+            {
+                Directory.CreateDirectory(remoteDir);
+            }
+
+            // Vérifier si la base réseau est verrouillée (meilleure robustesse)
+            // Normalement inutile si le verrou global applicatif est respecté
+            try
+            {
+                if (File.Exists(networkDbPath))
+                {
+                    bool locked = await IsDatabaseLockedAsync(networkDbPath);
+                    if (locked)
+                    {
+                        throw new IOException($"La base réseau est verrouillée: {networkDbPath}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Avertissement: impossible de vérifier le verrou de la base réseau ({ex.Message}). Poursuite de la copie.");
+            }
+
+            // Chemins temporaires et sauvegarde
+            string tempPath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}.accdb.tmp_{Guid.NewGuid():N}");
+            string backupPath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}.accdb.bak");
+
+            // Copier vers un fichier temporaire sur le même volume réseau
+            File.Copy(localDbPath, tempPath, true);
+
+            // Remplacer atomiquement la base réseau (ou déplacer si inexistant)
+            if (File.Exists(networkDbPath))
+            {
+                // File.Replace est atomique et crée une sauvegarde
+                File.Replace(tempPath, networkDbPath, backupPath);
+            }
+            else
+            {
+                File.Move(tempPath, networkDbPath);
+            }
+
+            System.Diagnostics.Debug.WriteLine($"Base locale publiée vers le réseau pour {countryId} -> {networkDbPath}");
+        }
+        
+        /// <summary>
+        /// Marque toutes les entrées non synchronisées du ChangeLog comme synchronisées.
+        /// À utiliser immédiatement après publication locale->réseau (la base réseau reflète déjà les changements).
+        /// </summary>
+        /// <param name="countryId">ID du pays</param>
+        public async Task MarkAllLocalChangesAsSyncedAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId))
+                throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            // Le ChangeLog est stocké dans la base de lock côté réseau (voir DatabaseTemplateBuilder commentaire)
+            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(countryId));
+            var unsynced = await tracker.GetUnsyncedChangesAsync();
+            if (unsynced == null) return;
+            var ids = unsynced.Select(c => c.Id).ToList();
+            if (ids.Count == 0) return;
+            await tracker.MarkChangesAsSyncedAsync(ids);
+        }
+
+        /// <summary>
+        /// Copie la base réseau du pays vers la base locale de manière atomique (sur le volume local).
+        /// Crée un fichier temporaire dans le répertoire local puis remplace atomiquement la base locale.
+        /// </summary>
+        /// <param name="countryId">ID du pays</param>
+        public async Task CopyNetworkToLocalAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId))
+                throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            string dataDirectory = GetParameter("DataDirectory");
+            string remoteDir = GetParameter("CountryDatabaseDirectory");
+            string countryPrefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+
+            if (string.IsNullOrWhiteSpace(dataDirectory) || string.IsNullOrWhiteSpace(remoteDir))
+                throw new InvalidOperationException("Paramètres DataDirectory ou CountryDatabaseDirectory manquants (T_Param)");
+
+            string localDbPath = Path.Combine(dataDirectory, $"{countryPrefix}{countryId}.accdb");
+            string networkDbPath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}.accdb");
+
+            if (!File.Exists(networkDbPath))
+                throw new FileNotFoundException($"Base réseau introuvable pour {countryId}", networkDbPath);
+
+            // Vérifier que la base réseau n'est pas verrouillée (par précaution)
+            if (await IsDatabaseLockedAsync(networkDbPath))
+                throw new IOException($"La base réseau est verrouillée: {networkDbPath}");
+
+            // S'assurer que le répertoire local existe
+            if (!Directory.Exists(dataDirectory))
+            {
+                Directory.CreateDirectory(dataDirectory);
+            }
+
+            // Copier vers un fichier temporaire local, puis remplacer atomiquement la base locale
+            string tempLocal = Path.Combine(dataDirectory, $"{countryPrefix}{countryId}.accdb.tmp_{Guid.NewGuid():N}");
+            string backupLocal = Path.Combine(dataDirectory, $"{countryPrefix}{countryId}.accdb.bak");
+
+            File.Copy(networkDbPath, tempLocal, true);
+
+            if (File.Exists(localDbPath))
+            {
+                File.Replace(tempLocal, localDbPath, backupLocal);
+            }
+            else
+            {
+                File.Move(tempLocal, localDbPath);
+            }
+
+            System.Diagnostics.Debug.WriteLine($"Base réseau copiée vers le local pour {countryId} -> {localDbPath}");
+        }
+        
+        /// <summary>
+        /// Construit la chaîne de connexion vers la base réseau d'un pays donné.
+        /// </summary>
+        private string GetNetworkCountryConnectionString(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+            string remoteDir = GetParameter("CountryDatabaseDirectory");
+            string countryPrefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            if (string.IsNullOrWhiteSpace(remoteDir))
+                throw new InvalidOperationException("Paramètre CountryDatabaseDirectory manquant (T_Param)");
+            string networkDbPath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}.accdb");
+            return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={networkDbPath};";
+        }
+
+        /// <summary>
+        /// Pousse de manière robuste les changements locaux en attente vers la base réseau sous verrou global.
+        /// Applique INSERT/UPDATE/DELETE sur la base réseau à partir de l'état local pour chaque ChangeLog non synchronisé trouvé,
+        /// puis marque uniquement ces entrées comme synchronisées. Ignore les entrées qui ne correspondent pas à une ligne locale.
+        /// </summary>
+        public async Task<int> PushPendingChangesToNetworkAsync(string countryId, bool assumeLockHeld = false, CancellationToken token = default)
+        {
+            EnsureInitialized();
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            // S'assurer que le service est positionné sur le bon pays (AcquireGlobalLockAsync utilise _currentCountryId)
+            if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
+            {
+                var ok = await SetCurrentCountryAsync(countryId);
+                if (!ok) throw new InvalidOperationException($"Impossible d'initialiser la base locale pour {countryId}");
+            }
+
+            // Récupérer les entrées non synchronisées depuis la base de lock
+            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(countryId));
+            var unsynced = (await tracker.GetUnsyncedChangesAsync())?.ToList() ?? new List<OfflineFirstAccess.Models.ChangeLogEntry>();
+            if (unsynced.Count == 0) return 0;
+
+            // Acquérir le verrou global si non détenu par l'appelant
+            IDisposable globalLock = null;
+            if (!assumeLockHeld)
+            {
+                globalLock = await AcquireGlobalLockAsync(countryId, "PushPendingChanges", TimeSpan.FromMinutes(5), token);
+                if (globalLock == null)
+                    throw new InvalidOperationException($"Impossible d'acquérir le verrou global pour {countryId} (PushPendingChanges)");
+            }
+            try
+            {
+
+                var appliedIds = new List<long>();
+
+                // Préparer connexions
+                using (var localConn = new OleDbConnection(GetCountryConnectionString(countryId)))
+                using (var netConn = new OleDbConnection(GetNetworkCountryConnectionString(countryId)))
+                {
+                    await localConn.OpenAsync();
+                    await netConn.OpenAsync();
+
+                    using (var tx = netConn.BeginTransaction())
+                    {
+                        try
+                        {
+                            // Caches de schéma
+                            var tableColsCache = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+                            var pkColCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                            Func<string, Task<HashSet<string>>> getColsAsync = async (table) =>
+                            {
+                                if (tableColsCache.TryGetValue(table, out var set)) return set;
+                                set = await GetTableColumnsAsync(netConn, table);
+                                tableColsCache[table] = set;
+                                return set;
+                            };
+
+                            Func<string, Task<string>> getPkAsync = async (table) =>
+                            {
+                                if (pkColCache.TryGetValue(table, out var pkc)) return pkc;
+                                pkc = await GetPrimaryKeyColumnAsync(netConn, table) ?? "ID";
+                                pkColCache[table] = pkc;
+                                return pkc;
+                            };
+
+                            foreach (var entry in unsynced)
+                            {
+                                if (token.IsCancellationRequested) break;
+                                if (string.IsNullOrWhiteSpace(entry?.TableName) || string.IsNullOrWhiteSpace(entry?.RecordId)) continue;
+
+                                var table = entry.TableName;
+                                var op = (entry.OperationType ?? string.Empty).Trim().ToUpperInvariant();
+
+                                var cols = await getColsAsync(table);
+                                if (cols == null || cols.Count == 0) continue;
+                                var pkCol = await getPkAsync(table);
+
+                                // 1) Lire la ligne locale (si elle existe)
+                                object localPkVal = entry.RecordId;
+                                object Prepare(object v) => v ?? DBNull.Value;
+
+                                Dictionary<string, object> localValues = null;
+                                using (var lcCmd = new OleDbCommand($"SELECT * FROM [{table}] WHERE [{pkCol}] = @k", localConn))
+                                {
+                                    lcCmd.Parameters.AddWithValue("@k", localPkVal);
+                                    using (var r = await lcCmd.ExecuteReaderAsync())
+                                    {
+                                        if (await r.ReadAsync())
+                                        {
+                                            localValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                                            for (int i = 0; i < r.FieldCount; i++)
+                                            {
+                                                var c = r.GetName(i);
+                                                if (!cols.Contains(c)) continue; // garder uniquement les colonnes connues côté réseau
+                                                localValues[c] = r.IsDBNull(i) ? null : r.GetValue(i);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 2) Appliquer sur réseau
+                                if (op == "DELETE")
+                                {
+                                    // Soft-delete si possible
+                                    bool hasIsDeleted = cols.Contains(_syncConfig.IsDeletedColumn);
+                                    bool hasDeleteDate = cols.Contains("DeleteDate");
+                                    bool hasLastMod = cols.Contains(_syncConfig.LastModifiedColumn) || cols.Contains("LastModified");
+
+                                    if (hasIsDeleted || hasDeleteDate)
+                                    {
+                                        var setParts = new List<string>();
+                                        var parameters = new List<object>();
+                                        if (hasIsDeleted) setParts.Add($"[{_syncConfig.IsDeletedColumn}] = true");
+                                        if (hasDeleteDate) { setParts.Add("[DeleteDate] = @p0"); parameters.Add(DateTime.UtcNow); }
+                                        if (hasLastMod)
+                                        {
+                                            var col = cols.Contains(_syncConfig.LastModifiedColumn) ? _syncConfig.LastModifiedColumn : "LastModified";
+                                            setParts.Add($"[{col}] = @p1"); parameters.Add(DateTime.UtcNow);
+                                        }
+                                        using (var cmd = new OleDbCommand($"UPDATE [{table}] SET {string.Join(", ", setParts)} WHERE [{pkCol}] = @key", netConn, tx))
+                                        {
+                                            for (int i = 0; i < parameters.Count; i++) cmd.Parameters.AddWithValue($"@p{i}", Prepare(parameters[i]));
+                                            cmd.Parameters.AddWithValue("@key", Prepare(localPkVal));
+                                            await cmd.ExecuteNonQueryAsync();
+                                        }
+                                    }
+                                    else
+                                    {
+                                        using (var cmd = new OleDbCommand($"DELETE FROM [{table}] WHERE [{pkCol}] = @key", netConn, tx))
+                                        {
+                                            cmd.Parameters.AddWithValue("@key", Prepare(localPkVal));
+                                            await cmd.ExecuteNonQueryAsync();
+                                        }
+                                    }
+                                    appliedIds.Add(entry.Id);
+                                }
+                                else // INSERT / UPDATE
+                                {
+                                    if (localValues == null)
+                                    {
+                                        // Rien à appliquer pour cette entrée (probablement créée ailleurs) -> ignorer
+                                        continue;
+                                    }
+
+                                    // Existence sur réseau
+                                    int exists;
+                                    using (var exCmd = new OleDbCommand($"SELECT COUNT(*) FROM [{table}] WHERE [{pkCol}] = @key", netConn, tx))
+                                    {
+                                        exCmd.Parameters.AddWithValue("@key", Prepare(localPkVal));
+                                        exists = Convert.ToInt32(await exCmd.ExecuteScalarAsync());
+                                    }
+
+                                    // Préparer listes colonnes/valeurs (exclure PK en update)
+                                    var allCols = localValues.Keys.Where(c => !string.Equals(c, pkCol, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                                    if (exists > 0)
+                                    {
+                                        // UPDATE
+                                        var setParts = new List<string>();
+                                        for (int i = 0; i < allCols.Count; i++) setParts.Add($"[{allCols[i]}] = @p{i}");
+                                        using (var up = new OleDbCommand($"UPDATE [{table}] SET {string.Join(", ", setParts)} WHERE [{pkCol}] = @key", netConn, tx))
+                                        {
+                                            for (int i = 0; i < allCols.Count; i++) up.Parameters.AddWithValue($"@p{i}", Prepare(localValues[allCols[i]]));
+                                            up.Parameters.AddWithValue("@key", Prepare(localPkVal));
+                                            await up.ExecuteNonQueryAsync();
+                                        }
+                                    }
+                                    else
+                                    {
+                                        // INSERT
+                                        var insertCols = localValues.Keys.ToList();
+                                        var ph = string.Join(", ", insertCols.Select((c, i) => $"@p{i}"));
+                                        var colList = string.Join(", ", insertCols.Select(c => $"[{c}]"));
+                                        using (var ins = new OleDbCommand($"INSERT INTO [{table}] ({colList}) VALUES ({ph})", netConn, tx))
+                                        {
+                                            for (int i = 0; i < insertCols.Count; i++) ins.Parameters.AddWithValue($"@p{i}", Prepare(localValues[insertCols[i]]));
+                                            await ins.ExecuteNonQueryAsync();
+                                        }
+                                    }
+
+                                    appliedIds.Add(entry.Id);
+                                }
+                            }
+
+                            tx.Commit();
+                        }
+                        catch
+                        {
+                            try { tx.Rollback(); } catch { }
+                            throw;
+                        }
+                    }
+                }
+
+                // Marquer uniquement les id appliqués
+                if (appliedIds.Count > 0)
+                {
+                    await tracker.MarkChangesAsSyncedAsync(appliedIds);
+                    // Rafraîchir local pour refléter l'état réseau après application des pending
+                    await CopyNetworkToLocalAsync(countryId);
+                }
+
+                return appliedIds.Count;
+            }
+            finally
+            {
+                try { globalLock?.Dispose(); } catch { }
             }
         }
         

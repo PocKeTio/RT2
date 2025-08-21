@@ -1201,19 +1201,25 @@ namespace RecoTool.Windows
                     view.ApplySavedFilterSql(_currentFilter);
                     if (!string.IsNullOrWhiteSpace(_currentFilterName))
                         view.SetViewTitle(_currentFilterName);
-                    // Try to apply saved layout for the selected view
-                    try
+                    // Apply saved layout for the selected view asynchronously to avoid blocking UI
+                    if (!string.IsNullOrWhiteSpace(_currentFilterName))
                     {
-                        if (!string.IsNullOrWhiteSpace(_currentFilterName))
+                        _ = System.Threading.Tasks.Task.Run(async () =>
                         {
-                            var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(_currentFilterName);
-                            if (!string.IsNullOrWhiteSpace(pref?.UPF_ColumnWidths))
+                            try
                             {
-                                view.ApplyLayoutJson(pref.UPF_ColumnWidths);
+                                var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(_currentFilterName);
+                                if (!string.IsNullOrWhiteSpace(pref?.UPF_ColumnWidths))
+                                {
+                                    await view.Dispatcher.InvokeAsync(() =>
+                                    {
+                                        try { view.ApplyLayoutJson(pref.UPF_ColumnWidths); } catch { }
+                                    });
+                                }
                             }
-                        }
+                            catch { }
+                        });
                     }
-                    catch { }
                 }
                 view.Refresh();
                 wnd.Show();
@@ -1238,19 +1244,25 @@ namespace RecoTool.Windows
                 view.ApplySavedFilterSql(_currentFilter);
                 if (!string.IsNullOrWhiteSpace(_currentFilterName))
                     view.SetViewTitle(_currentFilterName);
-                // Try to apply saved layout for the selected view
-                try
+                // Apply saved layout for the selected view asynchronously to avoid blocking UI
+                if (!string.IsNullOrWhiteSpace(_currentFilterName))
                 {
-                    if (!string.IsNullOrWhiteSpace(_currentFilterName))
+                    _ = System.Threading.Tasks.Task.Run(async () =>
                     {
-                        var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(_currentFilterName);
-                        if (!string.IsNullOrWhiteSpace(pref?.UPF_ColumnWidths))
+                        try
                         {
-                            view.ApplyLayoutJson(pref.UPF_ColumnWidths);
+                            var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(_currentFilterName);
+                            if (!string.IsNullOrWhiteSpace(pref?.UPF_ColumnWidths))
+                            {
+                                await view.Dispatcher.InvokeAsync(() =>
+                                {
+                                    try { view.ApplyLayoutJson(pref.UPF_ColumnWidths); } catch { }
+                                });
+                            }
                         }
-                    }
+                        catch { }
+                    });
                 }
-                catch { }
             }
             view.Refresh();
 

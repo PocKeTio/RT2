@@ -9,6 +9,9 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using RecoTool.Models;
 using OfflineFirstAccess.ChangeTracking;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
 
 namespace RecoTool.Services
 {
@@ -132,6 +135,7 @@ namespace RecoTool.Services
         /// </summary>
         public async Task<List<ReconciliationViewData>> GetReconciliationViewAsync(string countryId, string filterSql = null)
         {
+            var swBuild = Stopwatch.StartNew();
             string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
             string dwEsc = string.IsNullOrEmpty(dwPath) ? null : dwPath.Replace("'", "''");
             // Build JOIN targets: use IN 'path' subqueries when external, otherwise direct tables
@@ -194,7 +198,21 @@ namespace RecoTool.Services
 
             query += " ORDER BY a.Operation_Date DESC";
 
-            return await ExecuteQueryAsync<ReconciliationViewData>(query);
+            swBuild.Stop();
+            var swExec = Stopwatch.StartNew();
+            var list = await ExecuteQueryAsync<ReconciliationViewData>(query);
+            swExec.Stop();
+
+            try
+            {
+                LogPerf(
+                    "GetReconciliationView",
+                    $"country={countryId} | usingDW={(string.IsNullOrEmpty(dwPath) ? "false" : "true")} | filterLen={(filterSql?.Length ?? 0)} | buildMs={swBuild.ElapsedMilliseconds} | execMs={swExec.ElapsedMilliseconds} | rows={list?.Count ?? 0} | queryLen={(query?.Length ?? 0)}"
+                );
+            }
+            catch { }
+
+            return list;
         }
 
         #endregion
@@ -922,10 +940,16 @@ namespace RecoTool.Services
         private async Task<List<T>> ExecuteQueryAsync<T>(string query, string connectionString, params object[] parameters) where T : new()
         {
             var results = new List<T>();
+            var swTotal = Stopwatch.StartNew();
+            long msOpen = 0, msExecute = 0, msMapPrep = 0, msMapRows = 0;
+            int fieldCount = 0, propMapCount = 0;
 
             using (var connection = new OleDbConnection(connectionString))
             {
+                var swOpen = Stopwatch.StartNew();
                 await connection.OpenAsync();
+                swOpen.Stop();
+                msOpen = swOpen.ElapsedMilliseconds;
                 using (var command = new OleDbCommand(query, connection))
                 {
                     if (parameters != null)
@@ -936,88 +960,120 @@ namespace RecoTool.Services
                         }
                     }
 
+                    var swExec = Stopwatch.StartNew();
                     using (var reader = await command.ExecuteReaderAsync())
                     {
-                        var properties = typeof(T).GetProperties();
+                        swExec.Stop();
+                        msExecute = swExec.ElapsedMilliseconds;
+                        // Cache column ordinals once per reader
+                        var swPrep = Stopwatch.StartNew();
+                        var columnOrdinals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                        for (int i = 0; i < reader.FieldCount; i++)
+                        {
+                            var name = reader.GetName(i);
+                            if (!columnOrdinals.ContainsKey(name))
+                                columnOrdinals.Add(name, i);
+                        }
+                        fieldCount = reader.FieldCount;
 
+                        // Prepare property maps once per type/query execution
+                        var properties = typeof(T).GetProperties();
+                        var propMaps = new List<(System.Reflection.PropertyInfo Prop, int Ordinal, Type TargetType)>();
+                        foreach (var prop in properties)
+                        {
+                            try
+                            {
+                                if (!prop.CanWrite || prop.GetSetMethod(true) == null || prop.GetIndexParameters().Length > 0)
+                                    continue;
+
+                                if (!columnOrdinals.TryGetValue(prop.Name, out var ord))
+                                    continue;
+
+                                var targetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+                                propMaps.Add((prop, ord, targetType));
+                            }
+                            catch
+                            {
+                                // Ignore property mapping preparation issues
+                            }
+                        }
+                        propMapCount = propMaps.Count;
+                        swPrep.Stop();
+                        msMapPrep = swPrep.ElapsedMilliseconds;
+
+                        var swMap = Stopwatch.StartNew();
                         while (await reader.ReadAsync())
                         {
                             var item = new T();
 
-                            foreach (var prop in properties)
+                            foreach (var map in propMaps)
                             {
                                 try
                                 {
-                                    if (!prop.CanWrite || prop.GetSetMethod(true) == null || prop.GetIndexParameters().Length > 0)
+                                    if (reader.IsDBNull(map.Ordinal))
                                         continue;
 
-                                    var columnName = prop.Name;
-                                    var columnIndex = GetColumnIndex(reader, columnName);
-                                    if (columnIndex >= 0 && !reader.IsDBNull(columnIndex))
+                                    var value = reader.GetValue(map.Ordinal);
+                                    if (value == DBNull.Value)
+                                        continue;
+
+                                    var targetType = map.TargetType;
+                                    object converted = null;
+
+                                    if (targetType == typeof(DateTime))
                                     {
-                                        var value = reader[columnIndex];
-                                        if (value == DBNull.Value)
-                                            continue;
-
-                                        var targetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
-
-                                        object converted = null;
-
-                                        if (targetType == typeof(DateTime))
+                                        if (value is DateTime dt)
                                         {
-                                            if (value is DateTime dt)
-                                            {
-                                                converted = dt;
-                                            }
-                                            else if (value is double d)
-                                            {
-                                                converted = DateTime.FromOADate(d);
-                                            }
-                                            else if (value is float f)
-                                            {
-                                                converted = DateTime.FromOADate(f);
-                                            }
-                                            else if (value is decimal m)
-                                            {
-                                                converted = DateTime.FromOADate((double)m);
-                                            }
-                                            else if (double.TryParse(Convert.ToString(value), out var d2))
-                                            {
-                                                converted = DateTime.FromOADate(d2);
-                                            }
+                                            converted = dt;
                                         }
-                                        else if (targetType == typeof(bool))
+                                        else if (value is double d)
                                         {
-                                            if (value is bool b)
-                                                converted = b;
-                                            else if (value is byte by)
-                                                converted = by != 0;
-                                            else if (value is short s)
-                                                converted = s != 0;
-                                            else if (value is int i)
-                                                converted = i != 0;
-                                            else
-                                                converted = Convert.ToBoolean(value);
+                                            converted = DateTime.FromOADate(d);
                                         }
-                                        else if (targetType == typeof(decimal))
+                                        else if (value is float f)
                                         {
-                                            if (value is decimal dm)
-                                                converted = dm;
-                                            else if (value is double dd)
-                                                converted = Convert.ToDecimal(dd);
-                                            else if (value is float ff)
-                                                converted = Convert.ToDecimal(ff);
-                                            else
-                                                converted = Convert.ChangeType(value, targetType);
+                                            converted = DateTime.FromOADate(f);
                                         }
-                                        else
+                                        else if (value is decimal m)
                                         {
-                                            converted = Convert.ChangeType(value, targetType);
+                                            converted = DateTime.FromOADate((double)m);
                                         }
-
-                                        if (converted != null)
-                                            prop.SetValue(item, converted);
+                                        else if (double.TryParse(Convert.ToString(value), out var d2))
+                                        {
+                                            converted = DateTime.FromOADate(d2);
+                                        }
                                     }
+                                    else if (targetType == typeof(bool))
+                                    {
+                                        if (value is bool b)
+                                            converted = b;
+                                        else if (value is byte by)
+                                            converted = by != 0;
+                                        else if (value is short s)
+                                            converted = s != 0;
+                                        else if (value is int i)
+                                            converted = i != 0;
+                                        else
+                                            converted = Convert.ToBoolean(value);
+                                    }
+                                    else if (targetType == typeof(decimal))
+                                    {
+                                        if (value is decimal dm)
+                                            converted = dm;
+                                        else if (value is double dd)
+                                            converted = Convert.ToDecimal(dd);
+                                        else if (value is float ff)
+                                            converted = Convert.ToDecimal(ff);
+                                        else
+                                            converted = Convert.ChangeType(value, targetType);
+                                    }
+                                    else
+                                    {
+                                        converted = Convert.ChangeType(value, targetType);
+                                    }
+
+                                    if (converted != null)
+                                        map.Prop.SetValue(item, converted);
                                 }
                                 catch
                                 {
@@ -1027,9 +1083,22 @@ namespace RecoTool.Services
 
                             results.Add(item);
                         }
+                        swMap.Stop();
+                        msMapRows = swMap.ElapsedMilliseconds;
                     }
                 }
             }
+
+            swTotal.Stop();
+            try
+            {
+                var dbTag = string.Equals(connectionString, _connectionString, StringComparison.OrdinalIgnoreCase) ? "Main" : "Alt";
+                LogPerf(
+                    $"ExecuteQuery[{typeof(T).Name}]",
+                    $"db={dbTag} | rows={results.Count} | params={(parameters?.Length ?? 0)} | openMs={msOpen} | execMs={msExecute} | mapPrepMs={msMapPrep} | mapRowsMs={msMapRows} | totalMs={swTotal.ElapsedMilliseconds} | fields={fieldCount} | propMaps={propMapCount} | queryLen={(query?.Length ?? 0)}"
+                );
+            }
+            catch { }
 
             return results;
         }
@@ -1078,6 +1147,22 @@ namespace RecoTool.Services
             {
                 return -1;
             }
+        }
+
+        /// <summary>
+        /// Append a performance log line to %APPDATA%/RecoTool/perf.log
+        /// </summary>
+        private void LogPerf(string area, string details)
+        {
+            try
+            {
+                var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RecoTool");
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                var path = Path.Combine(dir, "perf.log");
+                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}\t{area}\t{details}";
+                File.AppendAllLines(path, new[] { line }, Encoding.UTF8);
+            }
+            catch { }
         }
 
         #endregion

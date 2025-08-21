@@ -14,6 +14,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Threading;
+using System.Diagnostics;
 using Microsoft.VisualBasic;
 using RecoTool.Models;
 using RecoTool.Properties;
@@ -985,7 +986,10 @@ namespace RecoTool.Windows
                 // Toujours rafraîchir l'info Pivot/Receivable avant chargement
                 UpdateCountryPivotReceivableInfo();
                 RefreshStarted?.Invoke(this, EventArgs.Empty);
+                var sw = Stopwatch.StartNew();
                 await LoadReconciliationDataAsync();
+                sw.Stop();
+                try { LogPerf("RefreshAsync", $"country={_currentCountryId} | totalMs={sw.ElapsedMilliseconds}"); } catch { }
             }
             finally
             {
@@ -1022,16 +1026,31 @@ namespace RecoTool.Windows
             {
                 IsLoading = true;
                 UpdateStatusInfo("Chargement des données...");
-
+                var swTotal = Stopwatch.StartNew();
+                var swDb = Stopwatch.StartNew();
                 // Charger la vue combinée avec filtre backend éventuel
                 var viewList = await _reconciliationService.GetReconciliationViewAsync(_currentCountryId, _backendFilterSql);
+                swDb.Stop();
+                int totalRows = viewList?.Count ?? 0;
 
                 // Stocker toutes les données pour le filtrage
                 _allViewData = viewList?.ToList() ?? new List<ReconciliationViewData>();
 
                 // Appliquer les filtres courants (ex: compte/Status) si déjà définis par la page parente
+                var swFilter = Stopwatch.StartNew();
                 ApplyFilters();
+                swFilter.Stop();
+
+                swTotal.Stop();
                 UpdateStatusInfo($"{ViewData?.Count ?? 0} lignes chargées");
+                try
+                {
+                    LogPerf(
+                        "LoadReconciliationData",
+                        $"country={_currentCountryId} | backendFilterLen={( _backendFilterSql?.Length ?? 0)} | dbMs={swDb.ElapsedMilliseconds} | filterMs={swFilter.ElapsedMilliseconds} | totalMs={swTotal.ElapsedMilliseconds} | totalRows={totalRows} | displayed={ViewData?.Count ?? 0}"
+                    );
+                }
+                catch { }
             }
             catch (Exception ex)
             {
@@ -1674,7 +1693,7 @@ namespace RecoTool.Windows
         private void ApplyFilters()
         {
             if (_allViewData == null) return;
-
+            var sw = Stopwatch.StartNew();
             var filtered = _allViewData.AsEnumerable();
 
             // Appliquer les filtres sur les données Ambre
@@ -1759,6 +1778,8 @@ namespace RecoTool.Windows
             UpdateKpis(filteredList);
             UpdateStatusInfo($"{ViewData.Count} / {_allViewData.Count} lignes affichées");
             LogAction("ApplyFilters", $"{ViewData.Count} / {_allViewData.Count} displayed | Account={_filterAccountId ?? "All"} | Status={_filterStatus ?? "All"}");
+            sw.Stop();
+            try { LogPerf("ApplyFilters", $"source={_allViewData.Count} | displayed={ViewData.Count} | ms={sw.ElapsedMilliseconds}"); } catch { }
         }
 
         private void UpdateKpis(IEnumerable<ReconciliationViewData> data)
@@ -2138,6 +2159,20 @@ namespace RecoTool.Windows
             {
                 // ignore logging failures
             }
+        }
+
+        // Append performance diagnostics to %APPDATA%/RecoTool/perf.log
+        private void LogPerf(string area, string details)
+        {
+            try
+            {
+                var dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RecoTool");
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                var path = System.IO.Path.Combine(dir, "perf.log");
+                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}\t{area}\t{details}";
+                System.IO.File.AppendAllLines(path, new[] { line }, Encoding.UTF8);
+            }
+            catch { }
         }
 
         // Build an Access SQL WHERE clause from current bound filters

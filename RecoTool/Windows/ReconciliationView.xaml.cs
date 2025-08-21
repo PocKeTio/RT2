@@ -712,13 +712,8 @@ namespace RecoTool.Windows
                     // Peupler les options pour les ComboBox référentielles (Action/KPI/Incident Type)
                     PopulateReferentialOptions();
                 }
-
-                // Chargement initial si possible
-                if (!_initialLoaded && !string.IsNullOrEmpty(_currentCountryId))
-                {
-                    _initialLoaded = true;
-                    LoadInitialData();
-                }
+                // Ne pas effectuer de chargement automatique ici; la page parente appliquera
+                // les filtres et la mise en page, puis appellera explicitement Refresh().
             }
             catch (Exception ex)
             {
@@ -734,8 +729,9 @@ namespace RecoTool.Windows
             {
                 // Rafraîchir l'affichage Pivot/Receivable à l'ouverture
                 UpdateCountryPivotReceivableInfo();
+                // Marquer comme initialisé pour éviter les chargements implicites multiples.
+                // La page hôte déclenchera Refresh() après avoir appliqué les filtres/présélections.
                 _initialLoaded = true;
-                LoadInitialData();
             }
         }
 

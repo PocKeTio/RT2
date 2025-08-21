@@ -48,21 +48,7 @@
 
                 <!-- Filter & View Buttons -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                    
-                    <!-- Toggle Filters Button -->
-                    <Button x:Name="ToggleFiltersButton" Click="ToggleFilters_Click" Foreground="{DynamicResource BNPMainGreenBrush}" BorderThickness="0" Padding="10,5" Cursor="Hand" Margin="0,0,8,0" ToolTip="Afficher/Masquer les filtres">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                </Border>
-                            </ControlTemplate>
-                        </Button.Template>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE700;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="Filters" VerticalAlignment="Center" FontWeight="SemiBold"/>
-                        </StackPanel>
-                    </Button>
+
 
                     <!-- Load View Button -->
                     <Button x:Name="LoadViewButton" Click="LoadView_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="0,0,8,0">
@@ -141,9 +127,10 @@
 
                     
 
-                    <!-- Bulk Selection (moved from Results header) -->
-                    <Button x:Name="BulkSelectionButton" Click="BulkSelection_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0"
-                            ToolTip="Sélection groupée: Clic = tout | Maj+Clic = appariés | Ctrl+Clic = non appariés | Alt+Clic = vider">
+                    
+
+                    <!-- Bulk Edit Button -->
+                    <Button x:Name="BulkEditButton" Click="BulkEditButton_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0" ToolTip="Edit selected rows in bulk">
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
                                 <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
@@ -152,8 +139,8 @@
                             </ControlTemplate>
                         </Button.Template>
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE762;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="Bulk Selection" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                            <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="Bulk Edit…" VerticalAlignment="Center" FontWeight="SemiBold"/>
                         </StackPanel>
                     </Button>
 
@@ -608,16 +595,18 @@
                               AutoGenerateColumns="False"
                               CanUserAddRows="False"
                               IsReadOnly="False"
-                              SelectionMode="Single"
+                              SelectionMode="Extended"
                               ItemsSource="{Binding ViewData, RelativeSource={RelativeSource AncestorType=UserControl}}"
                               Margin="0"
                               SelectionChanged="ResultsDataGrid_SelectionChanged"
                               MouseDoubleClick="ResultsDataGrid_MouseDoubleClick"
+                              CellEditEnding="ResultsDataGrid_CellEditEnding"
+                              CurrentCellChanged="ResultsDataGrid_CurrentCellChanged"
                               EnableRowVirtualization="True"
                               EnableColumnVirtualization="True"
                               ScrollViewer.CanContentScroll="True"
                               ScrollViewer.IsDeferredScrollingEnabled="False"
-                              AlternatingRowBackground="#F7F9FC"
+                              AlternationCount="0"
                               GridLinesVisibility="Vertical"
                               RowHeight="26"
                               ColumnHeaderHeight="28">

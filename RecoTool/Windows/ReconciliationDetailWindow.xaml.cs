@@ -40,11 +40,39 @@ namespace RecoTool.UI.Views.Windows
             set { _kpiOptions = value; OnPropertyChanged(nameof(KPIOptions)); }
         }
 
+        private ObservableCollection<OptionItem> _actionOptions = new ObservableCollection<OptionItem>();
+        public ObservableCollection<OptionItem> ActionOptions
+        {
+            get => _actionOptions;
+            set { _actionOptions = value; OnPropertyChanged(nameof(ActionOptions)); }
+        }
+
+        private ObservableCollection<OptionItem> _incidentTypeOptions = new ObservableCollection<OptionItem>();
+        public ObservableCollection<OptionItem> IncidentTypeOptions
+        {
+            get => _incidentTypeOptions;
+            set { _incidentTypeOptions = value; OnPropertyChanged(nameof(IncidentTypeOptions)); }
+        }
+
         private int? _selectedKPIId;
         public int? SelectedKPIId
         {
             get => _selectedKPIId;
             set { _selectedKPIId = value; OnPropertyChanged(nameof(SelectedKPIId)); }
+        }
+
+        private int? _selectedActionId;
+        public int? SelectedActionId
+        {
+            get => _selectedActionId;
+            set { _selectedActionId = value; OnPropertyChanged(nameof(SelectedActionId)); }
+        }
+
+        private int? _selectedIncidentTypeId;
+        public int? SelectedIncidentTypeId
+        {
+            get => _selectedIncidentTypeId;
+            set { _selectedIncidentTypeId = value; OnPropertyChanged(nameof(SelectedIncidentTypeId)); }
         }
 
         public class MatchingItem
@@ -75,7 +103,7 @@ namespace RecoTool.UI.Views.Windows
 
             PopulateHeader();
             PopulateTopDetails();
-            PopulateKPIOptions();
+            PopulateReferentialOptions();
             _ = LoadReconciliationAsync();
             BuildMatchingAssistance();
         }
@@ -139,28 +167,65 @@ namespace RecoTool.UI.Views.Windows
             InvoiceValue.Text = _item.Receivable_InvoiceFromAmbre ?? "";
             GroupNameValue.Text = _item.SYNDICATE ?? "";
             SwiftCodeValue.Text = _item.SwiftCode ?? "";
+
+            // Additional display fields added to the XAML
+            if (CountryValue != null) CountryValue.Text = _item.Country ?? string.Empty;
+            if (AccountIdValue != null) AccountIdValue.Text = _item.Account_ID ?? string.Empty;
+            if (EventNumValue != null) EventNumValue.Text = _item.Event_Num ?? string.Empty;
+
+            if (DwingsIdsValue != null)
+            {
+                var ids = new[]
+                {
+                    _item.DWINGS_GuaranteeID,
+                    _item.DWINGS_InvoiceID,
+                    _item.DWINGS_CommissionID,
+                    _item.GUARANTEE_ID,
+                    _item.INVOICE_ID,
+                    _item.COMMISSION_ID
+                }
+                .Where(s => !string.IsNullOrWhiteSpace(s));
+                DwingsIdsValue.Text = string.Join(" | ", ids);
+            }
         }
 
-        private void PopulateKPIOptions()
+        private void PopulateReferentialOptions()
         {
             try
             {
-                var items = new List<OptionItem>();
+                var kpiItems = new List<OptionItem>();
+                var actionItems = new List<OptionItem>();
+                var incidentItems = new List<OptionItem>();
                 var userFields = _offlineFirstService?.UserFields;
                 if (userFields != null)
                 {
-                    // Assume KPI category in referential
+                    foreach (var uf in userFields.Where(f => string.Equals(f.USR_Category, "Action", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var label = !string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : uf.USR_FieldName;
+                        actionItems.Add(new OptionItem { Id = uf.USR_ID, Content = label });
+                    }
                     foreach (var uf in userFields.Where(f => string.Equals(f.USR_Category, "KPI", StringComparison.OrdinalIgnoreCase)))
                     {
                         var label = !string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : uf.USR_FieldName;
-                        items.Add(new OptionItem { Id = uf.USR_ID, Content = label });
+                        kpiItems.Add(new OptionItem { Id = uf.USR_ID, Content = label });
+                    }
+                    foreach (var uf in userFields.Where(f => string.Equals(f.USR_Category, "Incident Type", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var label = !string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : uf.USR_FieldName;
+                        incidentItems.Add(new OptionItem { Id = uf.USR_ID, Content = label });
                     }
                 }
-                KPIOptions = new ObservableCollection<OptionItem>(items.OrderBy(i => i.Content));
+                ActionOptions = new ObservableCollection<OptionItem>(actionItems.OrderBy(i => i.Content));
+                KPIOptions = new ObservableCollection<OptionItem>(kpiItems.OrderBy(i => i.Content));
+                IncidentTypeOptions = new ObservableCollection<OptionItem>(incidentItems.OrderBy(i => i.Content));
 
                 // Preselect from _item if present (before async load)
                 if (_item?.KPI != null)
                     SelectedKPIId = _item.KPI;
+                if (_item?.Action != null)
+                    SelectedActionId = _item.Action;
+                if (_item?.IncidentType != null)
+                    SelectedIncidentTypeId = _item.IncidentType;
             }
             catch { /* ignore */ }
         }
@@ -181,9 +246,34 @@ namespace RecoTool.UI.Views.Windows
                 if (ReminderDatePicker != null)
                     ReminderDatePicker.SelectedDate = _reconciliation?.ToRemindDate ?? _item?.ToRemindDate;
 
+                if (ToRemindCheckBox != null)
+                    ToRemindCheckBox.IsChecked = _reconciliation?.ToRemind ?? _item?.ToRemind ?? false;
+
+                if (AckCheckBox != null)
+                    AckCheckBox.IsChecked = _reconciliation?.ACK ?? _item?.ACK ?? false;
+
+                if (SwiftCodeTextBox != null)
+                    SwiftCodeTextBox.Text = _reconciliation?.SwiftCode ?? _item?.SwiftCode ?? string.Empty;
+
+                if (PaymentRefTextBox != null)
+                    PaymentRefTextBox.Text = _reconciliation?.PaymentReference ?? _item?.PaymentReference ?? string.Empty;
+
+                if (InternalRefTextBox != null)
+                    InternalRefTextBox.Text = _reconciliation?.InternalInvoiceReference ?? _item?.InternalInvoiceReference ?? string.Empty;
+
+                if (RiskyItemTextBox != null)
+                    RiskyItemTextBox.Text = (_reconciliation?.RiskyItem ?? _item?.RiskyItem)?.ToString() ?? string.Empty;
+
+                if (ReasonNonRiskyTextBox != null)
+                    ReasonNonRiskyTextBox.Text = _reconciliation?.ReasonNonRisky ?? _item?.ReasonNonRisky ?? string.Empty;
+
                 // Initialize KPI selection from persisted reconciliation
                 if (_reconciliation != null)
+                {
                     SelectedKPIId = _reconciliation.KPI ?? SelectedKPIId;
+                    SelectedActionId = _reconciliation.Action ?? SelectedActionId;
+                    SelectedIncidentTypeId = _reconciliation.IncidentType ?? SelectedIncidentTypeId;
+                }
             }
             catch
             {
@@ -334,18 +424,50 @@ namespace RecoTool.UI.Views.Windows
                 // Persist KPI selection
                 reco.KPI = SelectedKPIId;
 
+                // Persist Action and Incident Type
+                reco.Action = SelectedActionId;
+                reco.IncidentType = SelectedIncidentTypeId;
+
                 if (ReminderDatePicker != null)
                 {
                     var sel = ReminderDatePicker.SelectedDate;
                     reco.ToRemindDate = sel;
-                    reco.ToRemind = sel.HasValue; // flag only if a date is set
+                    // If checkbox exists, prefer its value; otherwise infer from date
+                    if (ToRemindCheckBox != null && ToRemindCheckBox.IsChecked.HasValue)
+                        reco.ToRemind = ToRemindCheckBox.IsChecked.Value;
+                    else
+                        reco.ToRemind = sel.HasValue;
                 }
+
+                if (AckCheckBox != null && AckCheckBox.IsChecked.HasValue)
+                    reco.ACK = AckCheckBox.IsChecked.Value;
+
+                if (SwiftCodeTextBox != null)
+                    reco.SwiftCode = SwiftCodeTextBox.Text?.Trim();
+
+                if (PaymentRefTextBox != null)
+                    reco.PaymentReference = PaymentRefTextBox.Text?.Trim();
+
+                if (InternalRefTextBox != null)
+                    reco.InternalInvoiceReference = InternalRefTextBox.Text?.Trim();
+
+                if (RiskyItemTextBox != null)
+                {
+                    if (int.TryParse(RiskyItemTextBox.Text?.Trim(), out var risky))
+                        reco.RiskyItem = risky;
+                    else
+                        reco.RiskyItem = null;
+                }
+
+                if (ReasonNonRiskyTextBox != null)
+                    reco.ReasonNonRisky = ReasonNonRiskyTextBox.Text?.Trim();
 
                 // Persist
                 await _reconciliationService.SaveReconciliationAsync(reco);
                 _reconciliation = reco;
 
-                MessageBox.Show("Changes saved.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                // Signal success to the caller and close the dialog
+                this.DialogResult = true;
             }
             catch (Exception ex)
             {

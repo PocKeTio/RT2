@@ -779,27 +779,19 @@ namespace RecoTool.Services
         {
             try
             {
-                LogManager.Info($"[Staging] Mise à jour de T_Reconciliation pour {countryId} - Nouveaux: {newRecords.Count}, Modifiés: {updatedRecords.Count}, Supprimés: {deletedRecords.Count}");
+                LogManager.Info($"[Staging] Insertion uniquement dans T_Reconciliation pour {countryId} - Candidats à l'insertion (issus de 'nouveaux'): {newRecords?.Count ?? 0}. Aucun UPDATE/DELETE ne sera effectué.");
 
-                // 1) Préparer les lignes à upserter (nouveaux + modifiés)
+                // 1) Préparer uniquement les lignes à insérer (pas de mise à jour)
                 var now = DateTime.Now;
-                var upserts = new List<Reconciliation>();
+                var toInsert = new List<Reconciliation>();
 
-                foreach (var dataAmbre in newRecords)
+                foreach (var dataAmbre in newRecords ?? new List<DataAmbre>())
                 {
                     var rec = CreateReconciliationFromDataAmbre(dataAmbre);
                     rec.CreationDate = now;
                     rec.LastModified = now;
                     rec.ModifiedBy = _currentUser;
-                    upserts.Add(rec);
-                }
-
-                foreach (var dataAmbre in updatedRecords)
-                {
-                    var rec = CreateReconciliationFromDataAmbre(dataAmbre);
-                    rec.LastModified = now;
-                    rec.ModifiedBy = _currentUser;
-                    upserts.Add(rec);
+                    toInsert.Add(rec);
                 }
 
                 // 2) Instancier le service de staging pour la base du pays
@@ -812,53 +804,43 @@ namespace RecoTool.Services
 
                 // 4) Charger le staging et fusionner
                 await staging.TruncateStagingAsync();
-                var staged = await staging.InsertStagingRowsAsync(upserts, chunkSize: 2000);
-                var mergeRes = await staging.MergeStagingIntoReconciliationAsync();
+                var staged = await staging.InsertStagingRowsAsync(toInsert, chunkSize: 2000);
+
+                // Calculer les IDs déjà existants pour consigner correctement les INSERTs effectifs
+                var candidateIds = (newRecords ?? new List<DataAmbre>())
+                    .Select(r => r.ID)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .ToList();
+                var existing = await staging.GetExistingIdsAsync(candidateIds);
+
+                var insertedCount = await staging.InsertMissingFromStagingAsync();
 
                 // 5) Archivage des enregistrements supprimés
+                // Désactivé pour Ambre: on ne supprime/masque jamais T_Reconciliation lors d'un import Ambre
                 int archived = 0;
-                if (deletedRecords != null && deletedRecords.Count > 0)
-                {
-                    var ids = deletedRecords.Select(d => d.ID).Where(id => !string.IsNullOrWhiteSpace(id));
-                    archived = await staging.ArchiveByIdsAsync(ids);
-                }
 
-                LogManager.Info($"[Staging] T_Reconciliation mis à jour pour {countryId}: Staged={staged}, Updated={mergeRes.updated}, Inserted={mergeRes.inserted}, Archived={archived}");
+                LogManager.Info($"[Staging] T_Reconciliation (insert-only) pour {countryId}: Staged={staged}, Inserted={insertedCount}, Archived={archived} (désactivé)");
 
                 // 6) Change-tracking en lot (INSERT / UPDATE / DELETE)
                 try
                 {
-                    var insertedIds = (newRecords ?? new List<DataAmbre>()).Select(r => r.ID)
-                        .Where(id => !string.IsNullOrWhiteSpace(id));
-                    var updatedIds = (updatedRecords ?? new List<DataAmbre>()).Select(r => r.ID)
-                        .Where(id => !string.IsNullOrWhiteSpace(id));
-                    var deletedIds = (deletedRecords ?? new List<DataAmbre>()).Select(r => r.ID)
-                        .Where(id => !string.IsNullOrWhiteSpace(id));
+                    // Déterminer les INSERTs effectifs: candidats - existants
+                    var ins = new HashSet<string>(candidateIds.Where(id => !existing.Contains(id)));
 
-                    // Éviter les doublons éventuels
-                    var ins = new HashSet<string>(insertedIds);
-                    var upd = new HashSet<string>(updatedIds);
-                    var del = new HashSet<string>(deletedIds);
-
-                    int totalToLog = ins.Count + upd.Count + del.Count;
-                    if (totalToLog > 0)
+                    if (ins.Count > 0)
                     {
                         using (var session = await _offlineFirstService.BeginChangeLogSessionAsync(countryId))
                         {
                             foreach (var id in ins)
                                 await session.AddAsync("T_Reconciliation", id, "INSERT");
-                            foreach (var id in upd)
-                                await session.AddAsync("T_Reconciliation", id, "UPDATE");
-                            foreach (var id in del)
-                                await session.AddAsync("T_Reconciliation", id, "DELETE");
 
                             await session.CommitAsync();
                         }
-                        LogManager.Info($"[ChangeLog] Enregistrements consignés: INSERT={ins.Count}, UPDATE={upd.Count}, DELETE={del.Count}");
+                        LogManager.Info($"[ChangeLog] Enregistrements consignés: INSERT={ins.Count}. Aucun UPDATE/DELETE pour Ambre.");
                     }
                     else
                     {
-                        LogManager.Info("[ChangeLog] Aucun changement à consigner pour T_Reconciliation.");
+                        LogManager.Info("[ChangeLog] Aucun nouvel enregistrement à consigner pour T_Reconciliation (insert-only).");
                     }
                 }
                 catch (Exception chEx)

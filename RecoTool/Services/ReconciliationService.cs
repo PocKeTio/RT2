@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using RecoTool.Models;
+using OfflineFirstAccess.ChangeTracking;
 
 namespace RecoTool.Services
 {
@@ -138,12 +139,33 @@ namespace RecoTool.Services
             string dwDataJoinCom = string.IsNullOrEmpty(dwEsc) ? "T_DW_Data AS dCom" : $"(SELECT * FROM [{dwEsc}].T_DW_Data) AS dCom";
             string dwGuaranteeJoin = string.IsNullOrEmpty(dwEsc) ? "T_DW_Guarantee AS g" : $"(SELECT * FROM [{dwEsc}].T_DW_Guarantee) AS g";
 
-            var query = $@"SELECT r.*, a.*, 
-                                   r.DWINGS_GuaranteeID AS DW_GUARANTEE_ID,
-                                   dInv.INVOICE_ID AS DW_INVOICE_ID,
-                                   dCom.COMMISSION_ID AS DW_COMMISSION_ID,
+            var query = $@"SELECT 
+                                   a.*,
+                                   r.DWINGS_GuaranteeID,
+                                   r.DWINGS_InvoiceID,
+                                   r.DWINGS_CommissionID,
+                                   r.Action,
+                                   r.Comments,
+                                   r.InternalInvoiceReference,
+                                   r.FirstClaimDate,
+                                   r.LastClaimDate,
+                                   r.ToRemind,
+                                   r.ToRemindDate,
+                                   r.ACK,
+                                   r.SwiftCode,
+                                   r.PaymentReference,
+                                   r.KPI,
+                                   r.IncidentType,
+                                   r.RiskyItem,
+                                   r.ReasonNonRisky,
                                    r.ModifiedBy AS Reco_ModifiedBy,
-                                   g.SYNDICATE, g.AMOUNT AS GUARANTEE_AMOUNT, g.CURRENCY AS GUARANTEE_CURRENCY, g.STATUS AS GUARANTEE_STATUS
+                                   g.SYNDICATE,
+                                   g.AMOUNT AS GUARANTEE_AMOUNT,
+                                   g.CURRENCY AS GUARANTEE_CURRENCY,
+                                   g.STATUS AS GUARANTEE_STATUS,
+                                   dInv.INVOICE_ID AS INVOICE_ID,
+                                   dCom.COMMISSION_ID AS COMMISSION_ID,
+                                   g.GUARANTEE_ID
                            FROM (((T_Data_Ambre AS a 
                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
                            LEFT JOIN {dwDataJoinInv} ON r.DWINGS_InvoiceID = dInv.INVOICE_ID)
@@ -547,7 +569,8 @@ namespace RecoTool.Services
         {
             // Lookup by ID
             var query = "SELECT * FROM T_Reconciliation WHERE ID = ? AND DeleteDate IS NULL";
-            var existing = await ExecuteQueryAsync<Reconciliation>(query, id);
+            // Explicitly pass the connection string to avoid binding to the wrong overload (id mistaken for connection string)
+            var existing = await ExecuteQueryAsync<Reconciliation>(query, _connectionString, id);
             
             if (existing.Any())
                 return existing.First();
@@ -577,13 +600,39 @@ namespace RecoTool.Services
                     {
                         try
                         {
+                            var changeTuples = new List<(string TableName, string RecordId, string OperationType)>();
                             foreach (var reconciliation in reconciliations)
                             {
                                 reconciliation.UpdateModification(_currentUser);
-                                await SaveSingleReconciliationAsync(connection, transaction, reconciliation);
+                                var op = await SaveSingleReconciliationAsync(connection, transaction, reconciliation);
+                                changeTuples.Add(("T_Reconciliation", reconciliation.ID, op));
                             }
 
                             transaction.Commit();
+
+                            // Record changes in the LOCK database (ChangeLog resides in lock DB)
+                            try
+                            {
+                                if (_offlineFirstService != null && changeTuples.Count > 0)
+                                {
+                                    var countryId = _offlineFirstService.CurrentCountryId;
+                                    if (!string.IsNullOrWhiteSpace(countryId))
+                                    {
+                                        using (var session = await _offlineFirstService.BeginChangeLogSessionAsync(countryId))
+                                        {
+                                            foreach (var t in changeTuples)
+                                            {
+                                                await session.AddAsync(t.TableName, t.RecordId, t.OperationType);
+                                            }
+                                            await session.CommitAsync();
+                                        }
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                                // Swallow change-log errors to not block user saves
+                            }
                             return true;
                         }
                         catch
@@ -603,7 +652,7 @@ namespace RecoTool.Services
         /// <summary>
         /// Sauvegarde une réconciliation unique dans une transaction
         /// </summary>
-        private async Task SaveSingleReconciliationAsync(OleDbConnection connection, OleDbTransaction transaction, Reconciliation reconciliation)
+        private async Task<string> SaveSingleReconciliationAsync(OleDbConnection connection, OleDbTransaction transaction, Reconciliation reconciliation)
         {
             // Vérifier si l'enregistrement existe (par ID)
             var checkQuery = "SELECT COUNT(*) FROM T_Reconciliation WHERE ID = ?";
@@ -637,7 +686,8 @@ namespace RecoTool.Services
                 using (var cmd = new OleDbCommand(query, connection, transaction))
                 {
                     AddReconciliationParameters(cmd, reconciliation, !exists);
-                    await cmd.ExecuteNonQueryAsync();
+                    var tot = await cmd.ExecuteNonQueryAsync();
+                    return exists ? "UPDATE" : "INSERT";
                 }
             }
         }
@@ -659,10 +709,13 @@ namespace RecoTool.Services
             cmd.Parameters.AddWithValue("@Action", reconciliation.Action ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@Comments", reconciliation.Comments ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@InternalInvoiceReference", reconciliation.InternalInvoiceReference ?? (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("@FirstClaimDate", reconciliation.FirstClaimDate.HasValue ? reconciliation.FirstClaimDate.Value.ToOADate() : (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("@LastClaimDate", reconciliation.LastClaimDate.HasValue ? reconciliation.LastClaimDate.Value.ToOADate() : (object)DBNull.Value);
+            var pFirst = cmd.Parameters.Add("@FirstClaimDate", OleDbType.Date);
+            pFirst.Value = reconciliation.FirstClaimDate.HasValue ? (object)reconciliation.FirstClaimDate.Value : DBNull.Value;
+            var pLast = cmd.Parameters.Add("@LastClaimDate", OleDbType.Date);
+            pLast.Value = reconciliation.LastClaimDate.HasValue ? (object)reconciliation.LastClaimDate.Value : DBNull.Value;
             cmd.Parameters.AddWithValue("@ToRemind", reconciliation.ToRemind);
-            cmd.Parameters.AddWithValue("@ToRemindDate", reconciliation.ToRemindDate.HasValue ? reconciliation.ToRemindDate.Value.ToOADate() : (object)DBNull.Value);
+            var pRem = cmd.Parameters.Add("@ToRemindDate", OleDbType.Date);
+            pRem.Value = reconciliation.ToRemindDate.HasValue ? (object)reconciliation.ToRemindDate.Value : DBNull.Value;
             cmd.Parameters.AddWithValue("@ACK", reconciliation.ACK);
             cmd.Parameters.AddWithValue("@SwiftCode", reconciliation.SwiftCode ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@PaymentReference", reconciliation.PaymentReference ?? (object)DBNull.Value);
@@ -672,10 +725,14 @@ namespace RecoTool.Services
             cmd.Parameters.AddWithValue("@ReasonNonRisky", reconciliation.ReasonNonRisky ?? (object)DBNull.Value);
 
             if (isInsert)
-                cmd.Parameters.AddWithValue("@CreationDate", reconciliation.CreationDate?.ToOADate());
+            {
+                var pCreate = cmd.Parameters.Add("@CreationDate", OleDbType.Date);
+                pCreate.Value = reconciliation.CreationDate.HasValue ? (object)reconciliation.CreationDate.Value : DBNull.Value;
+            }
 
             cmd.Parameters.AddWithValue("@ModifiedBy", reconciliation.ModifiedBy ?? (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("@LastModified", reconciliation.LastModified.HasValue ? reconciliation.LastModified.Value.ToOADate() : (object)DBNull.Value);
+            var pMod = cmd.Parameters.Add("@LastModified", OleDbType.Date);
+            pMod.Value = reconciliation.LastModified.HasValue ? (object)reconciliation.LastModified.Value : DBNull.Value;
 
             if (!isInsert)
                 cmd.Parameters.AddWithValue("@ID", reconciliation.ID);

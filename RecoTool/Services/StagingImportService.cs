@@ -250,6 +250,91 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Insert-only merge: inserts rows from staging that do not yet exist in T_Reconciliation.
+        /// Does not perform any UPDATE on existing rows.
+        /// </summary>
+        public async Task<int> InsertMissingFromStagingAsync()
+        {
+            using (var conn = new OleDbConnection(_connectionString))
+            {
+                await conn.OpenAsync();
+                using (var tx = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        double nowOa = DateTime.Now.ToOADate();
+                        var insertSql = $@"INSERT INTO [{TargetTable}] (
+                                                [ID],[DWINGS_GuaranteeID],[DWINGS_InvoiceID],[DWINGS_CommissionID],
+                                                [Action],[Comments],[InternalInvoiceReference],[FirstClaimDate],[LastClaimDate],
+                                                [ToRemind],[ToRemindDate],[ACK],[SwiftCode],[PaymentReference],[KPI],
+                                                [IncidentType],[RiskyItem],[ReasonNonRisky],[CreationDate],[ModifiedBy],[LastModified]
+                                            )
+                                            SELECT 
+                                                s.[ID], s.[DWINGS_GuaranteeID], s.[DWINGS_InvoiceID], s.[DWINGS_CommissionID],
+                                                s.[Action], s.[Comments], s.[InternalInvoiceReference], s.[FirstClaimDate], s.[LastClaimDate],
+                                                s.[ToRemind], s.[ToRemindDate], s.[ACK], s.[SwiftCode], s.[PaymentReference], s.[KPI],
+                                                s.[IncidentType], s.[RiskyItem], s.[ReasonNonRisky], ?, s.[ModifiedBy], s.[LastModified]
+                                            FROM [{StagingTable}] AS s
+                                            LEFT JOIN [{TargetTable}] AS t ON t.[ID] = s.[ID]
+                                            WHERE t.[ID] IS NULL";
+                        int inserted;
+                        using (var cmd = new OleDbCommand(insertSql, conn, tx))
+                        {
+                            cmd.Parameters.AddWithValue("@CreationDate", nowOa);
+                            inserted = await cmd.ExecuteNonQueryAsync();
+                        }
+
+                        tx.Commit();
+                        return inserted;
+                    }
+                    catch
+                    {
+                        tx.Rollback();
+                        throw;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Returns the subset of provided IDs that already exist in T_Reconciliation.
+        /// </summary>
+        public async Task<HashSet<string>> GetExistingIdsAsync(IEnumerable<string> ids)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var list = (ids ?? Enumerable.Empty<string>()).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (list.Count == 0) return result;
+
+            using (var conn = new OleDbConnection(_connectionString))
+            {
+                await conn.OpenAsync();
+                // Chunk to avoid too many parameters
+                const int chunkSize = 500;
+                for (int i = 0; i < list.Count; i += chunkSize)
+                {
+                    var chunk = list.Skip(i).Take(chunkSize).ToList();
+                    var placeholders = string.Join(",", chunk.Select(_ => "?"));
+                    var sql = $"SELECT [ID] FROM [{TargetTable}] WHERE [ID] IN ({placeholders})";
+                    using (var cmd = new OleDbCommand(sql, conn))
+                    {
+                        foreach (var id in chunk)
+                            cmd.Parameters.AddWithValue("@ID", id);
+
+                        using (var reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var id = reader[0]?.ToString();
+                                if (!string.IsNullOrWhiteSpace(id)) result.Add(id);
+                            }
+                        }
+                    }
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
         /// Archives target rows by ID using a temporary archive staging table and a single set-based UPDATE.
         /// </summary>
         public async Task<int> ArchiveByIdsAsync(IEnumerable<string> ids)

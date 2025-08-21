@@ -100,7 +100,9 @@ namespace RecoTool.Windows
                 {
                     KpiOptions.Add(new OptionItem { Id = uf.USR_ID, Name = uf.USR_FieldName });
                 }
-                foreach (var uf in all.Where(u => string.Equals(u.USR_Category, "Incident Type", StringComparison.OrdinalIgnoreCase))
+                foreach (var uf in all.Where(u =>
+                                                string.Equals(u.USR_Category, "Incident Type", StringComparison.OrdinalIgnoreCase)
+                                                || string.Equals(u.USR_Category, "INC", StringComparison.OrdinalIgnoreCase))
                                        .OrderBy(u => u.USR_FieldName))
                 {
                     IncidentTypeOptions.Add(new OptionItem { Id = uf.USR_ID, Name = uf.USR_FieldName });
@@ -802,7 +804,13 @@ namespace RecoTool.Windows
                 bool isPivot = string.Equals(row?.Account_ID?.Trim(), country.CNT_AmbrePivot?.Trim(), StringComparison.OrdinalIgnoreCase);
                 bool isReceivable = string.Equals(row?.Account_ID?.Trim(), country.CNT_AmbreReceivable?.Trim(), StringComparison.OrdinalIgnoreCase);
 
-                IEnumerable<UserField> query = all.Where(u => string.Equals(u.USR_Category, category, StringComparison.OrdinalIgnoreCase));
+                // Category mapping: handle synonyms (e.g., Incident Type vs INC)
+                bool incident = string.Equals(category, "Incident Type", StringComparison.OrdinalIgnoreCase)
+                                 || string.Equals(category, "INC", StringComparison.OrdinalIgnoreCase);
+                IEnumerable<UserField> query = incident
+                    ? all.Where(u => string.Equals(u.USR_Category, "Incident Type", StringComparison.OrdinalIgnoreCase)
+                                     || string.Equals(u.USR_Category, "INC", StringComparison.OrdinalIgnoreCase))
+                    : all.Where(u => string.Equals(u.USR_Category, category, StringComparison.OrdinalIgnoreCase));
                 if (isPivot)
                     query = query.Where(u => u.USR_Pivot);
                 else if (isReceivable)
@@ -1166,6 +1174,101 @@ namespace RecoTool.Windows
             catch { }
         }
 
+        private async void BulkEditButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // Commit any pending cell/row edits before bulk applying
+                try
+                {
+                    ResultsDataGrid?.CommitEdit(DataGridEditingUnit.Cell, true);
+                    ResultsDataGrid?.CommitEdit(DataGridEditingUnit.Row, true);
+                }
+                catch { }
+
+                var selected = ResultsDataGrid?.SelectedItems?.OfType<ReconciliationViewData>()?.ToList() ?? new List<ReconciliationViewData>();
+                if (selected.Count == 0)
+                {
+                    ShowError("No rows selected for bulk edit.");
+                    return;
+                }
+
+                // Open bulk edit dialog with referential options
+                var dlg = new BulkEditWindow(ActionOptions, KpiOptions, IncidentTypeOptions);
+                var owner = Window.GetWindow(this);
+                if (owner != null) dlg.Owner = owner;
+                var result = dlg.ShowDialog();
+                if (result != true) return;
+
+                var vm = dlg.ViewModel;
+                if (vm == null) return;
+
+                // Confirm bulk clears if any field is applied with null value
+                if (vm.ApplyAction && vm.SelectedActionId == null)
+                {
+                    if (MessageBox.Show($"Clear Action for {selected.Count} selected rows?", "Confirm bulk clear", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                        return;
+                }
+                if (vm.ApplyKpi && vm.SelectedKpiId == null)
+                {
+                    if (MessageBox.Show($"Clear KPI for {selected.Count} selected rows?", "Confirm bulk clear", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                        return;
+                }
+                if (vm.ApplyIncidentType && vm.SelectedIncidentTypeId == null)
+                {
+                    if (MessageBox.Show($"Clear Incident Type for {selected.Count} selected rows?", "Confirm bulk clear", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                        return;
+                }
+
+                if (_reconciliationService == null) return;
+
+                foreach (var row in selected)
+                {
+                    // Load and update only the selected user fields
+                    var reco = await _reconciliationService.GetOrCreateReconciliationAsync(row.ID);
+
+                    if (vm.ApplyAction)
+                    {
+                        row.Action = vm.SelectedActionId;
+                        reco.Action = vm.SelectedActionId;
+                    }
+                    if (vm.ApplyKpi)
+                    {
+                        row.KPI = vm.SelectedKpiId;
+                        reco.KPI = vm.SelectedKpiId;
+                    }
+                    if (vm.ApplyIncidentType)
+                    {
+                        row.IncidentType = vm.SelectedIncidentTypeId;
+                        reco.IncidentType = vm.SelectedIncidentTypeId;
+                    }
+
+                    await _reconciliationService.SaveReconciliationAsync(reco);
+                }
+
+                // Rafraîchir la vue pour refléter immédiatement les modifications du bulk edit
+                await RefreshAsync();
+
+                // Fire-and-forget background sync similar to other save handlers
+                try
+                {
+                    if (_offlineFirstService != null && _offlineFirstService.IsInitialized && _offlineFirstService.IsNetworkSyncAvailable)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try { await _offlineFirstService.SynchronizeData(); }
+                            catch { /* ignore background sync errors */ }
+                        });
+                    }
+                }
+                catch { }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Bulk edit error: {ex.Message}");
+            }
+        }
+
         private void Export_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -1473,6 +1576,98 @@ namespace RecoTool.Windows
             }
         }
 
+        // Persist text/checkbox/date edits as soon as a cell commit occurs
+        private async void ResultsDataGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
+        {
+            try
+            {
+                if (e.EditAction != DataGridEditAction.Commit) return;
+                var rowData = e.Row?.Item as ReconciliationViewData;
+                if (rowData == null) return;
+
+                // Skip here for ComboBox-based columns handled by UserFieldComboBox_SelectionChanged
+                var headerText = Convert.ToString(e.Column?.Header) ?? string.Empty;
+                if (string.Equals(headerText, "Action", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(headerText, "KPI", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(headerText, "Incident Type", StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                // Ensure the editing element pushes its value to the binding source before we save
+                if (e.EditingElement is TextBox tb)
+                {
+                    try { tb.GetBindingExpression(TextBox.TextProperty)?.UpdateSource(); } catch { }
+                }
+                else if (e.EditingElement is CheckBox cbx)
+                {
+                    try { cbx.GetBindingExpression(ToggleButton.IsCheckedProperty)?.UpdateSource(); } catch { }
+                }
+                else if (e.EditingElement is DatePicker dp)
+                {
+                    try { dp.GetBindingExpression(DatePicker.SelectedDateProperty)?.UpdateSource(); } catch { }
+                }
+
+                await SaveEditedRowAsync(rowData);
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Erreur de sauvegarde (cell): {ex.Message}");
+            }
+        }
+
+        // Extra safety to commit any pending cell/row edits when the current cell changes (e.g., checkboxes)
+        private void ResultsDataGrid_CurrentCellChanged(object sender, EventArgs e)
+        {
+            try
+            {
+                var dg = sender as DataGrid;
+                if (dg == null) return;
+                dg.CommitEdit(DataGridEditingUnit.Cell, true);
+                dg.CommitEdit(DataGridEditingUnit.Row, true);
+            }
+            catch { }
+        }
+
+        // Loads existing reconciliation and maps editable fields from the view row, then saves
+        private async Task SaveEditedRowAsync(ReconciliationViewData row)
+        {
+            if (_reconciliationService == null || row == null) return;
+            var reco = await _reconciliationService.GetOrCreateReconciliationAsync(row.ID);
+
+            // Map user-editable fields
+            reco.Action = row.Action;
+            reco.KPI = row.KPI;
+            reco.IncidentType = row.IncidentType;
+            reco.Comments = row.Comments;
+            reco.InternalInvoiceReference = row.InternalInvoiceReference;
+            reco.FirstClaimDate = row.FirstClaimDate;
+            reco.LastClaimDate = row.LastClaimDate;
+            reco.ToRemind = row.ToRemind;
+            reco.ToRemindDate = row.ToRemindDate;
+            reco.ACK = row.ACK;
+            reco.SwiftCode = row.SwiftCode;
+            reco.PaymentReference = row.PaymentReference;
+            reco.RiskyItem = row.RiskyItem;
+            reco.ReasonNonRisky = row.ReasonNonRisky;
+
+            await _reconciliationService.SaveReconciliationAsync(reco);
+
+            // Best-effort background sync
+            try
+            {
+                if (_offlineFirstService != null && _offlineFirstService.IsInitialized && _offlineFirstService.IsNetworkSyncAvailable)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try { await _offlineFirstService.SynchronizeData(); }
+                        catch { }
+                    });
+                }
+            }
+            catch { }
+        }
+
         #endregion
 
         #region Filtering
@@ -1702,7 +1897,7 @@ namespace RecoTool.Windows
         /// <summary>
         /// Double-clic sur une ligne de la grille
         /// </summary>
-        private void ResultsDataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        private async void ResultsDataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
             try
             {
@@ -1711,7 +1906,11 @@ namespace RecoTool.Windows
                 {
                     var win = new RecoTool.UI.Views.Windows.ReconciliationDetailWindow(selectedItem, _allViewData);
                     win.Owner = Window.GetWindow(this);
-                    win.ShowDialog();
+                    var result = win.ShowDialog();
+                    if (result == true)
+                    {
+                        await RefreshAsync();
+                    }
                 }
             }
             catch (Exception ex)
@@ -2339,23 +2538,36 @@ namespace RecoTool.Windows
                 var country = values != null && values.Length > 2 ? values[2] as Country : null;
                 var category = parameter?.ToString();
 
-                if (all == null || string.IsNullOrWhiteSpace(category) || country == null)
-                    return Array.Empty<UserField>();
+                if (all == null || string.IsNullOrWhiteSpace(category))
+                    return Array.Empty<object>();
 
-                bool isPivot = string.Equals(accountId?.Trim(), country.CNT_AmbrePivot?.Trim(), StringComparison.OrdinalIgnoreCase);
-                bool isReceivable = string.Equals(accountId?.Trim(), country.CNT_AmbreReceivable?.Trim(), StringComparison.OrdinalIgnoreCase);
+                bool isPivot = country != null && string.Equals(accountId?.Trim(), country.CNT_AmbrePivot?.Trim(), StringComparison.OrdinalIgnoreCase);
+                bool isReceivable = country != null && string.Equals(accountId?.Trim(), country.CNT_AmbreReceivable?.Trim(), StringComparison.OrdinalIgnoreCase);
 
-                IEnumerable<UserField> query = all.Where(u => string.Equals(u.USR_Category, category, StringComparison.OrdinalIgnoreCase));
-                if (isPivot)
-                    query = query.Where(u => u.USR_Pivot);
-                else if (isReceivable)
-                    query = query.Where(u => u.USR_Receivable);
-                else
-                    query = Enumerable.Empty<UserField>();
+                // Category mapping: handle synonyms (e.g., Incident Type vs INC)
+                bool incident = string.Equals(category, "Incident Type", StringComparison.OrdinalIgnoreCase)
+                                 || string.Equals(category, "INC", StringComparison.OrdinalIgnoreCase);
+                IEnumerable<UserField> query = incident
+                    ? all.Where(u => string.Equals(u.USR_Category, "Incident Type", StringComparison.OrdinalIgnoreCase)
+                                     || string.Equals(u.USR_Category, "INC", StringComparison.OrdinalIgnoreCase))
+                    : all.Where(u => string.Equals(u.USR_Category, category, StringComparison.OrdinalIgnoreCase));
+                // Apply Pivot/Receivable filtering only when we can resolve the account side.
+                if (!string.IsNullOrWhiteSpace(accountId) && country != null)
+                {
+                    if (isPivot)
+                        query = query.Where(u => u.USR_Pivot);
+                    else if (isReceivable)
+                        query = query.Where(u => u.USR_Receivable);
+                    // else unknown account side: keep all items for that category
+                }
 
-                return query.OrderBy(u => u.USR_FieldName).ToList();
+                // Prepend null placeholder to allow clearing selection in ComboBoxes
+                var list = new List<object>();
+                list.Add(null);
+                list.AddRange(query.OrderBy(u => u.USR_FieldName));
+                return list;
             }
-            catch { return Array.Empty<UserField>(); }
+            catch { return Array.Empty<object>(); }
         }
 
         public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)

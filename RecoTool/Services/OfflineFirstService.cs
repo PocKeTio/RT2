@@ -281,7 +281,7 @@ namespace RecoTool.Services
 
                         tx.Commit();
 
-                        // Batch-change tracking (use same target as existing per-row calls for consistency)
+                        // Record change logs in the LOCK database (ChangeLog resides in lock DB)
                         var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId));
                         await tracker.RecordChangesAsync(changeTuples);
                         return true;

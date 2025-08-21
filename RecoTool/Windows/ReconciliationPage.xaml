@@ -92,13 +92,13 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Sync Now Button -->
+                <!-- Sync Now Button --><!--
                 <Button Grid.Column="5" Style="{StaticResource StandardButtonStyle}" Margin="15,0,15,0" Height="36" Padding="15,5" Click="SyncNowButton_Click" ToolTip="Synchronize with server (skips if locked)" IsEnabled="{Binding CanInteract}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <TextBlock Text="Sync Now" FontSize="14" VerticalAlignment="Center"/>
                     </StackPanel>
-                </Button>
+                </Button>-->
 
                 <!-- Lock Status Indicator -->
                 <Border Grid.Column="6" Background="#FFF9E6" BorderBrush="#E6C200" BorderThickness="1" CornerRadius="4" Padding="10,5" Visibility="{Binding IsGlobalLockActive, Converter={StaticResource BooleanToVisibilityConverter}}">

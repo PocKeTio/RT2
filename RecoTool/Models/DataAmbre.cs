@@ -28,11 +28,6 @@ namespace RecoTool.Models
         public decimal SignedAmount { get; set; }
         public DateTime? Value_Date { get; set; }
 
-        public DataAmbre()
-        {
-            ID = Guid.NewGuid().ToString();
-        }
-
         /// <summary>
         /// Détermine si cette ligne appartient au compte Pivot ou Receivable
         /// </summary>

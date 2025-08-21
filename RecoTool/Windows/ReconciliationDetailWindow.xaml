@@ -80,7 +80,7 @@
             <Grid Grid.Row="1">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
-                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 
                 <!-- Section supérieure : Détails de l'opération -->
@@ -122,6 +122,9 @@
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
                                             </Grid.RowDefinitions>
                                             
                                             <!-- Date d'opération -->
@@ -147,6 +150,18 @@
                                             <!-- Référence -->
                                             <TextBlock Grid.Row="5" Grid.Column="0" Text="Reference:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
                                             <TextBlock x:Name="ReferenceValue" Grid.Row="5" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <!-- Country -->
+                                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Country:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="CountryValue" Grid.Row="6" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <!-- Account -->
+                                            <TextBlock Grid.Row="7" Grid.Column="0" Text="Account:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="AccountIdValue" Grid.Row="7" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <!-- Event -->
+                                            <TextBlock Grid.Row="8" Grid.Column="0" Text="Event Num:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="EventNumValue" Grid.Row="8" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
                                         </Grid>
                                     </GroupBox>
                                     
@@ -202,6 +217,7 @@
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
                                             </Grid.RowDefinitions>
                                             
                                             <!-- Nom du débiteur -->
@@ -211,17 +227,21 @@
                                             <!-- Facture -->
                                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Invoice:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
                                             <TextBlock x:Name="InvoiceValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                            
+
                                             <!-- Groupe -->
                                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Group:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
                                             <TextBlock x:Name="GroupNameValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                            
-                                            <!-- Swift Code -->
+
+                                            <!-- Swift Code (from Ambre) -->
                                             <TextBlock Grid.Row="3" Grid.Column="0" Text="Swift Code:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
                                             <TextBlock x:Name="SwiftCodeValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <!-- DWINGS IDs (display) -->
+                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="DWINGS IDs:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="DwingsIdsValue" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
                                         </Grid>
                                     </GroupBox>
-                                    
+
                                     <!-- Informations utilisateur (modifiables) -->
                                     <GroupBox Header="User Information" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
                                         <Grid>
@@ -235,31 +255,87 @@
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
                                             </Grid.RowDefinitions>
-                                            
+
+                                            <!-- Action -->
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Action:" Style="{StaticResource FieldLabelStyle}"/>
+                                            <ComboBox x:Name="ActionComboBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}"
+                                                      ItemsSource="{Binding ActionOptions}" DisplayMemberPath="Content" SelectedValuePath="Id"
+                                                      SelectedValue="{Binding SelectedActionId, Mode=TwoWay}"/>
+
                                             <!-- KPI -->
-                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="KPI:" Style="{StaticResource FieldLabelStyle}"/>
-                                            <ComboBox x:Name="KPIComboBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}"
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="KPI:" Style="{StaticResource FieldLabelStyle}"/>
+                                            <ComboBox x:Name="KPIComboBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}"
                                                       ItemsSource="{Binding KPIOptions}" DisplayMemberPath="Content" SelectedValuePath="Id"
                                                       SelectedValue="{Binding SelectedKPIId, Mode=TwoWay}"/>
-                                            
-                                            <!-- Assignee -->
-                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Assignee:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <ComboBox x:Name="AssigneeComboBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}" Margin="0,10,0,0">
+
+                                            <!-- Incident Type -->
+                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Incident Type:" Style="{StaticResource FieldLabelStyle}"/>
+                                            <ComboBox x:Name="IncidentTypeComboBox" Grid.Row="2" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}"
+                                                      ItemsSource="{Binding IncidentTypeOptions}" DisplayMemberPath="Content" SelectedValuePath="Id"
+                                                      SelectedValue="{Binding SelectedIncidentTypeId, Mode=TwoWay}"/>
+
+                                            <!-- Assignee (placeholder static list) -->
+                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Assignee:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                            <ComboBox x:Name="AssigneeComboBox" Grid.Row="3" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}" Margin="0,10,0,0">
                                                 <ComboBoxItem>Not Assigned</ComboBoxItem>
                                                 <ComboBoxItem>John Doe</ComboBoxItem>
                                                 <ComboBoxItem>Jane Smith</ComboBoxItem>
                                                 <ComboBoxItem>Robert Johnson</ComboBoxItem>
                                                 <ComboBoxItem>Emily Davis</ComboBoxItem>
                                             </ComboBox>
-                                            
-                                            <!-- Reminder Date -->
-                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Reminder:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <DatePicker x:Name="ReminderDatePicker" Grid.Row="2" Grid.Column="1" Style="{StaticResource ModernDatePickerStyle}" Margin="0,10,0,0"/>
-                                            
+
+                                            <!-- Reminder -->
+                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Reminder:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                            <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,0">
+                                                <CheckBox x:Name="ToRemindCheckBox" Content="To Remind" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                                <DatePicker x:Name="ReminderDatePicker" Style="{StaticResource ModernDatePickerStyle}" Width="160"/>
+                                            </StackPanel>
+
+                                            <!-- ACK -->
+                                            <TextBlock Grid.Row="5" Grid.Column="0" Text="ACK:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                            <CheckBox x:Name="AckCheckBox" Grid.Row="5" Grid.Column="1" VerticalAlignment="Center" Margin="0,10,0,0"/>
+
                                             <!-- Comment -->
-                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Comment:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0" VerticalAlignment="Top"/>
-                                            <TextBox x:Name="CommentTextBox" Grid.Row="3" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="80" Margin="0,10,0,0"/>
+                                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Comment:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0" VerticalAlignment="Top"/>
+                                            <TextBox x:Name="CommentTextBox" Grid.Row="6" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="60" Margin="0,10,0,0"/>
+
+                                            <!-- Swift Code (editable) -->
+                                            <TextBlock Grid.Row="7" Grid.Column="0" Text="Swift Code:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                            <TextBox x:Name="SwiftCodeTextBox" Grid.Row="7" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,10,0,0"/>
+
+                                            <!-- Payment Ref -->
+                                            <TextBlock Grid.Row="8" Grid.Column="0" Text="Payment Ref:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                            <TextBox x:Name="PaymentRefTextBox" Grid.Row="8" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,10,0,0"/>
+
+                                            <!-- Internal Ref -->
+                                            <TextBlock Grid.Row="9" Grid.Column="0" Text="Internal Ref:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                            <TextBox x:Name="InternalRefTextBox" Grid.Row="9" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,10,0,0"/>
+                                        </Grid>
+                                    </GroupBox>
+
+                                    <!-- Additional Reconciliation Flags -->
+                                    <GroupBox Header="Risk and Reason" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="120"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Risky Item:" Style="{StaticResource FieldLabelStyle}"/>
+                                            <TextBox x:Name="RiskyItemTextBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}"/>
+
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Reason (Non-Risky):" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                            <TextBox x:Name="ReasonNonRiskyTextBox" Grid.Row="1" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="60" Margin="0,10,0,0"/>
                                         </Grid>
                                     </GroupBox>
                                 </StackPanel>
@@ -267,13 +343,13 @@
                         </ScrollViewer>
                     </Grid>
                 </Border>
-                
+
                 <!-- Section inférieure : Aide à la réconciliation -->
                 <Border Grid.Row="1" Background="White" Margin="0,5,0,0" Padding="15">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         
                         <!-- Titre de la section -->
@@ -293,7 +369,7 @@
                                   ColumnHeaderStyle="{StaticResource DataGridColumnHeaderStyle}"
                                   CellStyle="{StaticResource DataGridCellStyle}"
                                   AutoGenerateColumns="False" SelectionMode="Single"
-                                  Margin="0" BorderThickness="1" BorderBrush="#DDDDDD">
+                                  Margin="0" BorderThickness="1" BorderBrush="#DDDDDD" MaxHeight="200">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Date" Binding="{Binding OperationDate}" Width="100"/>
                                 <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="200"/>

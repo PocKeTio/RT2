@@ -12,6 +12,7 @@ using OfflineFirstAccess.ChangeTracking;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Threading;
 
 namespace RecoTool.Services
 {
@@ -223,13 +224,14 @@ namespace RecoTool.Services
         /// Reads a SQL payload from referential table T_param.Par_Value using a flexible key lookup.
         /// Accepts keys like Export_KPI, Export_PastDUE, Export_IT.
         /// </summary>
-        public async Task<string> GetParamValueAsync(string paramKey)
+        public async Task<string> GetParamValueAsync(string paramKey, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(paramKey)) return null;
 
             var cs = GetReferentialConnectionString();
             using (var connection = new OleDbConnection(cs))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 await connection.OpenAsync();
 
                 // Try common key column names to avoid coupling to a specific schema naming
@@ -240,6 +242,7 @@ namespace RecoTool.Services
                     {
                         var cmd = new OleDbCommand($"SELECT TOP 1 Par_Value FROM T_param WHERE {col} = ?", connection);
                         cmd.Parameters.AddWithValue("@p1", paramKey);
+                        cancellationToken.ThrowIfCancellationRequested();
                         var obj = await cmd.ExecuteScalarAsync();
                         if (obj != null && obj != DBNull.Value)
                             return obj.ToString();
@@ -290,12 +293,13 @@ namespace RecoTool.Services
         /// <summary>
         /// Execute arbitrary SQL (select) and return a DataTable. Parameters must be OleDb-compatible.
         /// </summary>
-        public async Task<DataTable> ExecuteExportAsync(string sql, IEnumerable<DbParameter> parameters)
+        public async Task<DataTable> ExecuteExportAsync(string sql, IEnumerable<DbParameter> parameters, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(sql)) throw new ArgumentNullException(nameof(sql));
 
             using (var connection = new OleDbConnection(_connectionString))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 await connection.OpenAsync();
                 using (var cmd = new OleDbCommand(sql, connection))
                 {
@@ -315,6 +319,7 @@ namespace RecoTool.Services
 
                     using (var adapter = new OleDbDataAdapter(cmd))
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         var table = new DataTable();
                         adapter.Fill(table);
                         return table;

@@ -667,7 +667,7 @@ namespace RecoTool.Services
                     toArchive.Add(ConvertDataAmbreToEntity(item));
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                  var ok = await _offlineFirstService.ApplyEntitiesBatchAsync(countryId, toAdd, toUpdate, toArchive);
+                  var ok = await _offlineFirstService.ApplyEntitiesBatchAsync(countryId, toAdd, toUpdate, toArchive, suppressChangeLog: true);
                 sw.Stop();
 
                 if (!ok)
@@ -821,33 +821,8 @@ namespace RecoTool.Services
 
                 LogManager.Info($"[Staging] T_Reconciliation (insert-only) pour {countryId}: Staged={staged}, Inserted={insertedCount}, Archived={archived} (désactivé)");
 
-                // 6) Change-tracking en lot (INSERT / UPDATE / DELETE)
-                try
-                {
-                    // Déterminer les INSERTs effectifs: candidats - existants
-                    var ins = new HashSet<string>(candidateIds.Where(id => !existing.Contains(id)));
-
-                    if (ins.Count > 0)
-                    {
-                        using (var session = await _offlineFirstService.BeginChangeLogSessionAsync(countryId))
-                        {
-                            foreach (var id in ins)
-                                await session.AddAsync("T_Reconciliation", id, "INSERT");
-
-                            await session.CommitAsync();
-                        }
-                        LogManager.Info($"[ChangeLog] Enregistrements consignés: INSERT={ins.Count}. Aucun UPDATE/DELETE pour Ambre.");
-                    }
-                    else
-                    {
-                        LogManager.Info("[ChangeLog] Aucun nouvel enregistrement à consigner pour T_Reconciliation (insert-only).");
-                    }
-                }
-                catch (Exception chEx)
-                {
-                    // Ne pas échouer l'import si la consignation échoue; journaliser uniquement
-                    LogManager.Warning($"[ChangeLog] Échec de la consignation des changements: {chEx.Message}");
-                }
+                // 6) Change-tracking désactivé pour Ambre: ne pas impacter ChangeLog
+                LogManager.Info("[ChangeLog] Désactivé pour Ambre: aucune écriture dans ChangeLog pour T_Reconciliation.");
             }
             catch (Exception ex)
             {
@@ -887,6 +862,12 @@ namespace RecoTool.Services
                         reconciliationEntity.Properties["Version"] = 1;
                     }
                     
+                    // Ne jamais modifier CreationDate lors d'une mise à jour: conserver la valeur existante
+                    if (existingEntity.Properties.ContainsKey("CreationDate"))
+                    {
+                        reconciliationEntity.Properties["CreationDate"] = existingEntity.Properties["CreationDate"];
+                    }
+
                     reconciliationEntity.Properties["LastModified"] = DateTime.Now.ToOADate();
                     reconciliationEntity.Properties["ModifiedBy"] = _currentUser;
                     

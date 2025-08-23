@@ -12,6 +12,7 @@ using RecoTool.Models;
 using RecoTool.Services;
 using System.Windows.Threading;
 using System.Windows.Controls.Primitives;
+using System.Threading;
 
 namespace RecoTool.Windows
 {
@@ -49,6 +50,7 @@ namespace RecoTool.Windows
         private Action<string> _onSyncSuggested;
         private bool _isLoadingViews; // Guard for SavedViews repopulation
         private bool _skipReloadSavedLists; // Prevent reloading saved filters/views during data refresh
+        private CancellationTokenSource _pageCts; // Cancellation for page-level long operations
 
         /// <summary>
         /// Résout l'ID de compte réel à partir d'un libellé d'affichage (ex: "Pivot (ID)")
@@ -76,6 +78,33 @@ namespace RecoTool.Windows
 
             // Sinon, on considère que l'utilisateur a choisi un ID brut
             return display;
+        }
+
+        /// <summary>
+        /// Effectue une réconciliation après une publication d'import (fin de verrou global):
+        /// synchronise si possible puis recharge les données et KPI.
+        /// </summary>
+        private async Task ReconcileAfterImportAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                using var _ = BeginWaitCursor();
+                IsLoading = true;
+                await TrySynchronizeIfSafeAsync(cancellationToken).ConfigureAwait(false);
+                await LoadDataAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // cancellation is user-driven; keep silent
+            }
+            catch (Exception ex)
+            {
+                ShowWarning($"Réconciliation post-import ignorée: {ex.Message}");
+            }
+            finally
+            {
+                IsLoading = false;
+            }
         }
 
         public List<Country> AvailableCountries
@@ -215,6 +244,18 @@ namespace RecoTool.Windows
 
         #endregion
 
+        /// <summary>
+        /// Cancel button for page long-running operations
+        /// </summary>
+        private void CancelPageOps_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                _pageCts?.Cancel();
+            }
+            catch { }
+        }
+
         #region Constructor
 
         public ReconciliationPage()
@@ -343,7 +384,7 @@ namespace RecoTool.Windows
         /// <summary>
         /// Charge les données de réconciliation
         /// </summary>
-        public async Task LoadDataAsync()
+        public async Task LoadDataAsync(CancellationToken cancellationToken = default)
         {
             try
             {
@@ -352,15 +393,21 @@ namespace RecoTool.Windows
                 // Toujours charger/rafraîchir les filtres/vues sauf si la recharge est déclenchée par une sélection
                 if (!_skipReloadSavedLists)
                 {
-                    await LoadSavedFiltersAsync();
-                    await LoadSavedViewsAsync();
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await LoadSavedFiltersAsync(cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await LoadSavedViewsAsync(cancellationToken).ConfigureAwait(false);
                 }
                 // Mettre à jour les filtres de haut de page à partir du référentiel pays
+                cancellationToken.ThrowIfCancellationRequested();
                 UpdateTopFiltersFromData();
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors du chargement des données: {ex.Message}");
+                if (ex is OperationCanceledException)
+                    ShowWarning("Chargement annulé.");
+                else
+                    ShowError($"Erreur lors du chargement des données: {ex.Message}");
             }
             finally
             {
@@ -371,7 +418,7 @@ namespace RecoTool.Windows
         /// <summary>
         /// Charge les filtres sauvegardés
         /// </summary>
-        private async Task LoadSavedFiltersAsync()
+        private async Task LoadSavedFiltersAsync(CancellationToken cancellationToken = default)
         {
             try
             {
@@ -380,6 +427,7 @@ namespace RecoTool.Windows
 
                 // Récupérer les filtres depuis les référentiels
                 // Optionnel: filtrer par utilisateur courant (si nécessaire, remplacer par une propriété UserName)
+                cancellationToken.ThrowIfCancellationRequested();
                 var filters = await _offlineFirstService.GetUserFilters();
 
                 _isLoadingFilters = true;
@@ -388,6 +436,7 @@ namespace RecoTool.Windows
                     SavedFilters.Clear();
                     foreach (var f in filters.OrderBy(x => x.UFI_Name))
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         SavedFilters.Add(f);
                     }
 
@@ -409,10 +458,7 @@ namespace RecoTool.Windows
                     _isLoadingFilters = false;
                 }
             }
-            catch (Exception ex)
-            {
-                ShowError($"Erreur lors du chargement des filtres: {ex.Message}");
-            }
+            catch { }
         }
 
         #endregion
@@ -440,8 +486,15 @@ namespace RecoTool.Windows
                 using var _ = BeginWaitCursor();
                 RefreshStarted?.Invoke(this, EventArgs.Empty);
                 // Tenter une synchro réseau avant rechargement des données (si pas de verrou)
-                await TrySynchronizeIfSafeAsync();
-                await LoadDataAsync();
+                _pageCts?.Dispose();
+                _pageCts = new CancellationTokenSource();
+                var token = _pageCts.Token;
+                await TrySynchronizeIfSafeAsync(token).ConfigureAwait(false);
+                await LoadDataAsync(token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // silent cancel
             }
             finally
             {
@@ -515,7 +568,7 @@ namespace RecoTool.Windows
         /// <summary>
         /// Chargement des Saved Views depuis T_Ref_User_Fields_Preference
         /// </summary>
-        private async Task LoadSavedViewsAsync()
+        private async Task LoadSavedViewsAsync(CancellationToken cancellationToken = default)
         {
             try
             {
@@ -529,9 +582,11 @@ namespace RecoTool.Windows
                     if (_reconciliationService == null)
                         return;
 
+                    cancellationToken.ThrowIfCancellationRequested();
                     var prefs = await _reconciliationService.GetUserFieldsPreferencesAsync();
                     foreach (var p in prefs.OrderBy(x => x.UPF_Name))
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         SavedViews.Add(new UserViewPreset
                         {
                             Name = p.UPF_Name,
@@ -601,15 +656,20 @@ namespace RecoTool.Windows
                 // Démarrer le polling d'état du verrou
                 StartLockPolling();
                 // Synchroniser au chargement si aucun verrou global actif
-                await TrySynchronizeIfSafeAsync();
-
-                await LoadDataAsync();
+                _pageCts?.Dispose();
+                _pageCts = new CancellationTokenSource();
+                var token = _pageCts.Token;
+                await TrySynchronizeIfSafeAsync(token).ConfigureAwait(false);
+                await LoadDataAsync(token).ConfigureAwait(false);
 
                 // Ne pas ouvrir de vue par défaut. Laisser l'utilisateur en sélectionner/ajouter une.
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors du chargement initial: {ex.Message}");
+                if (ex is OperationCanceledException)
+                    ShowWarning("Chargement initial annulé.");
+                else
+                    ShowError($"Erreur lors du chargement initial: {ex.Message}");
             }
         }
 
@@ -624,7 +684,10 @@ namespace RecoTool.Windows
         private async void OnCountryChanged()
         {
             _currentCountryId = _offlineFirstService.CurrentCountryId;
-            await LoadDataAsync();
+            _pageCts?.Dispose();
+            _pageCts = new CancellationTokenSource();
+            var token = _pageCts.Token;
+            await LoadDataAsync(token).ConfigureAwait(false);
 
             // Notifier les vues intégrées pour synchroniser l'entête Pivot/Receivable
             try
@@ -715,8 +778,6 @@ namespace RecoTool.Windows
             }
         }
 
-        
-
         /// <summary>
         /// Ajouter une nouvelle vue
         /// </summary>
@@ -788,8 +849,11 @@ namespace RecoTool.Windows
                 if (result == MessageBoxResult.Yes)
                 {
                     IsLoading = true;
+                    _pageCts?.Dispose();
+                    _pageCts = new CancellationTokenSource();
+                    var token = _pageCts.Token;
                     await _reconciliationService.ApplyAutomaticRulesAsync(_currentCountryId);
-                    await LoadDataAsync();
+                    await LoadDataAsync(token).ConfigureAwait(false);
                     
                     ShowInfo("Règles automatiques appliquées avec succès.");
                 }
@@ -818,8 +882,11 @@ namespace RecoTool.Windows
                 }
 
                 IsLoading = true;
+                _pageCts?.Dispose();
+                _pageCts = new CancellationTokenSource();
+                var token = _pageCts.Token;
                 var matchCount = await _reconciliationService.PerformAutomaticMatchingAsync(_currentCountryId);
-                await LoadDataAsync();
+                await LoadDataAsync(token).ConfigureAwait(false);
                 
                 ShowInfo($"Rapprochement automatique terminé.\n{matchCount} éléments ont été rapprochés.");
             }
@@ -883,8 +950,8 @@ namespace RecoTool.Windows
                             else
                             {
                                 // Comportement existant pour les autres raisons (ex: réseau rétabli)
-                                await TrySynchronizeIfSafeAsync();
-                                await LoadDataAsync();
+                                await TrySynchronizeIfSafeAsync().ConfigureAwait(false);
+                                await LoadDataAsync().ConfigureAwait(false);
                                 _lastAutoSyncUtc = DateTime.UtcNow;
                                 try { ShowInfo("Synchronisation terminée (réseau rétabli)"); } catch { }
                             }
@@ -934,72 +1001,34 @@ namespace RecoTool.Windows
         /// <summary>
         /// Tente de synchroniser avec le serveur si disponible et si aucun verrou global n'est actif.
         /// </summary>
-        private async Task TrySynchronizeIfSafeAsync()
+        private async Task TrySynchronizeIfSafeAsync(CancellationToken cancellationToken = default)
         {
             try
             {
+                // Do nothing if no OfflineFirstService available
                 if (_offlineFirstService == null) return;
-                if (string.IsNullOrEmpty(_offlineFirstService.CurrentCountryId)) return;
 
-                // Éviter la synchro si un import/d'autres opérations tiennent le verrou global
-                var locked = await _offlineFirstService.IsGlobalLockActiveAsync();
-                IsGlobalLockActive = locked;
-                if (locked) return;
+                // Skip when global lock is active
+                if (IsGlobalLockActive) return;
 
-                await _offlineFirstService.SynchronizeData();
-            }
-            catch
-            {
-                // Ignorer les erreurs de synchro silencieusement ici; l'utilisateur peut relancer via Refresh
-            }
-        }
+                // Skip when network is not available
+                bool networkOk = false;
+                try { networkOk = _offlineFirstService.IsNetworkSyncAvailable; } catch { networkOk = false; }
+                if (!networkOk) return;
 
-        /// <summary>
-        /// Effectue la réconciliation post-publication après un import Ambre: pousse les pending locaux puis recharge la base locale depuis le réseau.
-        /// </summary>
-        private async Task ReconcileAfterImportAsync()
-        {
-            if (_offlineFirstService == null || string.IsNullOrEmpty(_offlineFirstService.CurrentCountryId)) return;
-            try
-            {
-                // Empêcher l'interaction pendant l'opération
+                // Cooldown gate (avoid frequent sync)
+                if (DateTime.UtcNow - _lastAutoSyncUtc <= AutoSyncCooldown) return;
+
+                // Perform sync
                 IsLoading = true;
-                await _offlineFirstService.PostPublishReconcileAsync(_offlineFirstService.CurrentCountryId);
-                await LoadDataAsync();
-            }
-            finally
-            {
-                IsLoading = false;
-            }
-        }
-
-        /// <summary>
-        /// Handler du bouton "Sync Now" (synchro manuelle si possible)
-        /// </summary>
-        private async void SyncNowButton_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (_offlineFirstService == null || string.IsNullOrEmpty(_offlineFirstService.CurrentCountryId))
-                {
-                    ShowWarning("Aucun pays n'est sélectionné pour la synchronisation.");
-                    return;
-                }
-
-                if (IsGlobalLockActive)
-                {
-                    ShowInfo("Synchronisation ignorée: un verrou d'import global est actif.");
-                    return;
-                }
-
-                IsLoading = true;
-                await TrySynchronizeIfSafeAsync();
-                await LoadDataAsync();
-                ShowInfo("Synchronisation terminée.");
+                cancellationToken.ThrowIfCancellationRequested();
+                await _offlineFirstService.SynchronizeAsync(_currentCountryId, cancellationToken);
+                _lastAutoSyncUtc = DateTime.UtcNow;
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de la synchronisation: {ex.Message}");
+                // Non-fatal
+                try { ShowWarning($"Synchronisation ignorée: {ex.Message}"); } catch { }
             }
             finally
             {

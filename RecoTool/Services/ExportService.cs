@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Threading;
 
 namespace RecoTool.Services
 {
@@ -27,18 +28,20 @@ namespace RecoTool.Services
             _service = service ?? throw new ArgumentNullException(nameof(service));
         }
 
-        public async Task<string> ExportFromParamAsync(string paramKey, ExportContext ctx)
+        public async Task<string> ExportFromParamAsync(string paramKey, ExportContext ctx, CancellationToken cancellationToken = default)
         {
             if (ctx == null) throw new ArgumentNullException(nameof(ctx));
 
-            var sql = await _service.GetParamValueAsync(paramKey);
+            cancellationToken.ThrowIfCancellationRequested();
+            var sql = await _service.GetParamValueAsync(paramKey, cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(sql))
                 throw new InvalidOperationException($"Paramètre {paramKey} introuvable ou vide dans T_param");
 
             var wantedParams = DetectSqlParams(sql);
             var sqlParams = _service.BuildSqlParameters(wantedParams, ctx.CountryId, ctx.AccountId, ctx.FromDate, ctx.ToDate, ctx.UserId);
 
-            var table = await _service.ExecuteExportAsync(sql, sqlParams);
+            cancellationToken.ThrowIfCancellationRequested();
+            var table = await _service.ExecuteExportAsync(sql, sqlParams, cancellationToken).ConfigureAwait(false);
 
             var outputDir = ctx.OutputDirectory;
             if (string.IsNullOrWhiteSpace(outputDir))
@@ -52,7 +55,7 @@ namespace RecoTool.Services
             var tempPath = Path.Combine(outputDir, fileName + ".tmp");
             var finalPath = Path.Combine(outputDir, fileName);
 
-            await ExportToCsvAsync(table, tempPath);
+            await ExportToCsvAsync(table, tempPath, cancellationToken).ConfigureAwait(false);
             if (File.Exists(finalPath)) File.Delete(finalPath);
             File.Move(tempPath, finalPath);
             return finalPath;
@@ -72,7 +75,7 @@ namespace RecoTool.Services
             return matches.Cast<Match>().Select(m => m.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         }
 
-        private static async Task ExportToCsvAsync(DataTable table, string path)
+        private static async Task ExportToCsvAsync(DataTable table, string path, CancellationToken cancellationToken = default)
         {
             using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
             using var sw = new StreamWriter(fs, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
@@ -80,6 +83,7 @@ namespace RecoTool.Services
             // Header
             for (int i = 0; i < table.Columns.Count; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (i > 0) await sw.WriteAsync(",");
                 await sw.WriteAsync(EscapeCsv(table.Columns[i].ColumnName));
             }
@@ -88,6 +92,7 @@ namespace RecoTool.Services
             // Rows
             foreach (DataRow row in table.Rows)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 for (int i = 0; i < table.Columns.Count; i++)
                 {
                     if (i > 0) await sw.WriteAsync(",");
@@ -125,3 +130,4 @@ namespace RecoTool.Services
         }
     }
 }
+

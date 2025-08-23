@@ -182,6 +182,13 @@
                                     Click="ExportToCSV_Click"/>
                             <Button Content="Export PDF" Style="{StaticResource ExportButtonStyle}" 
                                     Click="ExportToPDF_Click"/>
+
+                            <Separator Width="20"/>
+
+                            <!-- Cancel button: enabled only while generating; default style so it's not disabled by ReportButtonStyle trigger -->
+                            <Button Content="Cancel Export" Margin="5" Padding="15,8" Background="#F44336" Foreground="White"
+                                    BorderThickness="0" Cursor="Hand" IsEnabled="{Binding IsGenerating}"
+                                    Click="CancelExport_Click"/>
                         </WrapPanel>
                     </StackPanel>
                 </Border>

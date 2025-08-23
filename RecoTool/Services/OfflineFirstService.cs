@@ -11,6 +11,8 @@ using System.Data;
 using System.Data.OleDb;
 using System.IO;
 using System.Timers;
+using System.Text;
+using System.Globalization;
 
 namespace RecoTool.Services
 {
@@ -69,7 +71,12 @@ namespace RecoTool.Services
         /// Applique en lot des ajouts/mises à jour/archivages dans une seule connexion et transaction.
         /// Réduit drastiquement le coût des imports volumineux.
         /// </summary>
-        public async Task<bool> ApplyEntitiesBatchAsync(string identifier, List<Entity> toAdd, List<Entity> toUpdate, List<Entity> toArchive)
+        /// <param name="identifier">Country identifier.</param>
+        /// <param name="toAdd">Entities to insert.</param>
+        /// <param name="toUpdate">Entities to update.</param>
+        /// <param name="toArchive">Entities to logically delete/archive.</param>
+        /// <param name="suppressChangeLog">Quand true, n'enregistre pas les changements dans la table ChangeLog (utile pour imports Ambre).</param>
+        public async Task<bool> ApplyEntitiesBatchAsync(string identifier, List<Entity> toAdd, List<Entity> toUpdate, List<Entity> toArchive, bool suppressChangeLog = false)
         {
             EnsureInitialized();
             toAdd = toAdd ?? new List<Entity>();
@@ -134,7 +141,30 @@ namespace RecoTool.Services
                                     entity.Properties[isDeletedCol] = DBNull.Value;
                             }
 
+                            // CRC on INSERT for T_Data_Ambre when CRC column exists
+                            bool isAmbreInsert = string.Equals(entity.TableName, "T_Data_Ambre", StringComparison.OrdinalIgnoreCase);
+                            bool hasCrcInsert = isAmbreInsert && cols.Contains("CRC", StringComparer.OrdinalIgnoreCase);
+                            if (hasCrcInsert)
+                            {
+                                var exclude = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                                {
+                                    // Exclude tech columns from CRC
+                                    await getPkColAsync(entity.TableName),
+                                    "CRC",
+                                    lastModCol ?? string.Empty,
+                                    _syncConfig.IsDeletedColumn,
+                                    "DeleteDate",
+                                    "CreationDate",
+                                    "ModifiedBy",
+                                    "Version"
+                                };
+                                var orderedCols = cols.Where(c => !exclude.Contains(c)).OrderBy(c => c, StringComparer.OrdinalIgnoreCase).ToList();
+                                var crcVal = (int)ComputeCrc32ForEntity(entity, orderedCols);
+                                entity.Properties["CRC"] = crcVal;
+                            }
+
                             var validCols = entity.Properties.Keys.Where(k => cols.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
+
                             if (validCols.Count == 0) continue;
                             var sig = $"{entity.TableName}||{string.Join("|", validCols)}";
                             if (!insertCmdCache.TryGetValue(sig, out var tup))
@@ -148,6 +178,7 @@ namespace RecoTool.Services
                                     // Initialize parameters once
                                     cmd.Parameters.AddWithValue($"@p{i}", DBNull.Value);
                                 }
+
                                 insertCmdCache[sig] = (cmd, validCols.ToList());
                                 tup = insertCmdCache[sig];
                             }
@@ -173,7 +204,82 @@ namespace RecoTool.Services
                                 }
                             }
                             string chKey = keyVal?.ToString();
-                            changeTuples.Add((entity.TableName, chKey, "INSERT"));
+                            if (!suppressChangeLog)
+                                changeTuples.Add((entity.TableName, chKey, "INSERT"));
+                        }
+
+                        // Helper to format a key literal for IN clauses (Access SQL)
+                        string FormatKeyLiteral(object key)
+                        {
+                            if (key == null || key == DBNull.Value) return null; // skip NULLs in IN
+                            switch (Type.GetTypeCode(key.GetType()))
+                            {
+                                case TypeCode.Byte:
+                                case TypeCode.SByte:
+                                case TypeCode.Int16:
+                                case TypeCode.UInt16:
+                                case TypeCode.Int32:
+                                case TypeCode.UInt32:
+                                case TypeCode.Int64:
+                                case TypeCode.UInt64:
+                                case TypeCode.Decimal:
+                                case TypeCode.Double:
+                                case TypeCode.Single:
+                                    return Convert.ToString(key, CultureInfo.InvariantCulture);
+                                case TypeCode.Boolean:
+                                    return ((bool)key) ? "1" : "0";
+                                case TypeCode.DateTime:
+                                    // Use #...# for dates in Access, but PKs should rarely be dates; fall back to string
+                                    var ds = ((DateTime)key).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                                    return $"#{ds}#";
+                                default:
+                                    var s = Convert.ToString(key, CultureInfo.InvariantCulture);
+                                    s = (s ?? string.Empty).Replace("'", "''");
+                                    return $"'{s}'";
+                            }
+                        }
+
+                        // Cache business columns per table for CRC computation
+                        var businessColsCache = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+                        // Prefetch CRCs per table for all keys in toUpdate to avoid per-row SELECTs
+                        var dbCrcCachePerTable = new Dictionary<string, Dictionary<string, int?>>(StringComparer.OrdinalIgnoreCase);
+                        if (toUpdate.Count > 0)
+                        {
+                            var tables = toUpdate.Select(e => e.TableName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                            foreach (var tbl in tables)
+                            {
+                                var colsTbl = await getColsAsync(tbl);
+                                if (!(colsTbl.Contains("CRC", StringComparer.OrdinalIgnoreCase))) continue; // only relevant when table has CRC
+                                var pkTbl = await getPkColAsync(tbl);
+                                // Collect keys present in this batch
+                                var keys = toUpdate.Where(e => string.Equals(e.TableName, tbl, StringComparison.OrdinalIgnoreCase))
+                                                   .Select(e => e.Properties.ContainsKey(pkTbl) ? e.Properties[pkTbl] : null)
+                                                   .Where(k => k != null && k != DBNull.Value)
+                                                   .ToList();
+                                if (keys.Count == 0) continue;
+                                var keyLiterals = keys.Select(k => FormatKeyLiteral(k)).Where(x => !string.IsNullOrEmpty(x)).Distinct().ToList();
+                                var map = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
+                                const int chunkSize = 200;
+                                for (int i = 0; i < keyLiterals.Count; i += chunkSize)
+                                {
+                                    var chunk = keyLiterals.Skip(i).Take(chunkSize).ToList();
+                                    var inList = string.Join(",", chunk);
+                                    var sql = $"SELECT [{pkTbl}] AS K, [CRC] FROM [{tbl}] WHERE [{pkTbl}] IN ({inList})";
+                                    using (var cmd = new OleDbCommand(sql, connection, tx))
+                                    using (var reader = await cmd.ExecuteReaderAsync())
+                                    {
+                                        while (await reader.ReadAsync())
+                                        {
+                                            var k = reader["K"];
+                                            var kStr = Convert.ToString(k, CultureInfo.InvariantCulture);
+                                            int? cval = reader.IsDBNull(reader.GetOrdinal("CRC")) ? (int?)null : Convert.ToInt32(reader["CRC"], CultureInfo.InvariantCulture);
+                                            map[kStr] = cval;
+                                        }
+                                    }
+                                }
+                                dbCrcCachePerTable[tbl] = map;
+                            }
                         }
 
                         // UPDATES
@@ -194,11 +300,54 @@ namespace RecoTool.Services
                                 throw new InvalidOperationException($"Valeur de clé introuvable pour la table {entity.TableName} (colonne {keyColumn})");
                             object keyValue = entity.Properties[keyColumn];
 
-                            var upSig = $"{entity.TableName}||{string.Join("|", updatable)}||{keyColumn}";
+                            // If table is T_Data_Ambre and CRC column exists, compute CRC across business fields
+                            bool isAmbre = string.Equals(entity.TableName, "T_Data_Ambre", StringComparison.OrdinalIgnoreCase);
+                            bool hasCrc = isAmbre && cols.Contains("CRC", StringComparer.OrdinalIgnoreCase);
+                            int? crcValue = null;
+                            if (hasCrc)
+                            {
+                                // Cache business column order per table
+                                if (!businessColsCache.TryGetValue(entity.TableName, out var orderedCols))
+                                {
+                                    var exclude = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                                    {
+                                        pkColumn,
+                                        "CRC",
+                                        lastModCol ?? string.Empty,
+                                        _syncConfig.IsDeletedColumn,
+                                        "DeleteDate",
+                                        "CreationDate",
+                                        "ModifiedBy",
+                                        "Version"
+                                    };
+                                    orderedCols = cols.Where(c => !exclude.Contains(c)).OrderBy(c => c, StringComparer.OrdinalIgnoreCase).ToList();
+                                    businessColsCache[entity.TableName] = orderedCols;
+                                }
+                                crcValue = (int)ComputeCrc32ForEntity(entity, orderedCols);
+                                // Ensure CRC is part of SET
+                                if (!updatable.Contains("CRC", StringComparer.OrdinalIgnoreCase))
+                                    updatable.Add("CRC");
+                                entity.Properties["CRC"] = crcValue.Value;
+                            }
+
+                            // Fast-path using preloaded DB CRC map
+                            if (hasCrc && dbCrcCachePerTable.TryGetValue(entity.TableName, out var tableMap))
+                            {
+                                var keyStr = Convert.ToString(keyValue, CultureInfo.InvariantCulture);
+                                if (keyStr != null && tableMap.TryGetValue(keyStr, out var dbCrc) && crcValue.HasValue && dbCrc.HasValue && dbCrc.Value == crcValue.Value)
+                                {
+                                    // No business change -> skip this row
+                                    continue;
+                                }
+                            }
+
+                            var upSig = $"{entity.TableName}||{string.Join("|", updatable)}||{keyColumn}||{(hasCrc ? "withCrc" : "noCrc")}";
                             if (!updateCmdCache.TryGetValue(upSig, out var upd))
                             {
                                 var setList = string.Join(", ", updatable.Select((c, i) => $"[{c}] = @p{i}"));
-                                var sql = $"UPDATE [{entity.TableName}] SET {setList} WHERE [{keyColumn}] = @key";
+                                var sql = hasCrc
+                                    ? $"UPDATE [{entity.TableName}] SET {setList} WHERE [{keyColumn}] = @key AND ([CRC] <> @crc OR [CRC] IS NULL OR @crc IS NULL)"
+                                    : $"UPDATE [{entity.TableName}] SET {setList} WHERE [{keyColumn}] = @key";
                                 var cmd = new OleDbCommand(sql, connection, tx);
                                 for (int i = 0; i < updatable.Count; i++)
                                 {
@@ -206,6 +355,10 @@ namespace RecoTool.Services
                                 }
                                 // key parameter at the end
                                 cmd.Parameters.AddWithValue("@key", DBNull.Value);
+                                if (hasCrc)
+                                {
+                                    cmd.Parameters.AddWithValue("@crc", DBNull.Value);
+                                }
                                 updateCmdCache[upSig] = (cmd, updatable.ToList(), updatable.Count);
                                 upd = updateCmdCache[upSig];
                             }
@@ -216,9 +369,17 @@ namespace RecoTool.Services
                                 upd.Cmd.Parameters[i].Value = prepared;
                             }
                             upd.Cmd.Parameters[upd.KeyIndex].Value = keyValue ?? DBNull.Value;
-                            await upd.Cmd.ExecuteNonQueryAsync();
-                            string chKey = keyValue?.ToString();
-                            changeTuples.Add((entity.TableName, chKey, "UPDATE"));
+                            if (hasCrc)
+                            {
+                                // last parameter is @crc
+                                upd.Cmd.Parameters[upd.KeyIndex + 1].Value = crcValue.HasValue ? (object)crcValue.Value : DBNull.Value;
+                            }
+                            var affected = await upd.Cmd.ExecuteNonQueryAsync();
+                            if (affected > 0 && !suppressChangeLog)
+                            {
+                                string chKey = keyValue?.ToString();
+                                changeTuples.Add((entity.TableName, chKey, "UPDATE"));
+                            }
                         }
 
                         // ARCHIVES (logical delete)
@@ -276,14 +437,18 @@ namespace RecoTool.Services
                                 }
                             }
                             string chKey = keyValue?.ToString();
-                            changeTuples.Add((entity.TableName, chKey, "DELETE"));
+                            if (!suppressChangeLog)
+                                changeTuples.Add((entity.TableName, chKey, "DELETE"));
                         }
 
                         tx.Commit();
 
                         // Record change logs in the LOCK database (ChangeLog resides in lock DB)
-                        var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId));
-                        await tracker.RecordChangesAsync(changeTuples);
+                        if (!suppressChangeLog && changeTuples.Count > 0)
+                        {
+                            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId));
+                            await tracker.RecordChangesAsync(changeTuples);
+                        }
                         return true;
                     }
                     catch
@@ -1119,6 +1284,41 @@ namespace RecoTool.Services
             return entries?.Count() ?? 0;
         }
 
+        /// <summary>
+        /// Acquiert un verrou global pour empêcher la synchronisation pendant des opérations critiques (TimeSpan overload).
+        /// </summary>
+        public async Task<IDisposable> AcquireGlobalLockAsync(string identifier, string reason, TimeSpan timeout, CancellationToken token = default)
+        {
+            int timeoutSeconds = (int)Math.Max(0, timeout.TotalSeconds);
+            return await AcquireGlobalLockInternalAsync(identifier, reason, timeoutSeconds, token);
+        }
+
+        /// <summary>
+        /// Acquiert un verrou global pour empêcher la synchronisation pendant des opérations critiques (secondes).
+        /// </summary>
+        public async Task<IDisposable> AcquireGlobalLockAsync(string identifier, string reason, int timeoutSeconds = 0, CancellationToken token = default)
+        {
+            return await AcquireGlobalLockInternalAsync(identifier, reason, timeoutSeconds, token);
+        }
+
+        /// <summary>
+        /// Démarre une "surveillance" interne simple (flag) utilisée pour coordonner certaines opérations.
+        /// </summary>
+        public bool StartWatching(string identifier)
+        {
+            _isWatching = true;
+            return true;
+        }
+
+        /// <summary>
+        /// Stoppe la surveillance interne (flag).
+        /// </summary>
+        public bool StopWatching()
+        {
+            _isWatching = false;
+            return true;
+        }
+
         private void EnsureInitialized()
         {
             if (!_isInitialized || _syncConfig == null)
@@ -1159,86 +1359,45 @@ namespace RecoTool.Services
 
         private async Task<string> GetPrimaryKeyColumnAsync(OleDbConnection connection, string tableName)
         {
-            using (var schema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Primary_Keys, new object[] { null, null, tableName }))
+            // 1) Try explicit Primary_Keys schema
+            using (var pkSchema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Primary_Keys, new object[] { null, null, tableName }))
             {
-                if (schema != null && schema.Rows.Count > 0)
+                if (pkSchema != null && pkSchema.Rows.Count > 0)
                 {
-                    // Assume single-column PK
-                    return await Task.FromResult(schema.Rows[0]["COLUMN_NAME"].ToString());
+                    string first = null;
+                    foreach (System.Data.DataRow row in pkSchema.Rows)
+                    {
+                        var name = row["COLUMN_NAME"]?.ToString();
+                        if (string.Equals(name, "ID", StringComparison.OrdinalIgnoreCase))
+                            return "ID";
+                        if (first == null && !string.IsNullOrWhiteSpace(name))
+                            first = name;
+                    }
+                    if (!string.IsNullOrWhiteSpace(first)) return first;
                 }
             }
-            return await Task.FromResult<string>(null);
-        }
 
-        private async Task<string> GetPrimaryKeyValueAsync(OleDbConnection connection, Entity entity)
-        {
-            var pk = await GetPrimaryKeyColumnAsync(connection, entity.TableName) ?? "ID";
-            if (entity.Properties.ContainsKey(pk)) return entity.Properties[pk]?.ToString();
+            // 2) Fallback: check Indexes schema for PRIMARY_KEY
+            using (var idxSchema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Indexes, new object[] { null, null, null, null, tableName }))
+            {
+                if (idxSchema != null)
+                {
+                    var rows = idxSchema.Select("PRIMARY_KEY = true");
+                    if (rows != null && rows.Length > 0)
+                    {
+                        var name = rows[0]["COLUMN_NAME"]?.ToString();
+                        if (!string.IsNullOrWhiteSpace(name)) return name;
+                    }
+                }
+            }
+
+            // 3) Heuristics: prefer an ID column if present, else first column name
+            var cols = await GetTableColumnsAsync(connection, tableName);
+            if (cols.Contains("ID", StringComparer.OrdinalIgnoreCase)) return "ID";
+            if (cols.Count > 0) return cols.First();
             return null;
         }
 
-        /// <summary>
-        /// Démarre la surveillance des changements
-        /// </summary>
-        /// <param name="identifier">Identifiant de contexte</param>
-        /// <returns>True si démarré avec succès</returns>
-        public bool StartWatching(string identifier)
-        {
-            // Implémentation minimale: active un flag de surveillance
-            // La logique avancée peut être branchée sur SynchronizationService si nécessaire
-            _isWatching = true;
-            return true;
-        }
-
-        /// <summary>
-        /// Arrête la surveillance des changements
-        /// </summary>
-        /// <returns>True si arrêté avec succès</returns>
-        public bool StopWatching()
-        {
-            _isWatching = false;
-            return true;
-        }
-
-        /// <summary>
-        /// Obtient la date de dernière synchronisation
-        /// </summary>
-        /// <param name="identifier">Identifiant de contexte</param>
-        /// <returns>Date de dernière synchronisation ou null</returns>
-        public DateTime? GetLastSyncTime(string identifier)
-        {
-            return _lastSyncTimes.TryGetValue(identifier, out DateTime lastSync) ? lastSync : (DateTime?)null;
-        }
-
-        /// <summary>
-        /// Acquiert un verrou global pour empêcher la synchronisation pendant des opérations critiques
-        /// </summary>
-        /// <param name="identifier">Identifiant de contexte</param>
-        /// <param name="reason">Raison du verrouillage</param>
-        /// <param name="timeout">Délai d'attente</param>
-        /// <param name="token">Token d'annulation</param>
-        /// <returns>Un objet IDisposable qui libère le verrou lorsqu'il est disposé</returns>
-        public async Task<IDisposable> AcquireGlobalLockAsync(string identifier, string reason, TimeSpan timeout, CancellationToken token = default)
-        {
-            int timeoutSeconds = (int)timeout.TotalSeconds;
-            return await AcquireGlobalLockInternalAsync(identifier, reason, timeoutSeconds, token);
-        }
-
-        /// <summary>
-        /// Acquiert un verrou global pour empêcher la synchronisation pendant des opérations critiques
-        /// </summary>
-        /// <param name="identifier">Identifiant de contexte</param>
-        /// <param name="reason">Raison du verrouillage</param>
-        /// <param name="timeoutSeconds">Délai d'attente en secondes (0 pour pas d'expiration)</param>
-        /// <param name="token">Token d'annulation</param>
-        /// <returns>Un objet IDisposable qui libère le verrou lorsqu'il est disposé</returns>
-        public async Task<IDisposable> AcquireGlobalLockAsync(string identifier, string reason, int timeoutSeconds = 0, CancellationToken token = default)
-        {
-            return await AcquireGlobalLockInternalAsync(identifier, reason, timeoutSeconds, token);
-        }
-
-        #endregion
-        
         #region Configuration Methods
         
         /// <summary>
@@ -2782,6 +2941,81 @@ namespace RecoTool.Services
             return value;
         }
 
+        /// <summary>
+        /// Calcule un CRC32 stable à partir des colonnes ordonnées (normalisées) d'une entité.
+        /// </summary>
+        private static uint ComputeCrc32ForEntity(Entity entity, List<string> orderedCols)
+        {
+            uint crc = 0u;
+            var enc = Encoding.UTF8;
+            var sep = new byte[] { 0x1F }; // Unit Separator pour délimiter
+            bool first = true;
+            foreach (var col in orderedCols)
+            {
+                if (!first)
+                    crc = Crc32Append(crc, sep, 0, sep.Length);
+                first = false;
+                entity.Properties.TryGetValue(col, out var val);
+                var norm = NormalizeForCrc(val);
+                var bytes = enc.GetBytes(norm);
+                crc = Crc32Append(crc, bytes, 0, bytes.Length);
+            }
+            return crc;
+        }
+
+        private static string NormalizeForCrc(object value)
+        {
+            if (value == null || value == DBNull.Value) return string.Empty;
+            switch (value)
+            {
+                case string s:
+                    return s?.Trim() ?? string.Empty;
+                case DateTime dt:
+                    return dt.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture);
+                case bool b:
+                    return b ? "1" : "0";
+                case decimal dec:
+                    return dec.ToString(CultureInfo.InvariantCulture);
+                case double d:
+                    return d.ToString("G17", CultureInfo.InvariantCulture);
+                case float f:
+                    return f.ToString("G9", CultureInfo.InvariantCulture);
+                default:
+                    return Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+            }
+        }
+
+        private static readonly uint[] _crc32Table = BuildCrc32Table();
+
+        private static uint Crc32Append(uint crc, byte[] buffer, int offset, int count)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                byte b = buffer[offset + i];
+                uint idx = (crc ^ b) & 0xFFu;
+                crc = (crc >> 8) ^ _crc32Table[idx];
+            }
+            return crc;
+        }
+
+        private static uint[] BuildCrc32Table()
+        {
+            const uint poly = 0xEDB88320u;
+            var table = new uint[256];
+            for (uint i = 0; i < 256; i++)
+            {
+                uint c = i;
+                for (int j = 0; j < 8; j++)
+                {
+                    if ((c & 1) != 0)
+                        c = poly ^ (c >> 1);
+                    else
+                        c >>= 1;
+                }
+                table[i] = c;
+            }
+            return table;
+        }
 
         /// <summary>
         /// Récupère un pays par son identifiant depuis le cache. Charge les référentiels si nécessaire.
@@ -2966,3 +3200,4 @@ namespace RecoTool.Services
     }
 
 }
+#endregion

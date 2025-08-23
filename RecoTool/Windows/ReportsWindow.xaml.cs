@@ -12,6 +12,7 @@ using Microsoft.Win32;
 using Microsoft.Extensions.DependencyInjection;
 using RecoTool.Models;
 using RecoTool.Services;
+using System.Threading;
 
 namespace RecoTool.Windows
 {
@@ -30,6 +31,7 @@ namespace RecoTool.Windows
         private DateTime _endDate;
         private bool _isGenerating;
         private string _outputPath;
+        private CancellationTokenSource _exportCts;
 
         public Country CurrentCountry => _offlineFirstService?.CurrentCountry;
 
@@ -700,6 +702,19 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
+        /// Annule l'export en cours
+        /// </summary>
+        private void CancelExport_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                _exportCts?.Cancel();
+                UpdateStatusText("Cancellation requested...");
+            }
+            catch { }
+        }
+
+        /// <summary>
         /// Ferme la fenêtre
         /// </summary>
         private void Close_Click(object sender, RoutedEventArgs e)
@@ -729,9 +744,17 @@ namespace RecoTool.Windows
                 UpdateStatusText($"Exporting {paramKey}...");
 
                 var ctx = BuildExportContext();
-                var path = await _exportService.ExportFromParamAsync(paramKey, ctx);
+                _exportCts?.Dispose();
+                _exportCts = new CancellationTokenSource();
+                var token = _exportCts.Token;
+                var path = await _exportService.ExportFromParamAsync(paramKey, ctx, token).ConfigureAwait(false);
                 UpdateStatusText($"Export finished: {path}");
                 ShowInfo($"Export terminé:\n{path}");
+            }
+            catch (OperationCanceledException)
+            {
+                UpdateStatusText($"Export canceled: {paramKey}");
+                ShowWarning($"Export annulé: {paramKey}");
             }
             catch (Exception ex)
             {
@@ -741,6 +764,8 @@ namespace RecoTool.Windows
             finally
             {
                 IsGenerating = false;
+                _exportCts?.Dispose();
+                _exportCts = null;
             }
         }
 

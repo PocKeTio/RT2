@@ -61,7 +61,15 @@ namespace OfflineFirstAccess.Synchronization
             await LogSyncOperationAsync("Sync", "Started", "Starting synchronization");
             try
             {
-                var result = await _orchestrator.SynchronizeAsync(onProgress);
+                // Wrap provided progress to also persist to SyncLog
+                Action<int, string> progress = (pct, msg) =>
+                {
+                    try { onProgress?.Invoke(pct, msg); } catch { }
+                    // fire-and-forget persistence of progress message
+                    try { _ = LogSyncOperationAsync("Progress", "Info", $"{pct}% | {msg}"); } catch { }
+                };
+
+                var result = await _orchestrator.SynchronizeAsync(progress);
                 var details = result.Success
                     ? $"Completed. UnresolvedConflicts={result.UnresolvedConflicts?.Count ?? 0}"
                     : $"Completed with errors: {result.ErrorDetails}";

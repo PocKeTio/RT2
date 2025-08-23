@@ -98,14 +98,10 @@
     <Compile Include="Models\UserFieldsPreference.cs" />
     <Compile Include="Services\Enums\ConflictResolution.cs" />
     <Compile Include="Services\Enums\ConflictResolutionStrategy.cs" />
-    <Compile Include="Services\DTOs\DataChanges.cs" />
-    <Compile Include="Services\DTOs\DataConflict.cs" />
+    
+    
     <Compile Include="Services\Enums\ExportFormat.cs" />
-    <Compile Include="Services\DTOs\ExportSettings.cs" />
-    <Compile Include="Services\DTOs\ImportDefaultSettings.cs" />
     <Compile Include="Services\DTOs\ImportResult.cs" />
-    <Compile Include="Services\DTOs\SyncSettings.cs" />
-    <Compile Include="Services\DTOs\UISettings.cs" />
     <Compile Include="Services\ParameterService.cs" />
     <Compile Include="Services\SyncMonitorService.cs" />
     <Compile Include="Windows\BulkEditWindow.xaml.cs">

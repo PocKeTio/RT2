@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using Microsoft.Win32;
 using Microsoft.Extensions.DependencyInjection;
 using RecoTool.Models;
@@ -119,6 +120,40 @@ namespace RecoTool.Windows
             
             // Répertoire de sortie par défaut
             OutputPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "RecoTool_Reports");
+        }
+
+        #endregion
+
+        #region UI Busy / Wait Cursor
+
+        private sealed class DisposableAction : IDisposable
+        {
+            private readonly Action _onDispose;
+            public DisposableAction(Action onDispose) { _onDispose = onDispose; }
+            public void Dispose() { try { _onDispose?.Invoke(); } catch { } }
+        }
+
+        private IDisposable BeginWaitCursor()
+        {
+            try
+            {
+                if (!Dispatcher.CheckAccess())
+                    Dispatcher.Invoke(() => Mouse.OverrideCursor = Cursors.Wait);
+                else
+                    Mouse.OverrideCursor = Cursors.Wait;
+            }
+            catch { }
+            return new DisposableAction(() =>
+            {
+                try
+                {
+                    if (!Dispatcher.CheckAccess())
+                        Dispatcher.Invoke(() => Mouse.OverrideCursor = null);
+                    else
+                        Mouse.OverrideCursor = null;
+                }
+                catch { }
+            });
         }
 
         #endregion
@@ -278,6 +313,7 @@ namespace RecoTool.Windows
 
             try
             {
+                using var _ = BeginWaitCursor();
                 IsGenerating = true;
                 UpdateStatusText($"Generating {reportName}...");
 
@@ -318,6 +354,7 @@ namespace RecoTool.Windows
 
             try
             {
+                using var _ = BeginWaitCursor();
                 IsGenerating = true;
                 UpdateStatusText($"Exporting: {exportName}...");
 
@@ -369,6 +406,7 @@ namespace RecoTool.Windows
         /// </summary>
         private async Task GenerateReportFile(string filePath, string reportType, List<ReconciliationViewData> data)
         {
+            using var _ = BeginWaitCursor();
             // TODO: Implémenter la génération Excel selon le type de rapport
             // Pour l'instant, simulation avec délai
             await Task.Delay(2000);
@@ -383,6 +421,7 @@ namespace RecoTool.Windows
         /// </summary>
         private async Task ExportDataToFile(string filePath, string exportType)
         {
+            using var _ = BeginWaitCursor();
             if (_reconciliationService == null || CurrentCountry == null)
                 return;
 
@@ -685,6 +724,7 @@ namespace RecoTool.Windows
 
             try
             {
+                using var _ = BeginWaitCursor();
                 IsGenerating = true;
                 UpdateStatusText($"Exporting {paramKey}...");
 

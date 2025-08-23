@@ -175,7 +175,7 @@ namespace RecoTool.Services
                            LEFT JOIN {dwDataJoinInv} ON r.DWINGS_InvoiceID = dInv.INVOICE_ID)
                            LEFT JOIN {dwDataJoinCom} ON r.DWINGS_CommissionID = dCom.COMMISSION_ID)
                            LEFT JOIN {dwGuaranteeJoin} ON r.DWINGS_GuaranteeID = g.GUARANTEE_ID
-                           WHERE a.DeleteDate IS NULL";
+                           WHERE 1=1";
 
             if (!string.IsNullOrEmpty(filterSql))
             {

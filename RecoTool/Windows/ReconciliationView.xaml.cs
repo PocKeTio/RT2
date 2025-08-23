@@ -45,8 +45,22 @@ namespace RecoTool.Windows
         // Collections pour l'affichage (vue combinée)
         private ObservableCollection<ReconciliationViewData> _viewData;
         private List<ReconciliationViewData> _allViewData; // Toutes les données pour le filtrage
+        // Paging / incremental loading
+        private const int InitialPageSize = 100;
+        private List<ReconciliationViewData> _filteredData; // Données filtrées complètes (pour totaux/scroll)
+        private int _loadedCount; // Nombre actuellement affiché dans ViewData
+        private bool _isLoadingMore; // Garde-fou
+        private bool _scrollHooked; // Pour éviter double-hook
+        private ScrollViewer _resultsScrollViewer;
         // Filtre backend transmis au service (défini par la page au moment de l'ajout de vue)
         private string _backendFilterSql;
+
+        // Données préchargées par la page parente (si présentes, on évite un fetch service)
+        private IReadOnlyList<ReconciliationViewData> _preloadedAllData;
+
+        // Perf: throttled logging for scroll handling (avoid log spam)
+        private DateTime _lastScrollPerfLog = DateTime.MinValue;
+        private const int ScrollLogThrottleMs = 250;
 
         // Propriétés de filtrage
         private string _filterAccountId;
@@ -77,6 +91,27 @@ namespace RecoTool.Windows
             try
             {
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            }
+            catch { }
+        }
+
+        private void ResultsDataGrid_Loaded(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (sender is DataGrid dg)
+                {
+                    TryHookResultsGridScroll(dg);
+                }
+            }
+            catch { }
+        }
+
+        private void LoadMoreButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                LoadMorePage();
             }
             catch { }
         }
@@ -319,7 +354,30 @@ namespace RecoTool.Windows
             catch { }
         }
 
-        
+        // Ensure inner DataGrid scroll consumes the mouse wheel instead of the container page
+        private void ResultsDataGrid_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            try
+            {
+                var dg = sender as DataGrid;
+                if (dg == null) return;
+                if (_resultsScrollViewer == null)
+                {
+                    _resultsScrollViewer = FindDescendant<ScrollViewer>(dg);
+                }
+                if (_resultsScrollViewer != null)
+                {
+                    // Route wheel to inner ScrollViewer and prevent bubbling
+                    e.Handled = true;
+                    int steps = Math.Max(1, Math.Abs(e.Delta) / 120);
+                    for (int i = 0; i < steps; i++)
+                    {
+                        if (e.Delta > 0) _resultsScrollViewer.LineUp(); else _resultsScrollViewer.LineDown();
+                    }
+                }
+            }
+            catch { }
+        }
 
         #region Save/Load View Handlers
 
@@ -653,13 +711,13 @@ namespace RecoTool.Windows
         {
             _reconciliationService = reconciliationService;
             _offlineFirstService = offlineFirstService;
-            
+
             // Synchroniser avec la country courante du service
             _currentCountryId = _offlineFirstService?.CurrentCountry?.CNT_Id;
             // Notifier que les référentiels sont disponibles pour les liaisons XAML
             OnPropertyChanged(nameof(AllUserFields));
             OnPropertyChanged(nameof(CurrentCountryObject));
-            
+
             InitializeFromServices();
 
             // Enable header context menu for column visibility
@@ -673,6 +731,7 @@ namespace RecoTool.Windows
                         dg.PreviewMouseRightButtonUp -= ResultsDataGrid_PreviewMouseRightButtonUp;
                         dg.PreviewMouseRightButtonUp += ResultsDataGrid_PreviewMouseRightButtonUp;
                         dg.CanUserSortColumns = true; // allow sorting on all columns (template ones have SortMemberPath in XAML)
+                        TryHookResultsGridScroll(dg);
                     }
                 }
                 catch { }
@@ -1028,13 +1087,25 @@ namespace RecoTool.Windows
                 UpdateStatusInfo("Chargement des données...");
                 var swTotal = Stopwatch.StartNew();
                 var swDb = Stopwatch.StartNew();
-                // Charger la vue combinée avec filtre backend éventuel
-                var viewList = await _reconciliationService.GetReconciliationViewAsync(_currentCountryId, _backendFilterSql);
-                swDb.Stop();
+                List<ReconciliationViewData> viewList;
+                bool usedPreloaded = false;
+                if (_preloadedAllData != null)
+                {
+                    // Utiliser les données préchargées (ne pas toucher au service)
+                    viewList = _preloadedAllData.ToList();
+                    usedPreloaded = true;
+                    swDb.Stop();
+                }
+                else
+                {
+                    // Charger la vue combinée avec filtre backend éventuel
+                    viewList = await _reconciliationService.GetReconciliationViewAsync(_currentCountryId, _backendFilterSql);
+                    swDb.Stop();
+                }
                 int totalRows = viewList?.Count ?? 0;
 
                 // Stocker toutes les données pour le filtrage
-                _allViewData = viewList?.ToList() ?? new List<ReconciliationViewData>();
+                _allViewData = viewList ?? new List<ReconciliationViewData>();
 
                 // Appliquer les filtres courants (ex: compte/Status) si déjà définis par la page parente
                 var swFilter = Stopwatch.StartNew();
@@ -1047,7 +1118,7 @@ namespace RecoTool.Windows
                 {
                     LogPerf(
                         "LoadReconciliationData",
-                        $"country={_currentCountryId} | backendFilterLen={( _backendFilterSql?.Length ?? 0)} | dbMs={swDb.ElapsedMilliseconds} | filterMs={swFilter.ElapsedMilliseconds} | totalMs={swTotal.ElapsedMilliseconds} | totalRows={totalRows} | displayed={ViewData?.Count ?? 0}"
+                        $"country={_currentCountryId} | backendFilterLen={( _backendFilterSql?.Length ?? 0)} | source={(usedPreloaded ? "preloaded" : "service")} | dbMs={swDb.ElapsedMilliseconds} | filterMs={swFilter.ElapsedMilliseconds} | totalMs={swTotal.ElapsedMilliseconds} | totalRows={totalRows} | displayed={ViewData?.Count ?? 0}"
                     );
                 }
                 catch { }
@@ -1061,6 +1132,19 @@ namespace RecoTool.Windows
             {
                 IsLoading = false;
             }
+        }
+
+        /// <summary>
+        /// Fournit des données préchargées par la page. Bypass le fetch service.
+        /// </summary>
+        public void InitializeWithPreloadedData(IReadOnlyList<ReconciliationViewData> allData, string backendFilterSql)
+        {
+            try
+            {
+                _preloadedAllData = allData ?? Array.Empty<ReconciliationViewData>();
+                _backendFilterSql = backendFilterSql; // garder la trace du filtre appliqué côté service
+            }
+            catch { }
         }
 
         /// <summary>
@@ -1170,6 +1254,9 @@ namespace RecoTool.Windows
             }
             catch { }
         }
+        
+        #endregion
+        
 
         private void CloseViewButton_Click(object sender, RoutedEventArgs e)
         {
@@ -1296,7 +1383,11 @@ namespace RecoTool.Windows
                 };
                 if (dlg.ShowDialog() != true) return;
 
-                var items = ViewData?.ToList() ?? new List<ReconciliationViewData>();
+                // Export all filtered rows (not only currently loaded page)
+                // Coalesce list sources first to avoid mixed-type '??' between List<> and ObservableCollection<>
+                var items = (_filteredData ?? _allViewData)?.ToList()
+                           ?? ViewData?.ToList()
+                           ?? new List<ReconciliationViewData>();
                 if (items.Count == 0)
                 {
                     ShowError("Aucune ligne à exporter.");
@@ -1338,6 +1429,47 @@ namespace RecoTool.Windows
             {
                 ShowError($"Erreur export: {ex.Message}");
             }
+        }
+
+        private void ResetFilter_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // Reset all bound filter properties via their setters to raise PropertyChanged and debounce
+                FilterAccountId = null;
+                FilterCurrency = null;
+                FilterCountry = null;
+                FilterFromDate = null;
+                FilterToDate = null;
+                FilterDeletedDate = null;
+                FilterMinAmount = null;
+                FilterMaxAmount = null;
+                FilterReconciliationNum = null;
+                FilterRawLabel = null;
+                FilterEventNum = null;
+                FilterDwGuaranteeId = null;
+                FilterDwCommissionId = null;
+                FilterStatus = null;
+
+                // String-backed combo filters
+                FilterGuaranteeType = null;
+                FilterTransactionType = null;
+                FilterGuaranteeStatus = null;
+                FilterCategory = null;
+                FilterAction = null;
+                FilterKPI = null;
+                FilterIncidentType = null;
+
+                // ID-backed selections
+                FilterActionId = null;
+                FilterKpiId = null;
+                FilterIncidentTypeId = null;
+
+                // Apply immediately and update the title/status
+                ApplyFilters();
+                UpdateViewTitle();
+            }
+            catch { }
         }
 
         private void ExportToCsv(string filePath, List<string> headers, List<DataGridColumn> columns, List<ReconciliationViewData> items)
@@ -1463,8 +1595,6 @@ namespace RecoTool.Windows
             }
         }
 
-        #endregion
-
         #region Bound Filter Properties
 
         public string FilterAccountId { get => _filterAccountId; set { _filterAccountId = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterAccountId)); ScheduleApplyFiltersDebounced(); } }
@@ -1472,6 +1602,8 @@ namespace RecoTool.Windows
         public string FilterCountry { get => _filterCountry; set { _filterCountry = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterCountry)); ScheduleApplyFiltersDebounced(); } }
         public DateTime? FilterFromDate { get => _filterFromDate; set { _filterFromDate = value; OnPropertyChanged(nameof(FilterFromDate)); ScheduleApplyFiltersDebounced(); } }
         public DateTime? FilterToDate { get => _filterToDate; set { _filterToDate = value; OnPropertyChanged(nameof(FilterToDate)); ScheduleApplyFiltersDebounced(); } }
+        private DateTime? _filterDeletedDate;
+        public DateTime? FilterDeletedDate { get => _filterDeletedDate; set { _filterDeletedDate = value; OnPropertyChanged(nameof(FilterDeletedDate)); ScheduleApplyFiltersDebounced(); } }
         public decimal? FilterMinAmount { get => _filterMinAmount; set { _filterMinAmount = value; OnPropertyChanged(nameof(FilterMinAmount)); ScheduleApplyFiltersDebounced(); } }
         public decimal? FilterMaxAmount { get => _filterMaxAmount; set { _filterMaxAmount = value; OnPropertyChanged(nameof(FilterMaxAmount)); ScheduleApplyFiltersDebounced(); } }
         public string FilterReconciliationNum { get => _filterReconciliationNum; set { _filterReconciliationNum = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterReconciliationNum)); ScheduleApplyFiltersDebounced(); } }
@@ -1751,16 +1883,24 @@ namespace RecoTool.Windows
                 filtered = filtered.Where(x => x.DWINGS_CommissionID?.IndexOf(_filterDwCommissionId, StringComparison.OrdinalIgnoreCase) >= 0
                                             || x.COMMISSION_ID?.IndexOf(_filterDwCommissionId, StringComparison.OrdinalIgnoreCase) >= 0);
 
-            // Filtre Status Active/Deleted basé sur IsDeleted
+            // Filter by DeletedDate exact day if provided (Archived date)
+            if (FilterDeletedDate.HasValue)
+            {
+                var day = FilterDeletedDate.Value.Date;
+                var next = day.AddDays(1);
+                filtered = filtered.Where(a => a.DeleteDate.HasValue && a.DeleteDate.Value >= day && a.DeleteDate.Value < next);
+            }
+
+            // Status Live/Archived based on DeleteDate presence
             if (!string.IsNullOrEmpty(_filterStatus) && !string.Equals(_filterStatus, "All", StringComparison.OrdinalIgnoreCase))
             {
-                if (string.Equals(_filterStatus, "Active", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(_filterStatus, "Live", StringComparison.OrdinalIgnoreCase))
                 {
-                    filtered = filtered.Where(a => !a.IsDeleted);
+                    filtered = filtered.Where(a => !a.DeleteDate.HasValue);
                 }
-                else if (string.Equals(_filterStatus, "Deleted", StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(_filterStatus, "Archived", StringComparison.OrdinalIgnoreCase))
                 {
-                    filtered = filtered.Where(a => a.IsDeleted);
+                    filtered = filtered.Where(a => a.DeleteDate.HasValue);
                 }
             }
 
@@ -1772,14 +1912,99 @@ namespace RecoTool.Windows
             if (_filterIncidentTypeId.HasValue)
                 filtered = filtered.Where(x => x.IncidentType == _filterIncidentTypeId);
 
-            // Mettre à jour l'affichage avec les données filtrées
+            // Mettre à jour l'affichage avec pagination (100 premières lignes), mais totaux sur tout le jeu filtré
             var filteredList = filtered.ToList();
-            ViewData = new ObservableCollection<ReconciliationViewData>(filteredList);
-            UpdateKpis(filteredList);
-            UpdateStatusInfo($"{ViewData.Count} / {_allViewData.Count} lignes affichées");
-            LogAction("ApplyFilters", $"{ViewData.Count} / {_allViewData.Count} displayed | Account={_filterAccountId ?? "All"} | Status={_filterStatus ?? "All"}");
+            _filteredData = filteredList;
+            _loadedCount = Math.Min(InitialPageSize, _filteredData.Count);
+            ViewData = new ObservableCollection<ReconciliationViewData>(_filteredData.Take(_loadedCount));
+            UpdateKpis(_filteredData); // totaux sur l'ensemble
+            UpdateStatusInfo($"{ViewData.Count} / {_filteredData.Count} lignes affichées");
+            LogAction("ApplyFilters", $"{ViewData.Count} / {_filteredData.Count} displayed | Account={_filterAccountId ?? "All"} | Status={_filterStatus ?? "All"}");
             sw.Stop();
             try { LogPerf("ApplyFilters", $"source={_allViewData.Count} | displayed={ViewData.Count} | ms={sw.ElapsedMilliseconds}"); } catch { }
+        }
+
+        // Raccorde le ScrollViewer du DataGrid pour le chargement incrémental
+        private void TryHookResultsGridScroll(DataGrid dg)
+        {
+            try
+            {
+                if (_scrollHooked || dg == null) return;
+                _resultsScrollViewer = FindDescendant<ScrollViewer>(dg);
+                if (_resultsScrollViewer != null)
+                {
+                    _resultsScrollViewer.ScrollChanged -= ResultsScrollViewer_ScrollChanged;
+                    _resultsScrollViewer.ScrollChanged += ResultsScrollViewer_ScrollChanged;
+                    _scrollHooked = true;
+                }
+            }
+            catch { }
+        }
+
+        private void ResultsScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            try
+            {
+                var sw = Stopwatch.StartNew();
+                if (_filteredData == null || _filteredData.Count == 0) return;
+                var sv = sender as ScrollViewer;
+                if (sv == null) return;
+                // Show footer button when user reaches bottom (android-like behavior)
+                bool atBottom = sv.ScrollableHeight > 0 && sv.VerticalOffset >= (sv.ScrollableHeight * 0.9);
+                int remaining = Math.Max(0, _filteredData.Count - _loadedCount);
+                var btn = this.FindName("LoadMoreFooterButton") as Button;
+                if (btn != null)
+                {
+                    btn.Visibility = (atBottom && remaining > 0) ? Visibility.Visible : Visibility.Collapsed;
+                }
+
+                sw.Stop();
+                // Throttle perf log to once every ScrollLogThrottleMs
+                var now = DateTime.Now;
+                if ((now - _lastScrollPerfLog).TotalMilliseconds >= ScrollLogThrottleMs)
+                {
+                    try
+                    {
+                        LogPerf("GridScroll",
+                            $"offset={sv.VerticalOffset:0.0}/{sv.ScrollableHeight:0.0} | deltaV={e.VerticalChange:0.0} | viewport={sv.ViewportHeight:0.0} | itemsLoaded={_loadedCount}/{_filteredData.Count} | ms={sw.ElapsedMilliseconds}");
+                    }
+                    catch { }
+                    _lastScrollPerfLog = now;
+                }
+            }
+            catch { }
+        }
+
+        private void LoadMorePage()
+        {
+            if (_isLoadingMore) return;
+            _isLoadingMore = true;
+            try
+            {
+                if (_filteredData == null) return;
+                int remaining = _filteredData.Count - _loadedCount;
+                if (remaining <= 0) return;
+                int take = Math.Min(InitialPageSize, remaining);
+                foreach (var item in _filteredData.Skip(_loadedCount).Take(take))
+                {
+                    ViewData.Add(item);
+                }
+                _loadedCount += take;
+                UpdateStatusInfo($"{ViewData.Count} / {_filteredData.Count} lignes affichées");
+                // After load, hide footer if no more data, otherwise keep visible when still at bottom
+                var btn = this.FindName("LoadMoreFooterButton") as Button;
+                if (btn != null)
+                {
+                    int newRemaining = _filteredData.Count - _loadedCount;
+                    if (newRemaining <= 0)
+                        btn.Visibility = Visibility.Collapsed;
+                }
+            }
+            catch { }
+            finally
+            {
+                _isLoadingMore = false;
+            }
         }
 
         private void UpdateKpis(IEnumerable<ReconciliationViewData> data)
@@ -1933,20 +2158,6 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 ShowError($"Erreur lors de l'ouverture du détail: {ex.Message}");
-            }
-        }
-
-        
-
-        private void ResetFilter_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                ClearFilters();
-            }
-            catch (Exception ex)
-            {
-                ShowError($"Erreur reset filtres: {ex.Message}");
             }
         }
 
@@ -2136,6 +2347,21 @@ namespace RecoTool.Windows
             if (comboBox != null) comboBox.SelectedIndex = -1;
         }
 
+        // Helper: find a descendant of a given type in the visual tree
+        private static T FindDescendant<T>(DependencyObject root) where T : DependencyObject
+        {
+            if (root == null) return null;
+            int count = VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                var child = VisualTreeHelper.GetChild(root, i);
+                if (child is T t) return t;
+                var found = FindDescendant<T>(child);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
         /// <summary>
         /// Affiche un message d'erreur
         /// </summary>
@@ -2188,6 +2414,12 @@ namespace RecoTool.Windows
             if (FilterMaxAmount.HasValue) parts.Add($"SignedAmount <= {FilterMaxAmount.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
             if (FilterFromDate.HasValue) parts.Add($"Operation_Date >= {DateLit(FilterFromDate.Value)}");
             if (FilterToDate.HasValue) parts.Add($"Operation_Date <= {DateLit(FilterToDate.Value)}");
+            if (FilterDeletedDate.HasValue)
+            {
+                var d = FilterDeletedDate.Value.Date;
+                var next = d.AddDays(1);
+                parts.Add($"a.DeleteDate >= {DateLit(d)} AND a.DeleteDate < {DateLit(next)}");
+            }
             if (!string.IsNullOrWhiteSpace(FilterReconciliationNum)) parts.Add($"Reconciliation_Num LIKE '%{Esc(FilterReconciliationNum)}%'");
             if (!string.IsNullOrWhiteSpace(FilterRawLabel)) parts.Add($"RawLabel LIKE '%{Esc(FilterRawLabel)}%'");
             if (!string.IsNullOrWhiteSpace(FilterEventNum)) parts.Add($"Event_Num LIKE '%{Esc(FilterEventNum)}%'");
@@ -2211,6 +2443,10 @@ namespace RecoTool.Windows
                     parts.Add("((DWINGS_GuaranteeID Is Not Null AND DWINGS_GuaranteeID <> '') OR (DWINGS_CommissionID Is Not Null AND DWINGS_CommissionID <> ''))");
                 else if (string.Equals(_filterStatus, "Unmatched", StringComparison.OrdinalIgnoreCase))
                     parts.Add("((DWINGS_GuaranteeID Is Null OR DWINGS_GuaranteeID = '') AND (DWINGS_CommissionID Is Null OR DWINGS_CommissionID = ''))");
+                if (string.Equals(_filterStatus, "Live", StringComparison.OrdinalIgnoreCase))
+                    parts.Add("a.DeleteDate IS NULL");
+                else if (string.Equals(_filterStatus, "Archived", StringComparison.OrdinalIgnoreCase))
+                    parts.Add("a.DeleteDate IS NOT NULL");
             }
             return parts.Count == 0 ? string.Empty : ("WHERE " + string.Join(" AND ", parts));
         }
@@ -2265,6 +2501,28 @@ namespace RecoTool.Windows
             _filterStatus = hasMatched ? "Matched" : hasUnmatched ? "Unmatched" : _filterStatus;
             FilterDwGuaranteeId = GetString(@"DWINGS_GuaranteeID.*LIKE\s+'%([^']*)%'");
             FilterDwCommissionId = GetString(@"DWINGS_CommissionID.*LIKE\s+'%([^']*)%'");
+
+            // Restore DeletedDate single-day filter if present (expects pattern a.DeleteDate >= #YYYY-MM-DD# AND a.DeleteDate < #YYYY-MM-DD#)
+            try
+            {
+                var m1 = Regex.Match(s, @"a\.DeleteDate\s*>=\s*#([0-9]{4}-[0-9]{2}-[0-9]{2})#", RegexOptions.IgnoreCase);
+                if (m1.Success)
+                {
+                    if (DateTime.TryParse(m1.Groups[1].Value, out var dd))
+                        FilterDeletedDate = dd.Date;
+                }
+            }
+            catch { }
+
+            // Restore Live/Archived from DeleteDate presence conditions
+            try
+            {
+                if (Regex.IsMatch(s, @"a\.DeleteDate\s+is\s+null", RegexOptions.IgnoreCase))
+                    _filterStatus = "Live";
+                else if (Regex.IsMatch(s, @"a\.DeleteDate\s+is\s+not\s+null", RegexOptions.IgnoreCase))
+                    _filterStatus = "Archived";
+            }
+            catch { }
         }
 
         // Save current filters to DB (T_Ref_User_Filter)
@@ -2512,41 +2770,73 @@ namespace RecoTool.Windows
     // Converter: returns a row background Brush based on Action's USR_Color
     public class ActionColorConverter : IMultiValueConverter
     {
+        // Reusable static brushes (frozen) to avoid allocations
+        private static readonly Brush LightRed = new SolidColorBrush(Color.FromArgb(40, 255, 0, 0));
+        private static readonly Brush LightGreen = new SolidColorBrush(Color.FromArgb(40, 0, 128, 0));
+        private static readonly Brush LightYellow = new SolidColorBrush(Color.FromArgb(60, 255, 255, 0));
+        private static readonly Brush LightBlue = new SolidColorBrush(Color.FromArgb(40, 0, 0, 255));
+        private static readonly Brush Transparent = Brushes.Transparent;
+
+        // Cache: actionId -> brush, rebuilt when AllUserFields reference changes
+        private IReadOnlyList<UserField> _lastAllRef;
+        private Dictionary<int, Brush> _cacheByActionId = new Dictionary<int, Brush>();
+
         public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
         {
             try
             {
-                if (values == null || values.Length < 2) return Brushes.Transparent;
+                if (values == null || values.Length < 2) return Transparent;
                 int? actionId = null;
                 if (values[0] is int i0) actionId = i0;
                 else if (values[0] is int?) actionId = (int?)values[0];
                 else if (values[0] != null && int.TryParse(values[0].ToString(), out var parsed)) actionId = parsed;
 
                 var all = values[1] as IReadOnlyList<UserField>;
-                if (actionId == null || all == null) return Brushes.Transparent;
+                if (actionId == null || all == null) return Transparent;
 
-                var uf = all.FirstOrDefault(u => u.USR_ID == actionId.Value);
-                var color = uf?.USR_Color?.Trim()?.ToUpperInvariant();
-                if (string.IsNullOrEmpty(color)) return Brushes.Transparent;
-
-                switch (color)
+                // Rebuild cache only when the source list instance changes (cheap reference check)
+                if (!ReferenceEquals(all, _lastAllRef))
                 {
-                    case "RED": return new SolidColorBrush(Color.FromArgb(40, 255, 0, 0));      // light red
-                    case "GREEN": return new SolidColorBrush(Color.FromArgb(40, 0, 128, 0));   // light green
-                    case "YELLOW": return new SolidColorBrush(Color.FromArgb(60, 255, 255, 0)); // light yellow
-                    case "BLUE": return new SolidColorBrush(Color.FromArgb(40, 0, 0, 255));    // light blue
-                    default:
-                        try
+                    _cacheByActionId.Clear();
+                    // Precompute brushes for each action id
+                    foreach (var uf in all)
+                    {
+                        if (!_cacheByActionId.ContainsKey(uf.USR_ID))
                         {
-                            // Try parse known color names, fallback transparent
-                            var conv = new BrushConverter();
-                            var brush = conv.ConvertFromString(color) as Brush;
-                            return brush ?? Brushes.Transparent;
+                            var brush = ToBrush(uf?.USR_Color);
+                            _cacheByActionId[uf.USR_ID] = brush;
                         }
-                        catch { return Brushes.Transparent; }
+                    }
+                    _lastAllRef = all;
                 }
+
+                if (_cacheByActionId.TryGetValue(actionId.Value, out var cached))
+                    return cached ?? Transparent;
+
+                return Transparent;
             }
-            catch { return Brushes.Transparent; }
+            catch { return Transparent; }
+        }
+
+        private static Brush ToBrush(string colorRaw)
+        {
+            var color = colorRaw?.Trim()?.ToUpperInvariant();
+            if (string.IsNullOrEmpty(color)) return Transparent;
+            switch (color)
+            {
+                case "RED": return LightRed;
+                case "GREEN": return LightGreen;
+                case "YELLOW": return LightYellow;
+                case "BLUE": return LightBlue;
+                default:
+                    try
+                    {
+                        var conv = new BrushConverter();
+                        var b = conv.ConvertFromString(color) as Brush;
+                        return b ?? Transparent;
+                    }
+                    catch { return Transparent; }
+            }
         }
 
         public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
@@ -2554,6 +2844,7 @@ namespace RecoTool.Windows
             throw new NotSupportedException();
         }
     }
+
     #endregion
 
     // Converters for UserField ComboBoxes

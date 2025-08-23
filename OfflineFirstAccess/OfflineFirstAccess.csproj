@@ -48,11 +48,9 @@
     <Compile Include="Conflicts\ManualConflictResolver.cs" />
     <Compile Include="Data\AccessDataProvider.cs" />
     <Compile Include="Data\IDataProvider.cs" />
-    <Compile Include="Helpers\ConfigConstants.cs" />
     <Compile Include="Helpers\DatabaseTemplateBuilder.cs" />
     <Compile Include="Helpers\DatabaseTemplateFactory.cs" />
     <Compile Include="Helpers\DatabaseTemplateGenerator.cs" />
-    <Compile Include="Helpers\EntityConverter.cs" />
     <Compile Include="Helpers\LogManager.cs" />
     <Compile Include="Helpers\RetryHelper.cs" />
     <Compile Include="Models\ChangeLogEntry.cs" />

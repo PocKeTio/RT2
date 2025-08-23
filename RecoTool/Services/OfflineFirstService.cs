@@ -2317,6 +2317,35 @@ namespace RecoTool.Services
         }
         
         /// <summary>
+        /// À exécuter sur les autres clients après la publication réseau d'un import.
+        /// 1) Pousse les modifications locales en attente (si présentes) vers le réseau sous verrou global.
+        /// 2) Rafraîchit la base locale à partir du réseau (copie atomique).
+        /// Retourne le nombre de changements locaux poussés.
+        /// </summary>
+        public async Task<int> PostPublishReconcileAsync(string countryId, System.Threading.CancellationToken token = default)
+        {
+            if (string.IsNullOrWhiteSpace(countryId))
+                throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            // 1) Pousser les pending locaux (acquiert un verrou global si nécessaire)
+            int pushed = 0;
+            try
+            {
+                pushed = await PushPendingChangesToNetworkAsync(countryId, assumeLockHeld: false, token: token);
+            }
+            catch (Exception ex)
+            {
+                // Journaliser mais continuer: on veut tout de même réaligner le local sur le réseau
+                System.Diagnostics.Debug.WriteLine($"PostPublishReconcile: erreur lors du push des pending pour {countryId}: {ex.Message}");
+            }
+
+            // 2) Rafraîchir la base locale à partir du réseau
+            await CopyNetworkToLocalAsync(countryId);
+
+            return pushed;
+        }
+        
+        /// <summary>
         /// Construit la chaîne de connexion vers la base réseau d'un pays donné.
         /// </summary>
         private string GetNetworkCountryConnectionString(string countryId)
@@ -2836,6 +2865,34 @@ namespace RecoTool.Services
 
             try
             {
+                // Fast-path: si la base locale vient d'être rafraîchie depuis le réseau (copie identique)
+                // et qu'aucun changement en attente n'est présent dans le ChangeLog, on évite une synchro complète.
+                try
+                {
+                    var localPath = _syncConfig?.LocalDatabasePath;
+                    var remotePath = _syncConfig?.RemoteDatabasePath;
+                    if (!string.IsNullOrWhiteSpace(localPath) && !string.IsNullOrWhiteSpace(remotePath)
+                        && File.Exists(localPath) && File.Exists(remotePath))
+                    {
+                        var lfi = new FileInfo(localPath);
+                        var rfi = new FileInfo(remotePath);
+                        bool filesLikelyIdentical = lfi.Length == rfi.Length && lfi.LastWriteTimeUtc == rfi.LastWriteTimeUtc;
+
+                        if (filesLikelyIdentical)
+                        {
+                            // Vérifier les changements en attente dans la base de lock
+                            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId));
+                            var unsynced = await tracker.GetUnsyncedChangesAsync();
+                            if (unsynced == null || !unsynced.Any())
+                            {
+                                onProgress?.Invoke(100, "Bases identiques - aucune synchronisation nécessaire.");
+                                return new SyncResult { Success = true, Message = "No-op (identique)" };
+                            }
+                        }
+                    }
+                }
+                catch { /* best-effort, en cas d'erreur on continue avec la synchro normale */ }
+
                 onProgress?.Invoke(0, "Initialisation de la synchronisation...");
                 await _syncService.InitializeAsync(_syncConfig);
 

@@ -266,6 +266,17 @@
                                         <ColumnDefinition Width="120"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Deleted Date:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <DatePicker SelectedDate="{Binding FilterDeletedDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Currency:" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
                                         <ComboBox x:Name="CurrencyComboBox" Margin="5,0" BorderThickness="0" Background="Transparent" Style="{StaticResource ModernComboBoxStyle}"
@@ -481,8 +492,6 @@
                                     </ComboBox>
                                 </Grid>
 
-
-
                                 <Grid Margin="0,8">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="120"/>
@@ -495,8 +504,6 @@
                                 </Grid>
 
                             </StackPanel>
-
-
                         </GroupBox>
 
                     </Grid>
@@ -584,10 +591,11 @@
             </Border>
 
             <!-- Data Grid Section -->
-            <Border Grid.Row="2" Margin="15" Background="White" BorderBrush="#DDDDDD" BorderThickness="1" CornerRadius="8" Effect="{StaticResource LightShadow}">
+            <Border Grid.Row="2" Margin="15" Background="White" BorderBrush="#DDDDDD" BorderThickness="1" CornerRadius="8">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <!-- Results Grid -->
@@ -595,19 +603,30 @@
                               AutoGenerateColumns="False"
                               CanUserAddRows="False"
                               IsReadOnly="False"
+                              CanUserSortColumns="True"
                               SelectionMode="Extended"
                               ItemsSource="{Binding ViewData, RelativeSource={RelativeSource AncestorType=UserControl}}"
                               Margin="0"
+                              MaxHeight="400"
                               SelectionChanged="ResultsDataGrid_SelectionChanged"
                               MouseDoubleClick="ResultsDataGrid_MouseDoubleClick"
                               CellEditEnding="ResultsDataGrid_CellEditEnding"
                               CurrentCellChanged="ResultsDataGrid_CurrentCellChanged"
                               EnableRowVirtualization="True"
                               EnableColumnVirtualization="True"
+                              VirtualizingPanel.IsVirtualizing="True"
+                              VirtualizingPanel.VirtualizationMode="Recycling"
+                              VirtualizingPanel.CacheLength="1,1"
+                              VirtualizingPanel.ScrollUnit="Item"
                               ScrollViewer.CanContentScroll="True"
                               ScrollViewer.IsDeferredScrollingEnabled="False"
+                              ScrollViewer.VerticalScrollBarVisibility="Visible"
+                              ScrollViewer.HorizontalScrollBarVisibility="Visible"
+                              PreviewMouseWheel="ResultsDataGrid_PreviewMouseWheel"
+                              ScrollViewer.PanningMode="VerticalOnly"
+                              Loaded="ResultsDataGrid_Loaded"
                               AlternationCount="0"
-                              GridLinesVisibility="Vertical"
+                              GridLinesVisibility="None"
                               RowHeight="26"
                               ColumnHeaderHeight="28">
                         <DataGrid.ColumnHeaderStyle>
@@ -833,6 +852,17 @@
                             <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120"/>
                         </DataGrid.Columns>
                     </DataGrid>
+
+                    <!-- Footer load more button (shown when scrolled to bottom) -->
+                    <Button x:Name="LoadMoreFooterButton"
+                            Grid.Row="1"
+                            Content="Charger plus de données"
+                            Margin="8"
+                            Padding="10,6"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Visibility="Collapsed"
+                            Click="LoadMoreButton_Click"/>
                 </Grid>
             </Border>
         </Grid>

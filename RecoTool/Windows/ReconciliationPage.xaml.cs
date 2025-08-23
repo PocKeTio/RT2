@@ -11,6 +11,7 @@ using System.Windows.Input;
 using RecoTool.Models;
 using RecoTool.Services;
 using System.Windows.Threading;
+using System.Windows.Controls.Primitives;
 
 namespace RecoTool.Windows
 {
@@ -26,9 +27,7 @@ namespace RecoTool.Windows
         private readonly OfflineFirstService _offlineFirstService;
         private string _currentCountryId;
         private List<Country> _availableCountries;
-        private ObservableCollection<ReconciliationViewData> _reconciliationData;
         private ObservableCollection<UserFilter> _savedFilters;
-        private CollectionViewSource _viewSource;
         private bool _isLoading;
         private string _currentFilter;
         private string _currentFilterName;
@@ -51,25 +50,11 @@ namespace RecoTool.Windows
         private bool _isLoadingViews; // Guard for SavedViews repopulation
         private bool _skipReloadSavedLists; // Prevent reloading saved filters/views during data refresh
 
-        public ObservableCollection<ReconciliationViewData> ReconciliationData
-        {
-            get => _reconciliationData;
-            set
-            {
-                _reconciliationData = value;
-                OnPropertyChanged(nameof(ReconciliationData));
-            }
-        }
-
-        
-
         /// <summary>
         /// Résout l'ID de compte réel à partir d'un libellé d'affichage (ex: "Pivot (ID)")
         /// </summary>
         private string ResolveSelectedAccountIdForFilter(string display)
         {
-            if (string.IsNullOrWhiteSpace(display)) return display;
-
             // Si format "Label (ID)", extraire l'ID entre parenthèses
             var open = display.LastIndexOf('(');
             var close = display.LastIndexOf(')');
@@ -168,7 +153,7 @@ namespace RecoTool.Windows
                 // Conserver la valeur d'affichage (ex: "Pivot (ID)") et résoudre l'ID côté prédicat de filtre
                 _selectedAccount = value;
                 OnPropertyChanged(nameof(SelectedAccount));
-                _viewSource?.View?.Refresh();
+                // Legacy page-level DataGrid removed; views handle their own filtering
             }
         }
 
@@ -201,7 +186,7 @@ namespace RecoTool.Windows
             {
                 _selectedStatus = value;
                 OnPropertyChanged(nameof(SelectedStatus));
-                _viewSource?.View?.Refresh();
+                // Legacy page-level DataGrid removed; views handle their own filtering
             }
         }
 
@@ -263,6 +248,46 @@ namespace RecoTool.Windows
 
         #endregion
 
+        #region UI Busy / Wait Cursor
+
+        private sealed class DisposableAction : IDisposable
+        {
+            private readonly Action _onDispose;
+            public DisposableAction(Action onDispose) { _onDispose = onDispose; }
+            public void Dispose() { try { _onDispose?.Invoke(); } catch { } }
+        }
+
+        private IDisposable BeginWaitCursor()
+        {
+            try
+            {
+                // Ensure on UI thread
+                if (!Dispatcher.CheckAccess())
+                {
+                    Dispatcher.Invoke(() => Mouse.OverrideCursor = Cursors.Wait);
+                }
+                else
+                {
+                    Mouse.OverrideCursor = Cursors.Wait;
+                }
+            }
+            catch { }
+
+            return new DisposableAction(() =>
+            {
+                try
+                {
+                    if (!Dispatcher.CheckAccess())
+                        Dispatcher.Invoke(() => Mouse.OverrideCursor = null);
+                    else
+                        Mouse.OverrideCursor = null;
+                }
+                catch { }
+            });
+        }
+
+        #endregion
+
         #region Initialization
 
         /// <summary>
@@ -270,50 +295,18 @@ namespace RecoTool.Windows
         /// </summary>
         private void InitializeData()
         {
-            ReconciliationData = new ObservableCollection<ReconciliationViewData>();
             SavedFilters = new ObservableCollection<UserFilter>();
             SavedViews = new ObservableCollection<UserViewPreset>();
             ViewTypes = new ObservableCollection<string>(new[] { "Embedded (Vertical)", "Popup" });
             SelectedViewType = ViewTypes.FirstOrDefault();
             Accounts = new ObservableCollection<string>();
-            Statuses = new ObservableCollection<string>(new[] { "All", "Active", "Deleted" });
+            Statuses = new ObservableCollection<string>(new[] { "All", "Live", "Archived" });
             SelectedStatus = Statuses.FirstOrDefault();
             
             
-            // Configuration de la vue avec tri et filtrage
-            _viewSource = new CollectionViewSource { Source = ReconciliationData };
-            _viewSource.View.Filter = FilterReconciliationItems;
-            
-            // Configuration du DataGrid si présent
-            SetupDataGrid();
         }
 
-        /// <summary>
-        /// Configure le DataGrid principal
-        /// </summary>
-        private void SetupDataGrid()
-        {
-            try
-            {
-                var dataGrid = FindName("ReconciliationDataGrid") as DataGrid;
-                if (dataGrid != null)
-                {
-                    dataGrid.ItemsSource = _viewSource.View;
-                    dataGrid.AutoGenerateColumns = false;
-                    dataGrid.CanUserAddRows = false;
-                    dataGrid.CanUserDeleteRows = false;
-                    dataGrid.SelectionMode = DataGridSelectionMode.Extended;
-                    
-                    // Événements
-                    dataGrid.SelectionChanged += DataGrid_SelectionChanged;
-                    dataGrid.CellEditEnding += DataGrid_CellEditEnding;
-                }
-            }
-            catch (Exception ex)
-            {
-                ShowError($"Erreur lors de la configuration du DataGrid: {ex.Message}");
-            }
-        }
+        
 
         #endregion
 
@@ -326,6 +319,7 @@ namespace RecoTool.Windows
         {
             try
             {
+                using var _ = BeginWaitCursor();
                 if (_offlineFirstService != null)
                 {
                     var countries = await _offlineFirstService.GetCountries();
@@ -353,6 +347,7 @@ namespace RecoTool.Windows
         {
             try
             {
+                using var _ = BeginWaitCursor();
                 IsLoading = true;
                 // Toujours charger/rafraîchir les filtres/vues sauf si la recharge est déclenchée par une sélection
                 if (!_skipReloadSavedLists)
@@ -360,25 +355,8 @@ namespace RecoTool.Windows
                     await LoadSavedFiltersAsync();
                     await LoadSavedViewsAsync();
                 }
-
-                // Si les données ne peuvent pas être chargées (pas de pays ou pas de service), s'arrêter après les filtres
-                if (_reconciliationService == null || string.IsNullOrEmpty(_currentCountryId))
-                    return;
-
-                // Chargement des données de réconciliation (dépend du pays)
-                var data = await _reconciliationService.GetReconciliationViewAsync(_currentCountryId, _currentFilter);
-
-                ReconciliationData.Clear();
-                foreach (var item in data)
-                {
-                    ReconciliationData.Add(item);
-                }
-
-                // Mettre à jour les filtres de haut de page à partir des données
+                // Mettre à jour les filtres de haut de page à partir du référentiel pays
                 UpdateTopFiltersFromData();
-                
-                // Rafraîchir la vue
-                _viewSource?.View?.Refresh();
             }
             catch (Exception ex)
             {
@@ -459,6 +437,7 @@ namespace RecoTool.Windows
 
             try
             {
+                using var _ = BeginWaitCursor();
                 RefreshStarted?.Invoke(this, EventArgs.Empty);
                 // Tenter une synchro réseau avant rechargement des données (si pas de verrou)
                 await TrySynchronizeIfSafeAsync();
@@ -473,35 +452,7 @@ namespace RecoTool.Windows
         #endregion
 
         #region Filtering and Searching
-
-        /// <summary>
-        /// Filtre les éléments de réconciliation
-        /// </summary>
-        private bool FilterReconciliationItems(object item)
-        {
-            if (item is ReconciliationViewData row)
-            {
-                // Filtre compte (sélection obligatoire, pas de "All")
-                if (!string.IsNullOrEmpty(SelectedAccount))
-                {
-                    var selectedId = ResolveSelectedAccountIdForFilter(SelectedAccount);
-                    if (!string.Equals(row.Account_ID, selectedId, StringComparison.OrdinalIgnoreCase))
-                        return false;
-                }
-
-                // Filtre statut (Active/Deleted) basé sur IsDeleted
-                if (!string.IsNullOrEmpty(SelectedStatus) && !string.Equals(SelectedStatus, "All", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (string.Equals(SelectedStatus, "Active", StringComparison.OrdinalIgnoreCase) && row.IsDeleted)
-                        return false;
-                    if (string.Equals(SelectedStatus, "Deleted", StringComparison.OrdinalIgnoreCase) && !row.IsDeleted)
-                        return false;
-                }
-
-                return true;
-            }
-            return false;
-        }
+        // Legacy page-level filtering removed. Each ReconciliationView handles its own data/filtering.
 
         private void UpdateTopFiltersFromData()
         {
@@ -637,6 +588,7 @@ namespace RecoTool.Windows
         {
             try
             {
+                using var _ = BeginWaitCursor();
                 // S'assurer que le pays courant est bien défini côté service
                 if (_offlineFirstService != null)
                 {
@@ -689,55 +641,7 @@ namespace RecoTool.Windows
             catch { }
         }
 
-        /// <summary>
-        /// Gestion de la sélection dans le DataGrid
-        /// </summary>
-        private void DataGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            try
-            {
-                var dataGrid = sender as DataGrid;
-                var selectedItems = dataGrid?.SelectedItems?.Cast<ReconciliationViewData>().ToList();
-                
-                // Mettre à jour les boutons/actions selon la sélection
-                UpdateActionButtons(selectedItems?.Count ?? 0);
-            }
-            catch (Exception ex)
-            {
-                ShowError($"Erreur lors de la gestion de la sélection: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Gestion de la fin d'édition de cellule
-        /// </summary>
-        private async void DataGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
-        {
-            try
-            {
-                if (e.EditAction == DataGridEditAction.Commit && e.Row.Item is ReconciliationViewData item)
-                {
-                    // Sauvegarder les modifications
-                    var reconciliation = new Reconciliation
-                    {
-                        ID = item.ID, // legacy compatibility
-                        DWINGS_GuaranteeID = item.DWINGS_GuaranteeID,
-                        DWINGS_InvoiceID = item.DWINGS_InvoiceID,
-                        DWINGS_CommissionID = item.DWINGS_CommissionID,
-                        Action = item.Action,
-                        Comments = item.Comments,
-                        KPI = item.KPI,
-                        // ... autres propriétés
-                    };
-
-                    await _reconciliationService.SaveReconciliationAsync(reconciliation);
-                }
-            }
-            catch (Exception ex)
-            {
-                ShowError($"Erreur lors de la sauvegarde: {ex.Message}");
-            }
-        }
+        // Legacy DataGrid editing/selection handlers removed with page-level grid.
 
         /// <summary>
         /// Changement du filtre sauvegardé sélectionné
@@ -820,6 +724,7 @@ namespace RecoTool.Windows
         {
             try
             {
+                using var _ = BeginWaitCursor();
                 // Ouvrir la fenêtre de création de vue personnalisée
                 var addViewWindow = new AddViewWindow();
                 addViewWindow.Owner = Window.GetWindow(this);
@@ -968,15 +873,33 @@ namespace RecoTool.Windows
                         // Ensure UI-affecting ops are dispatched
                         await Dispatcher.InvokeAsync(async () =>
                         {
-                            await TrySynchronizeIfSafeAsync();
-                            await LoadDataAsync();
-                            _lastAutoSyncUtc = DateTime.UtcNow;
-                            try { ShowInfo(reason == "LockReleased" ? "Synchronisation terminée (fin du verrou global)" : "Synchronisation terminée (réseau rétabli)"); } catch { }
+                            if (string.Equals(reason, "LockReleased", StringComparison.OrdinalIgnoreCase))
+                            {
+                                // Après fin de verrou global (publication réseau d'un import), effectuer une réconciliation post-publication
+                                await ReconcileAfterImportAsync();
+                                _lastAutoSyncUtc = DateTime.UtcNow;
+                                try { ShowInfo("Réconciliation terminée après publication (fin du verrou global)"); } catch { }
+                            }
+                            else
+                            {
+                                // Comportement existant pour les autres raisons (ex: réseau rétabli)
+                                await TrySynchronizeIfSafeAsync();
+                                await LoadDataAsync();
+                                _lastAutoSyncUtc = DateTime.UtcNow;
+                                try { ShowInfo("Synchronisation terminée (réseau rétabli)"); } catch { }
+                            }
                         });
                     }
                     catch
                     {
-                        try { await Dispatcher.InvokeAsync(() => ShowWarning(reason == "LockReleased" ? "Synchronisation échouée après libération du verrou" : "Synchronisation échouée au rétablissement du réseau")); } catch { }
+                        try
+                        {
+                            await Dispatcher.InvokeAsync(() =>
+                                ShowWarning(string.Equals(reason, "LockReleased", StringComparison.OrdinalIgnoreCase)
+                                    ? "Réconciliation échouée après libération du verrou"
+                                    : "Synchronisation échouée au rétablissement du réseau"));
+                        }
+                        catch { }
                     }
                     finally { _isAutoSyncRunning = false; }
                 };
@@ -1028,6 +951,25 @@ namespace RecoTool.Windows
             catch
             {
                 // Ignorer les erreurs de synchro silencieusement ici; l'utilisateur peut relancer via Refresh
+            }
+        }
+
+        /// <summary>
+        /// Effectue la réconciliation post-publication après un import Ambre: pousse les pending locaux puis recharge la base locale depuis le réseau.
+        /// </summary>
+        private async Task ReconcileAfterImportAsync()
+        {
+            if (_offlineFirstService == null || string.IsNullOrEmpty(_offlineFirstService.CurrentCountryId)) return;
+            try
+            {
+                // Empêcher l'interaction pendant l'opération
+                IsLoading = true;
+                await _offlineFirstService.PostPublishReconcileAsync(_offlineFirstService.CurrentCountryId);
+                await LoadDataAsync();
+            }
+            finally
+            {
+                IsLoading = false;
             }
         }
 
@@ -1159,30 +1101,9 @@ namespace RecoTool.Windows
             // Créer la vue et l'attacher aux services existants
             var view = new ReconciliationView(_reconciliationService, _offlineFirstService)
             {
-                Margin = new Thickness(15)
+                Margin = new Thickness(0)
             };
-            // Abonner la fermeture pour retirer la vue intégrée
-            view.CloseRequested += (s, e) =>
-            {
-                try
-                {
-                    var panel = FindName("ViewsPanel") as StackPanel;
-                    if (panel != null && panel.Children.Contains(view))
-                    {
-                        panel.Children.Remove(view);
-                        // Basculer visibilité si aucune vue
-                        if (panel.Children.Count == 0)
-                        {
-                            panel.Visibility = Visibility.Collapsed;
-                            var empty = FindName("EmptyStatePanel") as UIElement;
-                            var floatBtn = FindName("FloatingAddButton") as UIElement;
-                            if (empty != null) empty.Visibility = Visibility.Visible;
-                            if (floatBtn != null) floatBtn.Visibility = Visibility.Collapsed;
-                        }
-                    }
-                }
-                catch { }
-            };
+            // Ne pas créer de conteneur si on ouvre en popup (évite l'erreur de parent visuel)
 
             if (asPopup)
             {
@@ -1195,6 +1116,10 @@ namespace RecoTool.Windows
                     Height = 750,
                     WindowStartupLocation = WindowStartupLocation.CenterOwner
                 };
+                // Fermer la fenêtre quand la vue demande la fermeture
+                view.CloseRequested += (s, e) => { try { wnd.Close(); } catch { } };
+                // Aligner le pays avant toute action
+                try { view.SyncCountryFromService(); } catch { }
                 view.UpdateExternalFilters(SelectedAccount, SelectedStatus);
                 if (!string.IsNullOrWhiteSpace(_currentFilter))
                 {
@@ -1221,7 +1146,26 @@ namespace RecoTool.Windows
                         });
                     }
                 }
-                view.Refresh();
+                // Précharger les données sans bloquer l'UI puis injecter dans la vue
+                _ = System.Threading.Tasks.Task.Run(async () =>
+                {
+                    try
+                    {
+                        var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                        var backendSql = _currentFilter;
+                        var list = await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
+                        await view.Dispatcher.InvokeAsync(() =>
+                        {
+                            try
+                            {
+                                view.InitializeWithPreloadedData(list, backendSql);
+                                view.Refresh();
+                            }
+                            catch { }
+                        });
+                    }
+                    catch { }
+                });
                 wnd.Show();
                 return;
             }
@@ -1235,9 +1179,36 @@ namespace RecoTool.Windows
             view.HorizontalAlignment = HorizontalAlignment.Stretch;
             view.VerticalAlignment = VerticalAlignment.Stretch;
             view.Width = double.NaN; // Auto width to stretch
-            panel.Children.Add(view);
+            // Créer un conteneur redimensionnable pour la vue (hauteur ajustable depuis le bas)
+            var container = CreateResizableContainer(view);
+            panel.Children.Add(container);
 
-            // Synchroniser l'affichage des filtres et déclencher le chargement
+            // Abonner la fermeture pour retirer la vue intégrée
+            view.CloseRequested += (s, e) =>
+            {
+                try
+                {
+                    var p = FindName("ViewsPanel") as StackPanel;
+                    if (p != null && p.Children.Contains(container))
+                    {
+                        p.Children.Remove(container);
+                        // Basculer visibilité si aucune vue
+                        if (p.Children.Count == 0)
+                        {
+                            p.Visibility = Visibility.Collapsed;
+                            var emptyState = FindName("EmptyStatePanel") as UIElement;
+                            var floatBtn = FindName("FloatingAddButton") as UIElement;
+                            if (emptyState != null) emptyState.Visibility = Visibility.Visible;
+                            if (floatBtn != null) floatBtn.Visibility = Visibility.Collapsed;
+                        }
+                    }
+                }
+                catch { }
+            };
+
+            // Aligner le pays avant toute action
+            try { view.SyncCountryFromService(); } catch { }
+            // Synchroniser l'affichage des filtres (chargement déclenché après précharge)
             view.UpdateExternalFilters(SelectedAccount, SelectedStatus);
             if (!string.IsNullOrWhiteSpace(_currentFilter))
             {
@@ -1264,12 +1235,173 @@ namespace RecoTool.Windows
                     });
                 }
             }
-            view.Refresh();
+            // Précharger les données sans bloquer l'UI puis injecter dans la vue
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                try
+                {
+                    var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                    var backendSql = _currentFilter;
+                    var list = await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
+                    await view.Dispatcher.InvokeAsync(() =>
+                    {
+                        try
+                        {
+                            view.InitializeWithPreloadedData(list, backendSql);
+                            view.Refresh();
+                        }
+                        catch { }
+                    });
+                }
+                catch { }
+            });
 
             // Mettre à jour la visibilité
             panel.Visibility = Visibility.Visible;
             if (empty != null) empty.Visibility = Visibility.Collapsed;
             if (fab != null) fab.Visibility = Visibility.Visible;
+        }
+
+        /// <summary>
+        /// Crée un conteneur redimensionnable verticalement pour une ReconciliationView, avec poignée de redimensionnement en bas
+        /// et icônes agrandir/rétrécir.
+        /// </summary>
+        private Grid CreateResizableContainer(ReconciliationView view)
+        {
+            // Grille à 2 lignes: contenu + barre de redimensionnement
+            var grid = new Grid
+            {
+                Margin = new Thickness(15),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Top,
+                Height = 400, // hauteur initiale
+                MinHeight = 200,
+                MaxHeight = 1200
+            };
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            // Contenu
+            Grid.SetRow(view, 0);
+            grid.Children.Add(view);
+
+            // Barre de redimensionnement
+            var bar = new Border
+            {
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(230, 230, 230)),
+                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 200, 200)),
+                BorderThickness = new Thickness(1, 0, 1, 1),
+                Height = 18,
+                Padding = new Thickness(6, 0, 6, 0)
+            };
+            Grid.SetRow(bar, 1);
+
+            var barGrid = new Grid();
+            barGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            barGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            barGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            // Visuel de poignée (3 petites barres)
+            var handle = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+            for (int i = 0; i < 3; i++)
+            {
+                handle.Children.Add(new Border { Width = 18, Height = 3, Margin = new Thickness(2, 7, 2, 6), Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(160, 160, 160)) });
+            }
+            Grid.SetColumn(handle, 0);
+            barGrid.Children.Add(handle);
+
+            // Poignée de redimensionnement (Thumb) transparente superposée pour capter le drag
+            var thumb = new Thumb
+            {
+                Height = 16,
+                Cursor = Cursors.SizeNS,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Center,
+                Background = System.Windows.Media.Brushes.Transparent
+            };
+            thumb.DragDelta += (s, e) =>
+            {
+                try
+                {
+                    // Vers le bas => augmenter la hauteur (VerticalChange > 0 en descendant)
+                    var baseH = double.IsNaN(grid.Height) ? grid.ActualHeight : grid.Height;
+                    var newH = baseH + e.VerticalChange;
+                    newH = Math.Max(grid.MinHeight, Math.Min(grid.MaxHeight, newH));
+                    grid.Height = newH;
+                    // Ajuster le MaxHeight de la DataGrid si nécessaire
+                    AdjustDataGridMaxHeight(grid, view);
+                    e.Handled = true;
+                }
+                catch { }
+            };
+            Grid.SetColumn(thumb, 0);
+            barGrid.Children.Add(thumb);
+
+            // Bouton réduire (moins)
+            var btnShrink = new Button
+            {
+                Content = new TextBlock { Text = "-", FontSize = 16, VerticalAlignment = VerticalAlignment.Center },
+                Width = 26,
+                Height = 16,
+                Margin = new Thickness(6, 0, 0, 0),
+                Padding = new Thickness(0),
+                ToolTip = "Réduire la hauteur"
+            };
+            btnShrink.Click += (s, e) =>
+            {
+                try { grid.Height = Math.Max(200, grid.Height - 150); } catch { }
+            };
+            Grid.SetColumn(btnShrink, 1);
+            barGrid.Children.Add(btnShrink);
+
+            // Bouton agrandir (plus)
+            var btnGrow = new Button
+            {
+                Content = new TextBlock { Text = "+", FontSize = 16, VerticalAlignment = VerticalAlignment.Center },
+                Width = 26,
+                Height = 16,
+                Margin = new Thickness(6, 0, 0, 0),
+                Padding = new Thickness(0),
+                ToolTip = "Agrandir la hauteur"
+            };
+            btnGrow.Click += (s, e) =>
+            {
+                try
+                {
+                    grid.Height = Math.Min(1200, grid.Height + 150);
+                    // Ajuster le MaxHeight de la DataGrid si nécessaire
+                    AdjustDataGridMaxHeight(grid, view);
+                }
+                catch { }
+            };
+            Grid.SetColumn(btnGrow, 2);
+            barGrid.Children.Add(btnGrow);
+
+            bar.Child = barGrid;
+            grid.Children.Add(bar);
+
+            return grid;
+        }
+
+        /// <summary>
+        /// Augmente le MaxHeight de la DataGrid (ResultsDataGrid) si le conteneur devient plus grand que sa limite actuelle.
+        ///</summary>
+        private void AdjustDataGridMaxHeight(Grid container, ReconciliationView view)
+        {
+            try
+            {
+                var dg = view.FindName("ResultsDataGrid") as DataGrid;
+                if (dg == null) return;
+                var containerH = double.IsNaN(container.Height) ? container.ActualHeight : container.Height;
+                // marge approximative pour header/paddings/toolbar/etc.
+                double overhead = 140; // ajuste si besoin
+                double target = Math.Max(200, containerH - overhead);
+                if (target > dg.MaxHeight)
+                {
+                    dg.MaxHeight = target;
+                }
+            }
+            catch { }
         }
 
         private void ApplyEmbeddedOrientation()

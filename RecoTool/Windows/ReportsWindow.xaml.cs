@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -13,6 +14,8 @@ using Microsoft.Extensions.DependencyInjection;
 using RecoTool.Models;
 using RecoTool.Services;
 using System.Threading;
+using Excel = Microsoft.Office.Interop.Excel;
+using System.Runtime.InteropServices;
 
 namespace RecoTool.Windows
 {
@@ -556,7 +559,7 @@ namespace RecoTool.Windows
         /// </summary>
         private void ShowWarning(string message)
         {
-            MessageBox.Show(message, "Avertissement", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(message, "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
         /// <summary>
@@ -564,7 +567,7 @@ namespace RecoTool.Windows
         /// </summary>
         private void ShowError(string message)
         {
-            MessageBox.Show(message, "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
         #endregion
@@ -587,7 +590,7 @@ namespace RecoTool.Windows
         /// </summary>
         private async void GenerateCountrySummary_Click(object sender, RoutedEventArgs e)
         {
-            await GenerateReport("CountrySummary", "rapport de synthèse par pays");
+            await GenerateReport("CountrySummary", "Country summary report");
         }
 
         /// <summary>
@@ -595,7 +598,7 @@ namespace RecoTool.Windows
         /// </summary>
         private async void GeneratePerformanceReport_Click(object sender, RoutedEventArgs e)
         {
-            await GenerateReport("Performance", "rapport de performance");
+            await GenerateReport("Performance", "Performance report");
         }
 
         /// <summary>
@@ -603,7 +606,7 @@ namespace RecoTool.Windows
         /// </summary>
         private async void GenerateDailyActivity_Click(object sender, RoutedEventArgs e)
         {
-            await GenerateReport("DailyActivity", "rapport d'activité quotidienne");
+            await GenerateReport("DailyActivity", "Daily activity report");
         }
 
         /// <summary>
@@ -611,7 +614,7 @@ namespace RecoTool.Windows
         /// </summary>
         private async void GenerateDiscrepancyReport_Click(object sender, RoutedEventArgs e)
         {
-            await GenerateReport("Discrepancy", "rapport d'écarts");
+            await GenerateReport("Discrepancy", "Discrepancy report");
         }
 
         /// <summary>
@@ -619,7 +622,7 @@ namespace RecoTool.Windows
         /// </summary>
         private async void GenerateCurrencyBreakdown_Click(object sender, RoutedEventArgs e)
         {
-            await GenerateReport("CurrencyBreakdown", "répartition par devise");
+            await GenerateReport("CurrencyBreakdown", "Currency breakdown");
         }
 
         /// <summary>
@@ -627,7 +630,7 @@ namespace RecoTool.Windows
         /// </summary>
         private async void GenerateTimeSeriesReport_Click(object sender, RoutedEventArgs e)
         {
-            await GenerateReport("TimeSeries", "rapport de série temporelle");
+            await GenerateReport("TimeSeries", "Time series report");
         }
 
         /// <summary>
@@ -671,12 +674,117 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
+        /// Exporte l'historique des KPI (snapshots quotidiens) sur la période sélectionnée au format CSV
+        /// </summary>
+        private async void ExportKpiHistory_Click(object sender, RoutedEventArgs e)
+        {
+            if (!ValidateParametersForGeneration())
+                return;
+
+            if (_reconciliationService == null || CurrentCountry == null)
+            {
+                ShowWarning("Reconciliation service or country not available");
+                return;
+            }
+
+            try
+            {
+                using var _ = BeginWaitCursor();
+                IsGenerating = true;
+                UpdateStatusText("Exporting KPI history...");
+
+                Directory.CreateDirectory(OutputPath);
+                var fileName = $"KpiHistory_{CurrentCountry.CNT_Id}_{StartDate:yyyyMMdd}_{EndDate:yyyyMMdd}.xlsx";
+                var fullPath = Path.Combine(OutputPath, fileName);
+
+                // Fetch snapshots in range
+                var table = await _reconciliationService.GetKpiSnapshotsAsync(StartDate.Date, EndDate.Date, CurrentCountry.CNT_Id);
+
+                // Write Excel (.xlsx)
+                await WriteDataTableToExcelAsync(table, fullPath);
+
+                UpdateStatusText($"KPI history exported: {fullPath}");
+                ShowInfo($"KPI history exported successfully:\n{fullPath}");
+            }
+            catch (Exception ex)
+            {
+                UpdateStatusText("Error exporting KPI history");
+                ShowError($"Error exporting KPI history: {ex.Message}");
+            }
+            finally
+            {
+                IsGenerating = false;
+            }
+        }
+
+        private static Task WriteDataTableToExcelAsync(DataTable table, string path)
+        {
+            return Task.Run(() =>
+            {
+                Excel.Application app = null;
+                Excel.Workbook wb = null;
+                Excel.Worksheet ws = null;
+                try
+                {
+                    app = new Excel.Application { Visible = false, DisplayAlerts = false };
+                    wb = app.Workbooks.Add();
+                    ws = wb.Sheets[1];
+                    ws.Name = "KPI History";
+
+                    // Headers
+                    for (int c = 0; c < table.Columns.Count; c++)
+                    {
+                        ws.Cells[1, c + 1] = table.Columns[c].ColumnName;
+                    }
+
+                    // Data
+                    int rowIndex = 2;
+                    foreach (DataRow row in table.Rows)
+                    {
+                        for (int c = 0; c < table.Columns.Count; c++)
+                        {
+                            ws.Cells[rowIndex, c + 1] = row[c];
+                        }
+                        rowIndex++;
+                    }
+
+                    // Format
+                    var used = ws.UsedRange;
+                    used.Columns.AutoFit();
+
+                    // Save as .xlsx
+                    wb.SaveAs(path, Excel.XlFileFormat.xlOpenXMLWorkbook);
+                }
+                finally
+                {
+                    if (wb != null)
+                    {
+                        wb.Close(false);
+                        Marshal.ReleaseComObject(wb);
+                        wb = null;
+                    }
+                    if (ws != null)
+                    {
+                        Marshal.ReleaseComObject(ws);
+                        ws = null;
+                    }
+                    if (app != null)
+                    {
+                        app.Quit();
+                        Marshal.ReleaseComObject(app);
+                        app = null;
+                    }
+                }
+            });
+        }
+
+        /// <summary>
         /// Actualise les données
         /// </summary>
         private async void RefreshData_Click(object sender, RoutedEventArgs e)
         {
             //await LoadCountries();
-            UpdateStatusText("Données actualisées");
+            UpdateStatusText("Data refreshed");
         }
 
         /// <summary>
@@ -692,12 +800,12 @@ namespace RecoTool.Windows
                 }
                 else
                 {
-                    MessageBox.Show("Le dossier d'exports n'existe pas encore. Générez d'abord un rapport.", "Dossier introuvable", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show("The exports folder does not exist yet. Generate a report first.", "Folder not found", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Impossible d'ouvrir le dossier: {ex.Message}", "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Unable to open folder: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -749,17 +857,17 @@ namespace RecoTool.Windows
                 var token = _exportCts.Token;
                 var path = await _exportService.ExportFromParamAsync(paramKey, ctx, token).ConfigureAwait(false);
                 UpdateStatusText($"Export finished: {path}");
-                ShowInfo($"Export terminé:\n{path}");
+                ShowInfo($"Export completed:\n{path}");
             }
             catch (OperationCanceledException)
             {
                 UpdateStatusText($"Export canceled: {paramKey}");
-                ShowWarning($"Export annulé: {paramKey}");
+                ShowWarning($"Export canceled: {paramKey}");
             }
             catch (Exception ex)
             {
                 UpdateStatusText($"Error during export {paramKey}");
-                ShowError($"Erreur export {paramKey}: {ex.Message}");
+                ShowError($"Error during export {paramKey}: {ex.Message}");
             }
             finally
             {

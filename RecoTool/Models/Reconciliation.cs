@@ -13,6 +13,8 @@ namespace RecoTool.Models
         public string DWINGS_InvoiceID { get; set; }
         public string DWINGS_CommissionID { get; set; }
         public int? Action { get; set; }
+        // New: assignee user ID (referential T_User.USR_ID)
+        public string Assignee { get; set; }
         public string Comments { get; set; }
         public string InternalInvoiceReference { get; set; }
         public DateTime? FirstClaimDate { get; set; }
@@ -24,13 +26,13 @@ namespace RecoTool.Models
         public string PaymentReference { get; set; }
         public int? KPI { get; set; }
         public int? IncidentType { get; set; }
-        public int? RiskyItem { get; set; }
-        public string ReasonNonRisky { get; set; }
+        public bool? RiskyItem { get; set; }
+        public int? ReasonNonRisky { get; set; }
 
-        public Reconciliation()
-        {
-            ID = Guid.NewGuid().ToString();
-        }
+        /// <summary>
+        /// Effective risky flag for business logic: null is considered false.
+        /// </summary>
+        public bool IsRiskyEffective => RiskyItem == true;
 
         /// <summary>
         /// Crée une nouvelle réconciliation liée à une ligne Ambre

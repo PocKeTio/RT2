@@ -11,6 +11,7 @@
         <local:UserFieldOptionsConverter x:Key="UserFieldOptionsConverter" />
         <local:UserFieldIdToNameConverter x:Key="UserFieldIdToNameConverter" />
         <local:ActionColorConverter x:Key="ActionColorConverter" />
+        <local:AssigneeIdToNameConverter x:Key="AssigneeIdToNameConverter" />
     </UserControl.Resources>
     <Grid Background="{DynamicResource BNPBackground}">
         <Grid.RowDefinitions>
@@ -128,21 +129,6 @@
                     
 
                     
-
-                    <!-- Bulk Edit Button -->
-                    <Button x:Name="BulkEditButton" Click="BulkEditButton_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0" ToolTip="Edit selected rows in bulk">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                </Border>
-                            </ControlTemplate>
-                        </Button.Template>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="Bulk Edit…" VerticalAlignment="Center" FontWeight="SemiBold"/>
-                        </StackPanel>
-                    </Button>
 
                     <!-- Export Button (moved from KPI bar) -->
                     <Button x:Name="ExportButton" Click="Export_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0">
@@ -492,6 +478,22 @@
                                     </ComboBox>
                                 </Grid>
 
+                                <!-- Assignee filter -->
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Assignee:" VerticalAlignment="Center"/>
+                                    <ComboBox x:Name="AssigneeComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
+                                              ItemsSource="{Binding AssigneeOptions, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                              DisplayMemberPath="Name"
+                                              SelectedValuePath="Id"
+                                              SelectedValue="{Binding FilterAssigneeId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                        <!-- optional: no static items; list includes empty entry -->
+                                    </ComboBox>
+                                </Grid>
+
                                 <Grid Margin="0,8">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="120"/>
@@ -765,12 +767,86 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
+                            <!-- Assignee: displays user name, binds ID -->
+                            <DataGridTemplateColumn Header="Assignee" Width="140" SortMemberPath="Assignee">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock>
+                                            <TextBlock.Text>
+                                                <MultiBinding Converter="{StaticResource AssigneeIdToNameConverter}">
+                                                    <Binding Path="Assignee"/>
+                                                    <Binding Path="DataContext.AssigneeOptions" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                </MultiBinding>
+                                            </TextBlock.Text>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <ComboBox Width="Auto"
+                                                  ItemsSource="{Binding DataContext.AssigneeOptions, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                  DisplayMemberPath="Name"
+                                                  SelectedValuePath="Id"
+                                                  SelectedValue="{Binding Assignee, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+
                             <DataGridTextColumn Header="Comments" Binding="{Binding Comments}" Width="150"/>
                             <DataGridTextColumn Header="Internal Invoice Ref" Binding="{Binding InternalInvoiceReference}" Width="140"/>
-                            <DataGridTextColumn Header="First Claim Date" Binding="{Binding FirstClaimDate, StringFormat={}{0:dd/MM/yyyy}}" Width="120"/>
-                            <DataGridTextColumn Header="Last Claim Date" Binding="{Binding LastClaimDate, StringFormat={}{0:dd/MM/yyyy}}" Width="120"/>
+
+                            <!-- First Claim Date with DatePicker -->
+                            <DataGridTemplateColumn Header="First Claim Date" Width="130" SortMemberPath="FirstClaimDate">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding FirstClaimDate, StringFormat={}{0:dd/MM/yyyy}}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <DatePicker Language="fr-FR"
+                                                    SelectedDateFormat="Short"
+                                                    SelectedDate="{Binding FirstClaimDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                    Loaded="DatePicker_OpenOnLoad"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+
+                            <!-- Last Claim Date with DatePicker -->
+                            <DataGridTemplateColumn Header="Last Claim Date" Width="130" SortMemberPath="LastClaimDate">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding LastClaimDate, StringFormat={}{0:dd/MM/yyyy}}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <DatePicker Language="fr-FR"
+                                                    SelectedDateFormat="Short"
+                                                    SelectedDate="{Binding LastClaimDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                    Loaded="DatePicker_OpenOnLoad"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+
                             <DataGridCheckBoxColumn Header="To Remind" Binding="{Binding ToRemind}" Width="80"/>
-                            <DataGridTextColumn Header="Remind Date" Binding="{Binding ToRemindDate, StringFormat={}{0:dd/MM/yyyy}}" Width="110"/>
+
+                            <!-- Remind Date with DatePicker -->
+                            <DataGridTemplateColumn Header="Remind Date" Width="120" SortMemberPath="ToRemindDate">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding ToRemindDate, StringFormat={}{0:dd/MM/yyyy}}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <DatePicker Language="fr-FR"
+                                                    SelectedDateFormat="Short"
+                                                    SelectedDate="{Binding ToRemindDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                    Loaded="DatePicker_OpenOnLoad"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridCheckBoxColumn Header="ACK" Binding="{Binding ACK}" Width="60"/>
                             <DataGridTextColumn Header="Swift Code" Binding="{Binding SwiftCode}" Width="100"/>
                             <DataGridTextColumn Header="Payment Reference" Binding="{Binding PaymentReference}" Width="130"/>
@@ -842,8 +918,56 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Risky Item" Binding="{Binding RiskyItem}" Width="90"/>
-                            <DataGridTextColumn Header="Reason Non Risky" Binding="{Binding ReasonNonRisky}" Width="130"/>
+                            <!-- Risky Item: tri-state CheckBox for nullable bool -->
+                            <DataGridTemplateColumn Header="Risky Item" Width="100" SortMemberPath="RiskyItem">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsThreeState="True" IsEnabled="False"
+                                                  IsChecked="{Binding RiskyItem}" HorizontalAlignment="Center"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsThreeState="True"
+                                                  IsChecked="{Binding RiskyItem, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  HorizontalAlignment="Center"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+
+                            <!-- Reason Non Risky: editable ComboBox bound to referential filtered by RISKY category -->
+                            <DataGridTemplateColumn Header="Reason Non Risky" Width="180" SortMemberPath="ReasonNonRisky">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock>
+                                            <TextBlock.Text>
+                                                <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
+                                                    <Binding Path="ReasonNonRisky"/>
+                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                </MultiBinding>
+                                            </TextBlock.Text>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <ComboBox Width="Auto"
+                                                  SelectedValue="{Binding ReasonNonRisky, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  SelectedValuePath="USR_ID"
+                                                  DisplayMemberPath="USR_FieldName"
+                                                  SelectionChanged="UserFieldComboBox_SelectionChanged"
+                                                  Tag="ReasonNonRisky">
+                                            <ComboBox.ItemsSource>
+                                                <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="RISKY">
+                                                    <Binding Path="Account_ID"/>
+                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                    <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                </MultiBinding>
+                                            </ComboBox.ItemsSource>
+                                        </ComboBox>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
 
                             <!-- Colonnes T_DW_Guarantee (propriétés DWINGS disponibles dans ReconciliationViewData) -->
                             

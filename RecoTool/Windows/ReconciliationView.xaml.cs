@@ -95,6 +95,81 @@ namespace RecoTool.Windows
             catch { }
         }
 
+        // Auto-open DatePicker calendar on edit start for faster date selection
+        private void DatePicker_OpenOnLoad(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var dp = sender as DatePicker;
+                if (dp == null) return;
+                // Ensure French culture visual formatting if needed
+                try { dp.Language = System.Windows.Markup.XmlLanguage.GetLanguage("fr-FR"); } catch { }
+                // Open the popup calendar immediately
+                try { dp.IsDropDownOpen = true; } catch { }
+            }
+            catch { }
+        }
+
+        private async void QuickSetCommentMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var dg = this.FindName("ResultsDataGrid") as DataGrid;
+                if (dg == null || _reconciliationService == null) return;
+
+                var selected = dg.SelectedItems?.OfType<ReconciliationViewData>().ToList() ?? new List<ReconciliationViewData>();
+                if (selected.Count == 0) return;
+
+                // Build an ad-hoc prompt window for comment input
+                var prompt = new Window
+                {
+                    Title = $"Set Comment for {selected.Count} row(s)",
+                    Width = 480,
+                    Height = 220,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    Owner = Window.GetWindow(this),
+                    ResizeMode = ResizeMode.NoResize,
+                    Content = null
+                };
+
+                var grid = new Grid { Margin = new Thickness(12) };
+                grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                var tb = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+                Grid.SetRow(tb, 0);
+                var panel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
+                var btnOk = new Button { Content = "OK", Width = 80, Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
+                var btnCancel = new Button { Content = "Cancel", Width = 80, IsCancel = true };
+                btnOk.Click += (s, ea) => { prompt.DialogResult = true; prompt.Close(); };
+                btnCancel.Click += (s, ea) => { prompt.DialogResult = false; prompt.Close(); };
+                panel.Children.Add(btnOk);
+                panel.Children.Add(btnCancel);
+                Grid.SetRow(panel, 1);
+                grid.Children.Add(tb);
+                grid.Children.Add(panel);
+                prompt.Content = grid;
+
+                var result = prompt.ShowDialog();
+                if (result != true) return;
+                var text = tb.Text ?? string.Empty;
+
+                var updates = new List<Reconciliation>();
+                foreach (var r in selected)
+                {
+                    var reco = await _reconciliationService.GetOrCreateReconciliationAsync(r.ID);
+                    r.Comments = text;
+                    reco.Comments = text;
+                    updates.Add(reco);
+                }
+
+                await _reconciliationService.SaveReconciliationsAsync(updates);
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Save error: {ex.Message}");
+            }
+        }
+
         private void ResultsDataGrid_Loaded(object sender, RoutedEventArgs e)
         {
             try
@@ -447,7 +522,7 @@ namespace RecoTool.Windows
 
                     var options = GetUserFieldOptionsForRow(category, rowData).ToList();
 
-                    var clearItem = new MenuItem { Header = "Clear", Tag = category, CommandParameter = null };
+                    var clearItem = new MenuItem { Header = "Clear", Tag = category, CommandParameter = null, DataContext = rowData };
                     clearItem.Click += QuickSetUserFieldMenuItem_Click;
                     bool hasValue = (string.Equals(category, "Action", StringComparison.OrdinalIgnoreCase) && rowData.Action.HasValue)
                                      || (string.Equals(category, "KPI", StringComparison.OrdinalIgnoreCase) && rowData.KPI.HasValue)
@@ -462,6 +537,7 @@ namespace RecoTool.Windows
                             Header = opt.USR_FieldName,
                             Tag = category,
                             CommandParameter = opt.USR_ID,
+                            DataContext = rowData,
                             IsCheckable = true,
                             IsChecked = (string.Equals(category, "Action", StringComparison.OrdinalIgnoreCase) && rowData.Action == opt.USR_ID)
                                         || (string.Equals(category, "KPI", StringComparison.OrdinalIgnoreCase) && rowData.KPI == opt.USR_ID)
@@ -477,8 +553,136 @@ namespace RecoTool.Windows
                 Populate(actionRoot, "Action");
                 Populate(kpiRoot, "KPI");
                 Populate(incRoot, "Incident Type");
+
+                // Add Set Comment action applicable to multi-selection
+                try
+                {
+                    // Avoid duplicates: remove previous injected items
+                    var existing = cm.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "__SetComment__");
+                    if (existing != null) cm.Items.Remove(existing);
+                    var existingTake = cm.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "__Take__");
+                    if (existingTake != null) cm.Items.Remove(existingTake);
+                    var existingRem = cm.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "__SetReminder__");
+                    if (existingRem != null) cm.Items.Remove(existingRem);
+                    var sep = cm.Items.OfType<Separator>().FirstOrDefault(s => (s.Tag as string) == "__InjectedSep__");
+                    if (sep != null) cm.Items.Remove(sep);
+
+                    cm.Items.Add(new Separator { Tag = "__InjectedSep__" });
+                    var takeItem = new MenuItem { Header = "Take (Assign to me)", Tag = "__Take__", DataContext = rowData };
+                    takeItem.Click += QuickTakeMenuItem_Click;
+                    cm.Items.Add(takeItem);
+                    var reminderItem = new MenuItem { Header = "Set Reminder Date…", Tag = "__SetReminder__", DataContext = rowData };
+                    reminderItem.Click += QuickSetReminderMenuItem_Click;
+                    cm.Items.Add(reminderItem);
+                    var commentItem = new MenuItem { Header = "Set Comment…", Tag = "__SetComment__" };
+                    commentItem.Click += QuickSetCommentMenuItem_Click;
+                    cm.Items.Add(commentItem);
+                }
+                catch { }
             }
             catch { }
+        }
+
+        private async void QuickTakeMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var dg = this.FindName("ResultsDataGrid") as DataGrid;
+                if (dg == null) return;
+                var rowCtx = (sender as FrameworkElement)?.DataContext as ReconciliationViewData;
+                var targetRows = dg.SelectedItems.Count > 1 && rowCtx != null && dg.SelectedItems.OfType<ReconciliationViewData>().Contains(rowCtx)
+                    ? dg.SelectedItems.OfType<ReconciliationViewData>().ToList()
+                    : (rowCtx != null ? new List<ReconciliationViewData> { rowCtx } : new List<ReconciliationViewData>());
+                if (targetRows.Count == 0) return;
+
+                var updates = new List<Reconciliation>();
+                foreach (var r in targetRows)
+                {
+                    var reco = await _reconciliationService.GetOrCreateReconciliationAsync(r.ID);
+                    var user = _reconciliationService.CurrentUser;
+                    r.Assignee = user;
+                    reco.Assignee = user;
+                    updates.Add(reco);
+                }
+                await _reconciliationService.SaveReconciliationsAsync(updates);
+
+                // Background sync best effort
+                try { if (_offlineFirstService?.IsInitialized == true && _offlineFirstService.IsNetworkSyncAvailable) _ = Task.Run(async () => { try { await _offlineFirstService.SynchronizeData(); } catch { } }); } catch { }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Failed to assign: {ex.Message}");
+            }
+        }
+
+        private async void QuickSetReminderMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var dg = this.FindName("ResultsDataGrid") as DataGrid;
+                if (dg == null) return;
+                var rowCtx = (sender as FrameworkElement)?.DataContext as ReconciliationViewData;
+                var targetRows = dg.SelectedItems.Count > 1 && rowCtx != null && dg.SelectedItems.OfType<ReconciliationViewData>().Contains(rowCtx)
+                    ? dg.SelectedItems.OfType<ReconciliationViewData>().ToList()
+                    : (rowCtx != null ? new List<ReconciliationViewData> { rowCtx } : new List<ReconciliationViewData>());
+                if (targetRows.Count == 0) return;
+
+                // Prompt date selection (simple Window with DatePicker)
+                var prompt = new Window
+                {
+                    Title = "Set Reminder Date",
+                    Width = 320,
+                    Height = 160,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    Owner = Window.GetWindow(this),
+                    ResizeMode = ResizeMode.NoResize
+                };
+                var grid = new Grid { Margin = new Thickness(10) };
+                grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                var datePicker = new DatePicker { SelectedDate = DateTime.Today };
+                Grid.SetRow(datePicker, 0);
+                grid.Children.Add(datePicker);
+                var panel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
+                var btnOk = new Button { Content = "OK", Width = 80, Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
+                var btnCancel = new Button { Content = "Cancel", Width = 80, IsCancel = true };
+                btnOk.Click += (s, ea) => { prompt.DialogResult = true; prompt.Close(); };
+                btnCancel.Click += (s, ea) => { prompt.DialogResult = false; prompt.Close(); };
+                panel.Children.Add(btnOk);
+                panel.Children.Add(btnCancel);
+                Grid.SetRow(panel, 1);
+                grid.Children.Add(panel);
+                prompt.Content = grid;
+                var res = prompt.ShowDialog();
+                if (res != true) return;
+                var selDate = datePicker.SelectedDate;
+                if (!selDate.HasValue) return;
+
+                var updates = new List<Reconciliation>();
+                var currentUser = _reconciliationService.CurrentUser;
+                foreach (var r in targetRows)
+                {
+                    var reco = await _reconciliationService.GetOrCreateReconciliationAsync(r.ID);
+                    r.ToRemindDate = selDate.Value;
+                    r.ToRemind = true;
+                    if (string.IsNullOrWhiteSpace(r.Assignee))
+                    {
+                        r.Assignee = currentUser;
+                        reco.Assignee = currentUser;
+                    }
+                    reco.ToRemindDate = selDate.Value;
+                    reco.ToRemind = true;
+                    updates.Add(reco);
+                }
+                await _reconciliationService.SaveReconciliationsAsync(updates);
+
+                // Background sync best effort
+                try { if (_offlineFirstService?.IsInitialized == true && _offlineFirstService.IsNetworkSyncAvailable) _ = Task.Run(async () => { try { await _offlineFirstService.SynchronizeData(); } catch { } }); } catch { }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Failed to set reminder: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -771,6 +975,8 @@ namespace RecoTool.Windows
 
                     // Peupler les options pour les ComboBox référentielles (Action/KPI/Incident Type)
                     PopulateReferentialOptions();
+                    // Charger les utilisateurs pour le filtre d'assignation
+                    await LoadAssigneeOptionsAsync();
                 }
                 // Ne pas effectuer de chargement automatique ici; la page parente appliquera
                 // les filtres et la mise en page, puis appellera explicitement Refresh().
@@ -821,6 +1027,19 @@ namespace RecoTool.Windows
         public ObservableCollection<OptionItem> ActionOptions { get => _actionOptions; private set { _actionOptions = value; OnPropertyChanged(nameof(ActionOptions)); } }
         public ObservableCollection<OptionItem> KpiOptions { get => _kpiOptions; private set { _kpiOptions = value; OnPropertyChanged(nameof(KpiOptions)); } }
         public ObservableCollection<OptionItem> IncidentTypeOptions { get => _incidentTypeOptions; private set { _incidentTypeOptions = value; OnPropertyChanged(nameof(IncidentTypeOptions)); } }
+
+        // Options for Assignee ComboBox (users from T_User)
+        public class UserOption
+        {
+            public string Id { get; set; }
+            public string Name { get; set; }
+        }
+        private ObservableCollection<UserOption> _assigneeOptions = new ObservableCollection<UserOption>();
+        public ObservableCollection<UserOption> AssigneeOptions
+        {
+            get => _assigneeOptions;
+            private set { _assigneeOptions = value; OnPropertyChanged(nameof(AssigneeOptions)); }
+        }
 
         public string CurrentView
         {
@@ -946,10 +1165,14 @@ namespace RecoTool.Windows
                 var mi = sender as MenuItem;
                 if (mi == null) return;
 
-                // Find the owning ContextMenu and its row
-                var cm = FindParent<ContextMenu>(mi);
-                var fe = cm?.PlacementTarget as FrameworkElement;
-                var row = fe?.DataContext as ReconciliationViewData;
+                // Resolve the row data: prefer the item's DataContext, fallback to ContextMenu.PlacementTarget
+                var row = mi.DataContext as ReconciliationViewData;
+                if (row == null)
+                {
+                    var cm = FindParent<ContextMenu>(mi);
+                    var fe = cm?.PlacementTarget as FrameworkElement;
+                    row = fe?.DataContext as ReconciliationViewData;
+                }
                 if (row == null) return;
 
                 var category = mi.Tag as string;
@@ -963,36 +1186,54 @@ namespace RecoTool.Windows
                 }
 
                 if (_reconciliationService == null) return;
-                var reco = await _reconciliationService.GetOrCreateReconciliationAsync(row.ID);
 
-                if (string.Equals(category, "Action", StringComparison.OrdinalIgnoreCase))
+                // Determine target rows: if multiple selected, apply to all
+                var dg = this.FindName("ResultsDataGrid") as DataGrid;
+                var targetRows = new List<ReconciliationViewData>();
+                if (dg?.SelectedItems != null && dg.SelectedItems.Count > 1)
                 {
-                    // Confirm clear
-                    if (newId == null && row.Action.HasValue)
-                    {
-                        if (MessageBox.Show("Clear Action?", "Confirm", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-                    }
-                    row.Action = newId; reco.Action = newId;
+                    targetRows.AddRange(dg.SelectedItems.OfType<ReconciliationViewData>());
                 }
-                else if (string.Equals(category, "KPI", StringComparison.OrdinalIgnoreCase))
+                else
                 {
-                    if (newId == null && row.KPI.HasValue)
-                    {
-                        if (MessageBox.Show("Clear KPI?", "Confirm", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-                    }
-                    row.KPI = newId; reco.KPI = newId;
+                    targetRows.Add(row);
                 }
-                else if (string.Equals(category, "Incident Type", StringComparison.OrdinalIgnoreCase) || string.Equals(category, "IncidentType", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (newId == null && row.IncidentType.HasValue)
-                    {
-                        if (MessageBox.Show("Clear Incident Type?", "Confirm", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-                    }
-                    row.IncidentType = newId; reco.IncidentType = newId;
-                }
-                else return;
 
-                await _reconciliationService.SaveReconciliationAsync(reco);
+                // Confirm clear once if needed
+                bool isAction = string.Equals(category, "Action", StringComparison.OrdinalIgnoreCase);
+                bool isKpi = string.Equals(category, "KPI", StringComparison.OrdinalIgnoreCase);
+                bool isInc = string.Equals(category, "Incident Type", StringComparison.OrdinalIgnoreCase) || string.Equals(category, "IncidentType", StringComparison.OrdinalIgnoreCase);
+                if (newId == null)
+                {
+                    bool anyHasValue = targetRows.Any(r => (isAction && r.Action.HasValue) || (isKpi && r.KPI.HasValue) || (isInc && r.IncidentType.HasValue));
+                    if (anyHasValue)
+                    {
+                        var label = isAction ? "Action" : isKpi ? "KPI" : "Incident Type";
+                        if (MessageBox.Show($"Clear {label} for {targetRows.Count} selected row(s)?", "Confirm", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+                    }
+                }
+
+                // Build batch updates
+                var updates = new List<Reconciliation>();
+                foreach (var r in targetRows)
+                {
+                    var reco = await _reconciliationService.GetOrCreateReconciliationAsync(r.ID);
+                    if (isAction)
+                    {
+                        r.Action = newId; reco.Action = newId;
+                    }
+                    else if (isKpi)
+                    {
+                        r.KPI = newId; reco.KPI = newId;
+                    }
+                    else if (isInc)
+                    {
+                        r.IncidentType = newId; reco.IncidentType = newId;
+                    }
+                    updates.Add(reco);
+                }
+
+                await _reconciliationService.SaveReconciliationsAsync(updates);
 
                 // background sync
                 try
@@ -1276,100 +1517,7 @@ namespace RecoTool.Windows
             catch { }
         }
 
-        private async void BulkEditButton_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                // Commit any pending cell/row edits before bulk applying
-                try
-                {
-                    ResultsDataGrid?.CommitEdit(DataGridEditingUnit.Cell, true);
-                    ResultsDataGrid?.CommitEdit(DataGridEditingUnit.Row, true);
-                }
-                catch { }
-
-                var selected = ResultsDataGrid?.SelectedItems?.OfType<ReconciliationViewData>()?.ToList() ?? new List<ReconciliationViewData>();
-                if (selected.Count == 0)
-                {
-                    ShowError("No rows selected for bulk edit.");
-                    return;
-                }
-
-                // Open bulk edit dialog with referential options
-                var dlg = new BulkEditWindow(ActionOptions, KpiOptions, IncidentTypeOptions);
-                var owner = Window.GetWindow(this);
-                if (owner != null) dlg.Owner = owner;
-                var result = dlg.ShowDialog();
-                if (result != true) return;
-
-                var vm = dlg.ViewModel;
-                if (vm == null) return;
-
-                // Confirm bulk clears if any field is applied with null value
-                if (vm.ApplyAction && vm.SelectedActionId == null)
-                {
-                    if (MessageBox.Show($"Clear Action for {selected.Count} selected rows?", "Confirm bulk clear", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-                        return;
-                }
-                if (vm.ApplyKpi && vm.SelectedKpiId == null)
-                {
-                    if (MessageBox.Show($"Clear KPI for {selected.Count} selected rows?", "Confirm bulk clear", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-                        return;
-                }
-                if (vm.ApplyIncidentType && vm.SelectedIncidentTypeId == null)
-                {
-                    if (MessageBox.Show($"Clear Incident Type for {selected.Count} selected rows?", "Confirm bulk clear", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-                        return;
-                }
-
-                if (_reconciliationService == null) return;
-
-                foreach (var row in selected)
-                {
-                    // Load and update only the selected user fields
-                    var reco = await _reconciliationService.GetOrCreateReconciliationAsync(row.ID);
-
-                    if (vm.ApplyAction)
-                    {
-                        row.Action = vm.SelectedActionId;
-                        reco.Action = vm.SelectedActionId;
-                    }
-                    if (vm.ApplyKpi)
-                    {
-                        row.KPI = vm.SelectedKpiId;
-                        reco.KPI = vm.SelectedKpiId;
-                    }
-                    if (vm.ApplyIncidentType)
-                    {
-                        row.IncidentType = vm.SelectedIncidentTypeId;
-                        reco.IncidentType = vm.SelectedIncidentTypeId;
-                    }
-
-                    await _reconciliationService.SaveReconciliationAsync(reco);
-                }
-
-                // Rafraîchir la vue pour refléter immédiatement les modifications du bulk edit
-                await RefreshAsync();
-
-                // Fire-and-forget background sync similar to other save handlers
-                try
-                {
-                    if (_offlineFirstService != null && _offlineFirstService.IsInitialized && _offlineFirstService.IsNetworkSyncAvailable)
-                    {
-                        _ = Task.Run(async () =>
-                        {
-                            try { await _offlineFirstService.SynchronizeData(); }
-                            catch { /* ignore background sync errors */ }
-                        });
-                    }
-                }
-                catch { }
-            }
-            catch (Exception ex)
-            {
-                ShowError($"Bulk edit error: {ex.Message}");
-            }
-        }
+        
 
         private void Export_Click(object sender, RoutedEventArgs e)
         {
@@ -1436,7 +1584,8 @@ namespace RecoTool.Windows
             try
             {
                 // Reset all bound filter properties via their setters to raise PropertyChanged and debounce
-                FilterAccountId = null;
+                // Preserve Account filter from parent page
+                // FilterAccountId = null;
                 FilterCurrency = null;
                 FilterCountry = null;
                 FilterFromDate = null;
@@ -1449,7 +1598,8 @@ namespace RecoTool.Windows
                 FilterEventNum = null;
                 FilterDwGuaranteeId = null;
                 FilterDwCommissionId = null;
-                FilterStatus = null;
+                // Preserve Live/Archived status from parent page
+                // FilterStatus = null;
 
                 // String-backed combo filters
                 FilterGuaranteeType = null;
@@ -1464,6 +1614,7 @@ namespace RecoTool.Windows
                 FilterActionId = null;
                 FilterKpiId = null;
                 FilterIncidentTypeId = null;
+                FilterAssigneeId = null;
 
                 // Apply immediately and update the title/status
                 ApplyFilters();
@@ -1640,7 +1791,32 @@ namespace RecoTool.Windows
         public int? FilterKpiId { get => _filterKpiId; set { _filterKpiId = value; OnPropertyChanged(nameof(FilterKpiId)); ScheduleApplyFiltersDebounced(); } }
         public int? FilterIncidentTypeId { get => _filterIncidentTypeId; set { _filterIncidentTypeId = value; OnPropertyChanged(nameof(FilterIncidentTypeId)); ScheduleApplyFiltersDebounced(); } }
 
+        // New: Assignee filter (user id string)
+        private string _filterAssigneeId;
+        public string FilterAssigneeId
+        {
+            get => _filterAssigneeId;
+            set { _filterAssigneeId = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterAssigneeId)); ScheduleApplyFiltersDebounced(); }
+        }
+
         #endregion
+
+        private async Task LoadAssigneeOptionsAsync()
+        {
+            try
+            {
+                if (_reconciliationService == null) return;
+                var users = await _reconciliationService.GetUsersAsync();
+                AssigneeOptions.Clear();
+                // Empty option for clearing selection
+                AssigneeOptions.Add(new UserOption { Id = null, Name = string.Empty });
+                foreach (var u in users)
+                {
+                    AssigneeOptions.Add(new UserOption { Id = u.Id, Name = string.IsNullOrWhiteSpace(u.Name) ? u.Id : u.Name });
+                }
+            }
+            catch { }
+        }
 
         #region Editing Handlers (persist user field changes)
 
@@ -1790,6 +1966,8 @@ namespace RecoTool.Windows
             reco.InternalInvoiceReference = row.InternalInvoiceReference;
             reco.FirstClaimDate = row.FirstClaimDate;
             reco.LastClaimDate = row.LastClaimDate;
+            // Persist assignee if edited via grid
+            reco.Assignee = row.Assignee;
             reco.ToRemind = row.ToRemind;
             reco.ToRemindDate = row.ToRemindDate;
             reco.ACK = row.ACK;
@@ -1911,6 +2089,9 @@ namespace RecoTool.Windows
                 filtered = filtered.Where(x => x.KPI == _filterKpiId);
             if (_filterIncidentTypeId.HasValue)
                 filtered = filtered.Where(x => x.IncidentType == _filterIncidentTypeId);
+            // Assignee filter (string id)
+            if (!string.IsNullOrWhiteSpace(_filterAssigneeId))
+                filtered = filtered.Where(x => string.Equals(x.Assignee, _filterAssigneeId, StringComparison.OrdinalIgnoreCase));
 
             // Mettre à jour l'affichage avec pagination (100 premières lignes), mais totaux sur tout le jeu filtré
             var filteredList = filtered.ToList();
@@ -2043,7 +2224,8 @@ namespace RecoTool.Windows
         /// </summary>
         private void ClearFilters()
         {
-            _filterAccountId = null;
+            // Preserve Account filter provided by the parent page
+            // _filterAccountId is intentionally NOT cleared here
             _filterCurrency = null;
             _filterCountry = null;
             _filterMinAmount = null;
@@ -2062,6 +2244,9 @@ namespace RecoTool.Windows
             _filterActionId = null;
             _filterKpiId = null;
             _filterIncidentTypeId = null;
+            _filterAssigneeId = null;
+            // Preserve Status (Live/Archived) filter provided by the parent page
+            // _filterStatus is intentionally NOT cleared here
 
             // Réinitialiser les contrôles UI
             ClearFilterControls();
@@ -2076,7 +2261,7 @@ namespace RecoTool.Windows
             try
             {
                 // Effacer les TextBox de filtres (noms basés sur le XAML)
-                ClearTextBox("AccountIdFilterTextBox");
+                // Do NOT clear AccountId control to preserve Account filter from parent page
                 ClearTextBox("CurrencyFilterTextBox");
                 ClearTextBox("CountryFilterTextBox");
                 ClearTextBox("MinAmountFilterTextBox");
@@ -2086,6 +2271,7 @@ namespace RecoTool.Windows
                 ClearComboBox("ActionComboBox");
                 ClearComboBox("KPIComboBox");
                 ClearComboBox("IncidentTypeComboBox");
+                ClearComboBox("AssigneeComboBox");
                 // New ComboBoxes in Ambre Filters
                 ClearComboBox("TypeComboBox");
                 ClearComboBox("TransactionTypeComboBox");
@@ -2913,6 +3099,42 @@ namespace RecoTool.Windows
                 if (id == null || all == null) return string.Empty;
                 var match = all.FirstOrDefault(u => u.USR_ID == id.Value);
                 return match?.USR_FieldName ?? string.Empty;
+            }
+            catch { return string.Empty; }
+        }
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
+            => throw new NotSupportedException();
+    }
+
+    // Converter: map Assignee (string user ID) to display name using AssigneeOptions
+    public class AssigneeIdToNameConverter : IMultiValueConverter
+    {
+        // values: [0]=Assignee (string), [1]=AssigneeOptions (IEnumerable with Id/Name)
+        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+        {
+            try
+            {
+                string id = null;
+                if (values != null && values.Length > 0 && values[0] != null)
+                    id = values[0].ToString();
+                var options = values != null && values.Length > 1 ? values[1] as System.Collections.IEnumerable : null;
+                if (string.IsNullOrWhiteSpace(id) || options == null) return string.Empty;
+                foreach (var o in options)
+                {
+                    if (o == null) continue;
+                    try
+                    {
+                        var t = o.GetType();
+                        var pid = t.GetProperty("Id");
+                        var pname = t.GetProperty("Name");
+                        var oid = pid?.GetValue(o)?.ToString();
+                        if (!string.IsNullOrEmpty(oid) && string.Equals(oid, id, StringComparison.OrdinalIgnoreCase))
+                            return pname?.GetValue(o)?.ToString() ?? string.Empty;
+                    }
+                    catch { }
+                }
+                return string.Empty;
             }
             catch { return string.Empty; }
         }

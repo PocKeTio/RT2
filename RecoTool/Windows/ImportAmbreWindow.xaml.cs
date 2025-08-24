@@ -28,6 +28,7 @@ namespace RecoTool.Windows
         private readonly OfflineFirstService _offlineFirstService;
         private readonly AmbreImportService _ambreImportService;
         private string _selectedFilePath;
+        private string[] _selectedFilePaths = Array.Empty<string>();
         private bool _isImporting;
         private bool _isValidating;
         private CancellationTokenSource _cancellationTokenSource;
@@ -44,6 +45,18 @@ namespace RecoTool.Windows
                 _selectedFilePath = value;
                 OnPropertyChanged(nameof(SelectedFilePath));
                 OnFilePathChanged();
+            }
+        }
+
+        public string[] SelectedFilePaths
+        {
+            get => _selectedFilePaths;
+            set
+            {
+                _selectedFilePaths = value ?? Array.Empty<string>();
+                OnPropertyChanged(nameof(SelectedFilePaths));
+                // Keep compatibility: expose first file as SelectedFilePath
+                SelectedFilePath = _selectedFilePaths.FirstOrDefault();
             }
         }
 
@@ -125,15 +138,30 @@ namespace RecoTool.Windows
             {
                 var openFileDialog = new OpenFileDialog
                 {
-                    Title = "Select an AMBRE Excel file",
+                    Title = "Select all AMBRE files (Pivot and Receivable) — up to 2 files",
                     Filter = "Excel Files (*.xlsx;*.xls)|*.xlsx;*.xls|All Files (*.*)|*.*",
-                    Multiselect = false
+                    Multiselect = true
                 };
 
                 if (openFileDialog.ShowDialog() == true)
                 {
-                    SelectedFilePath = openFileDialog.FileName;
-                    FilePathTextBox.Text = SelectedFilePath;
+                    // Limit to 2 files max
+                    var chosen = openFileDialog.FileNames?.Take(2).ToArray() ?? Array.Empty<string>();
+                    SelectedFilePaths = chosen;
+                    if (chosen.Length == 0)
+                    {
+                        FilePathTextBox.Text = string.Empty;
+                    }
+                    else if (chosen.Length == 1)
+                    {
+                        FilePathTextBox.Text = chosen[0];
+                    }
+                    else
+                    {
+                        FilePathTextBox.Text = $"{chosen.Length} files selected";
+                    }
+
+                    // Title already informs the user; no extra popup here
                 }
             }
             catch (Exception ex)
@@ -213,13 +241,22 @@ namespace RecoTool.Windows
         /// </summary>
         private void OnFilePathChanged()
         {
-            if (!string.IsNullOrEmpty(SelectedFilePath))
+            if (SelectedFilePaths != null && SelectedFilePaths.Length > 0)
             {
                 try
                 {
-                    var fileInfo = new FileInfo(SelectedFilePath);
-                    FileInfoText.Text = $"File: {fileInfo.Name} ({fileInfo.Length / 1024:N0} KB) - Modified: {fileInfo.LastWriteTime:dd/MM/yyyy HH:mm}";
-                    LogMessage($"File selected: {SelectedFilePath}");
+                    if (SelectedFilePaths.Length == 1)
+                    {
+                        var fileInfo = new FileInfo(SelectedFilePaths[0]);
+                        FileInfoText.Text = $"File: {fileInfo.Name} ({fileInfo.Length / 1024:N0} KB) - Modified: {fileInfo.LastWriteTime:dd/MM/yyyy HH:mm}";
+                        LogMessage($"File selected: {SelectedFilePaths[0]}");
+                    }
+                    else
+                    {
+                        var names = SelectedFilePaths.Select(p => Path.GetFileName(p)).ToList();
+                        FileInfoText.Text = $"Files selected ({names.Count}): {string.Join(", ", names)}";
+                        LogMessage($"Files selected: {string.Join(", ", SelectedFilePaths)}");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -241,10 +278,14 @@ namespace RecoTool.Windows
         /// </summary>
         private async Task PreviewColumnMapping()
         {
-            if (string.IsNullOrEmpty(SelectedFilePath) || CurrentCountry == null)
+            if ((SelectedFilePaths == null || SelectedFilePaths.Length == 0) || CurrentCountry == null)
             {
-                ShowWarning("Veuillez sélectionner un pays et un fichier Excel.");
+                ShowWarning("Please select a country and an Excel file.");
                 return;
+            }
+            if (SelectedFilePaths.Length > 1)
+            {
+                ShowInfo("Preview/validation is available for a single file. To validate both, please validate each file separately, or proceed directly to import.");
             }
 
             try
@@ -374,7 +415,7 @@ namespace RecoTool.Windows
         {
             if (string.IsNullOrEmpty(SelectedFilePath) || CurrentCountry == null)
             {
-                ShowWarning("Veuillez sélectionner un pays et un fichier Excel.");
+                ShowWarning("Please select a country and an Excel file.");
                 return;
             }
 
@@ -490,12 +531,12 @@ namespace RecoTool.Windows
                     result.IsValid = !result.Errors.Any();
                 }
                 
-                UpdateProgress(100, "Validation terminée");
+                UpdateProgress(100, "Validation completed");
                 return result;
             }
             catch (Exception ex)
             {
-                result.Errors.Add($"Erreur lors de la validation: {ex.Message}");
+                result.Errors.Add($"Error during validation: {ex.Message}");
                 result.IsValid = false;
                 return result;
             }
@@ -530,7 +571,7 @@ namespace RecoTool.Windows
                 IsImporting = true;
                 _cancellationTokenSource = new CancellationTokenSource();
                 
-                LogMessage("Début de l'import...");
+                LogMessage("Starting import...");
                 
                 var importOptions = new ImportOptions
                 {
@@ -543,41 +584,45 @@ namespace RecoTool.Windows
                     CreateBackup = true
                 };
 
+                // (policy change) No pre-import snapshot. We'll freeze the previous snapshot after success.
+
                 var importResult = await PerformImport(importOptions, _cancellationTokenSource.Token);
 
                 if (importResult.Success)
                 {
-                    LogMessage($"Import terminé avec succès!");
-                    LogMessage($"  - Lignes importées: {importResult.ImportedCount}");
-                    LogMessage($"  - Lignes mises à jour: {importResult.UpdatedCount}");
-                    LogMessage($"  - Lignes supprimées: {importResult.DeletedCount}");
+                    LogMessage($"Import completed successfully!");
+                    LogMessage($"  - Imported rows: {importResult.ImportedCount}");
+                    LogMessage($"  - Updated rows: {importResult.UpdatedCount}");
+                    LogMessage($"  - Deleted rows: {importResult.DeletedCount}");
                     
-                    UpdateProgress(100, "Import terminé avec succès");
+                    UpdateProgress(100, "Import completed successfully");
                     
-                    ShowInfo($"Import terminé avec succès!\n\nLignes importées: {importResult.ImportedCount}\nLignes mises à jour: {importResult.UpdatedCount}\nLignes supprimées: {importResult.DeletedCount}");
+                    ShowInfo($"Import completed successfully!\n\nImported rows: {importResult.ImportedCount}\nUpdated rows: {importResult.UpdatedCount}\nDeleted rows: {importResult.DeletedCount}");
+
+                    // Snapshot freeze/insert is handled in AmbreImportService under the global lock.
                     
                     // Fermer la fenêtre après succès
                     DialogResult = true;
                 }
                 else
                 {
-                    LogMessage("Import échoué:", true);
+                    LogMessage("Import failed:", true);
                     foreach (var error in importResult.Errors)
                     {
                         LogMessage($"  - {error}", true);
                     }
-                    ShowError($"Import échoué:\n{string.Join("\n", importResult.Errors)}");
+                    ShowError($"Import failed:\n{string.Join("\n", importResult.Errors)}");
                 }
             }
             catch (OperationCanceledException)
             {
-                LogMessage("Import annulé par l'utilisateur");
-                UpdateProgress(0, "Import annulé");
+                LogMessage("Import canceled by user");
+                UpdateProgress(0, "Import canceled");
             }
             catch (Exception ex)
             {
-                LogMessage($"Erreur lors de l'import: {ex.Message}", true);
-                ShowError($"Erreur lors de l'import: {ex.Message}");
+                LogMessage($"Error during import: {ex.Message}", true);
+                ShowError($"Error during import: {ex.Message}");
             }
             finally
             {
@@ -595,25 +640,34 @@ namespace RecoTool.Windows
             try
             {
                 // Appel réel à AmbreImportService avec callback de progression
-                var result = await _ambreImportService.ImportAmbreFile(
-                    SelectedFilePath, 
-                    CurrentCountry?.CNT_Id,
-                    (message, progress) => 
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        UpdateProgress(progress, message);
-                        LogMessage(message);
-                    }
-                );
+                var svcResult = (SelectedFilePaths != null && SelectedFilePaths.Length > 1)
+                    ? await _ambreImportService.ImportAmbreFiles(
+                        SelectedFilePaths,
+                        CurrentCountry?.CNT_Id,
+                        (message, progress) =>
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            UpdateProgress(progress, message);
+                            LogMessage(message);
+                        })
+                    : await _ambreImportService.ImportAmbreFile(
+                        SelectedFilePath,
+                        CurrentCountry?.CNT_Id,
+                        (message, progress) =>
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            UpdateProgress(progress, message);
+                            LogMessage(message);
+                        });
 
                 // Convertir ImportResult d'AmbreImportService vers celui de l'UI
                 return new ImportResult
                 {
-                    Success = result.IsSuccess,
-                    ImportedCount = result.NewRecords,
-                    UpdatedCount = result.UpdatedRecords,
-                    DeletedCount = result.DeletedRecords,
-                    Errors = result.Errors?.ToList() ?? new List<string>()
+                    Success = svcResult.IsSuccess,
+                    ImportedCount = svcResult.NewRecords,
+                    UpdatedCount = svcResult.UpdatedRecords,
+                    DeletedCount = svcResult.DeletedRecords,
+                    Errors = svcResult.Errors?.ToList() ?? new List<string>()
                 };
             }
             catch (OperationCanceledException)
@@ -642,7 +696,7 @@ namespace RecoTool.Windows
         /// </summary>
         private void UpdateButtonStates()
         {
-            var hasFile = !string.IsNullOrEmpty(SelectedFilePath);
+            var hasFile = SelectedFilePaths != null && SelectedFilePaths.Length > 0;
             var hasCountry = CurrentCountry != null;
             var canValidate = hasFile && hasCountry && !IsImporting && !IsValidating;
             // Autoriser l'import si fichier + pays sélectionnés et aucune opération en cours
@@ -652,7 +706,7 @@ namespace RecoTool.Windows
             ImportButton.IsEnabled = canImport;
 
             // Changer le texte du bouton Annuler
-            CancelButton.Content = (IsImporting || IsValidating) ? "Annuler l'opération" : "Fermer";
+            CancelButton.Content = (IsImporting || IsValidating) ? "Cancel operation" : "Close";
         }
 
         /// <summary>
@@ -677,8 +731,13 @@ namespace RecoTool.Windows
             if (CurrentCountry != null)
                 parts.Add($"Pays: {CurrentCountry.CNT_Name}");
             
-            if (!string.IsNullOrEmpty(SelectedFilePath))
-                parts.Add($"Fichier: {Path.GetFileName(SelectedFilePath)}");
+            if (SelectedFilePaths != null && SelectedFilePaths.Length > 0)
+            {
+                if (SelectedFilePaths.Length == 1)
+                    parts.Add($"Fichier: {Path.GetFileName(SelectedFilePaths[0])}");
+                else
+                    parts.Add($"Fichiers: {string.Join(", ", SelectedFilePaths.Select(Path.GetFileName))}");
+            }
             
             if (_validationResult?.IsValid == true)
                 parts.Add($"Validé ({_validationResult.RecordCount} lignes)");
@@ -741,7 +800,7 @@ namespace RecoTool.Windows
         /// </summary>
         private void ShowWarning(string message)
         {
-            MessageBox.Show(message, "Avertissement", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(message, "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
         /// <summary>
@@ -749,7 +808,7 @@ namespace RecoTool.Windows
         /// </summary>
         private void ShowError(string message)
         {
-            MessageBox.Show(message, "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
         #endregion

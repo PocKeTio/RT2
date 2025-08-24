@@ -56,15 +56,16 @@ namespace RecoTool
                 // Complete referential load
                 offline.LoadReferentialsAsync().GetAwaiter().GetResult();
 
-                // Ensure a current country is set (prefer LastCountryUsed from T_Param)
                 var currentCountry = offline.CurrentCountryId;
-                if (string.IsNullOrWhiteSpace(currentCountry))
+
+                // Ensure Control DB schema exists early (idempotent)
+                try
                 {
-                    var last = offline.GetParameter("LastCountryUsed");
-                    if (!string.IsNullOrWhiteSpace(last))
-                    {
-                        offline.SetCurrentCountryAsync(last).GetAwaiter().GetResult();
-                    }
+                    offline.EnsureControlSchemaAsync().GetAwaiter().GetResult();
+                }
+                catch (Exception ex2)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Startup] EnsureControlSchema warning: {ex2.Message}");
                 }
             }
             catch (Exception ex)

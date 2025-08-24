@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Data;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,6 +11,9 @@ using LiveCharts.Wpf;
 using Microsoft.Extensions.DependencyInjection;
 using RecoTool.Models;
 using RecoTool.Services;
+using System.Reflection;
+using System.Windows.Media;
+using System.Text.Json;
 
 namespace RecoTool.Windows
 {
@@ -26,6 +30,10 @@ namespace RecoTool.Windows
         private bool _isLoading;
         private bool _canRefresh = true;
         private List<ReconciliationViewData> _reconciliationViewData;
+        private bool _usingSnapshot;
+        private DateTime? _selectedSnapshotDate;
+        private List<DateTime> _availableSnapshotDates;
+        private Brush _defaultBackground;
         
         // Champs pour les propriétés de binding
         private List<Country> _availableCountries;
@@ -38,6 +46,7 @@ namespace RecoTool.Windows
         private int _pivotAccountsCount;
         private SeriesCollection _currencyDistributionSeries;
         private SeriesCollection _actionDistributionSeries;
+        private SeriesCollection _kpiRiskSeries;
         private string _statusMessage;
         private string _lastUpdateTime;
         
@@ -45,6 +54,13 @@ namespace RecoTool.Windows
         private ChartValues<double> _receivableChartData;
         private ChartValues<double> _pivotChartData;
         private List<string> _actionLabels;
+        private List<string> _kpiRiskLabels;
+        private SeriesCollection _receivablePivotByActionSeries;
+        private List<string> _receivablePivotByActionLabels;
+        private SeriesCollection _deletionDelaySeries;
+        private List<string> _deletionDelayLabels;
+        private SeriesCollection _newDeletedDailySeries;
+        private List<string> _newDeletedDailyLabels;
 
         public event PropertyChangedEventHandler PropertyChanged;
 
@@ -56,6 +72,389 @@ namespace RecoTool.Windows
             InitializeComponent();
             InitializeProperties();
             DataContext = this;
+            _defaultBackground = MainScrollViewer?.Background;
+        }
+
+        private async void UserControl_Loaded(object sender, RoutedEventArgs e)
+        {
+            await RefreshSnapshotDatePickerAsync();
+        }
+
+        /// <summary>
+        /// Load available snapshot dates for current country and restrict DatePicker to only those dates.
+        /// </summary>
+        private async Task RefreshSnapshotDatePickerAsync()
+        {
+            try
+            {
+                if (_reconciliationService == null || string.IsNullOrWhiteSpace(CurrentCountryId) || SnapshotDatePicker == null)
+                    return;
+
+                var dates = await _reconciliationService.GetKpiSnapshotDatesAsync(CurrentCountryId);
+                _availableSnapshotDates = dates ?? new List<DateTime>();
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    // Reset picker config
+                    SnapshotDatePicker.BlackoutDates.Clear();
+
+                    if (_availableSnapshotDates.Count == 0)
+                    {
+                        SnapshotDatePicker.DisplayDateStart = null;
+                        SnapshotDatePicker.DisplayDateEnd = null;
+                        SnapshotDatePicker.IsEnabled = false;
+                        return;
+                    }
+
+                    SnapshotDatePicker.IsEnabled = true;
+
+                    var min = _availableSnapshotDates.Min();
+                    var max = _availableSnapshotDates.Max();
+                    SnapshotDatePicker.DisplayDateStart = min;
+                    SnapshotDatePicker.DisplayDateEnd = max;
+                    // Ensure calendar opens around a valid date
+                    SnapshotDatePicker.DisplayDate = _selectedSnapshotDate ?? max;
+
+                    // Build blackout ranges to exclude all days not present in the allowed set between min and max
+                    var allowed = new HashSet<DateTime>(_availableSnapshotDates.Select(d => d.Date));
+                    DateTime cursor = min.Date;
+                    DateTime? blackoutStart = null;
+                    while (cursor <= max.Date)
+                    {
+                        bool isAllowed = allowed.Contains(cursor);
+                        if (!isAllowed && blackoutStart == null)
+                        {
+                            blackoutStart = cursor;
+                        }
+                        else if (isAllowed && blackoutStart != null)
+                        {
+                            // Close blackout range on previous day
+                            var blackoutEnd = cursor.AddDays(-1);
+                            if (blackoutEnd >= blackoutStart.Value)
+                                SnapshotDatePicker.BlackoutDates.Add(new CalendarDateRange(blackoutStart.Value, blackoutEnd));
+                            blackoutStart = null;
+                        }
+                        cursor = cursor.AddDays(1);
+                    }
+                    if (blackoutStart != null)
+                    {
+                        SnapshotDatePicker.BlackoutDates.Add(new CalendarDateRange(blackoutStart.Value, max.Date));
+                    }
+
+                    // Also blackout outside of [min, max] to prevent navigation selection
+                    if (min.Date > DateTime.MinValue.Date)
+                    {
+                        SnapshotDatePicker.BlackoutDates.Add(new CalendarDateRange(DateTime.MinValue.Date, min.AddDays(-1).Date));
+                    }
+                    if (max.Date < DateTime.MaxValue.Date.AddDays(-2))
+                    {
+                        SnapshotDatePicker.BlackoutDates.Add(new CalendarDateRange(max.AddDays(1).Date, DateTime.MaxValue.Date.AddDays(-1)));
+                    }
+
+                    // If a selected date is not allowed anymore, clear it
+                    if (_selectedSnapshotDate.HasValue && !(_availableSnapshotDates?.Contains(_selectedSnapshotDate.Value.Date) ?? false))
+                    {
+                        _selectedSnapshotDate = null;
+                        SnapshotDatePicker.SelectedDate = null;
+                    }
+                });
+            }
+            catch
+            {
+                // Non-fatal UI constraint
+            }
+        }
+
+        private void SnapshotDatePicker_DateValidationError(object sender, DatePickerDateValidationErrorEventArgs e)
+        {
+            e.ThrowException = false;
+            if (sender is DatePicker dp)
+            {
+                dp.SelectedDate = null;
+                StatusMessage = "Invalid date for snapshot. Please pick a highlighted date.";
+            }
+        }
+
+        private async void SnapshotDatePicker_CalendarOpened(object sender, RoutedEventArgs e)
+        {
+            await RefreshSnapshotDatePickerAsync();
+            // Align display to a valid date
+            if (_availableSnapshotDates != null && _availableSnapshotDates.Count > 0)
+            {
+                var target = _selectedSnapshotDate ?? _availableSnapshotDates.Max();
+                SnapshotDatePicker.DisplayDate = target;
+            }
+        }
+
+        private async void SnapshotDatePicker_SelectedDateChanged(object sender, SelectionChangedEventArgs e)
+        {
+            try
+            {
+                _selectedSnapshotDate = (sender as DatePicker)?.SelectedDate;
+                await RefreshAsync();
+            }
+            catch { }
+        }
+
+        private async void ClearSnapshotDate_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                _selectedSnapshotDate = null;
+                _usingSnapshot = false;
+                if (SnapshotDatePicker != null) SnapshotDatePicker.SelectedDate = null;
+                await RefreshAsync();
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Durée moyenne avant suppression (réconciliation) par paliers: 0-14j, 15-30j, 1-3 mois, >3 mois
+        /// </summary>
+        private void UpdateDeletionDelayChart()
+        {
+            try
+            {
+                if (_reconciliationViewData == null || !_reconciliationViewData.Any())
+                {
+                    DeletionDelaySeries = new SeriesCollection();
+                    DeletionDelayLabels = new List<string>();
+                    return;
+                }
+
+                var items = _reconciliationViewData
+                    .Where(r => r.CreationDate.HasValue && r.DeleteDate.HasValue)
+                    .Select(r => (int)(r.DeleteDate.Value.Date - r.CreationDate.Value.Date).TotalDays)
+                    .Where(d => d >= 0)
+                    .ToList();
+
+                var buckets = new[]
+                {
+                    new { Key = "0-14j", Min = 0, Max = 14 },
+                    new { Key = "15-30j", Min = 15, Max = 30 },
+                    new { Key = "1-3 mois", Min = 31, Max = 92 }, // approx 3 months = 92 days
+                    new { Key = ">3 mois", Min = 93, Max = int.MaxValue }
+                };
+
+                var labels = new List<string>();
+                var avgDaysValues = new ChartValues<double>();
+                foreach (var b in buckets)
+                {
+                    var inBucket = items.Where(d => d >= b.Min && d <= b.Max).ToList();
+                    double avg = inBucket.Any() ? inBucket.Average() : 0;
+                    labels.Add(b.Key);
+                    avgDaysValues.Add(avg);
+                }
+
+                DeletionDelayLabels = labels;
+                DeletionDelaySeries = new SeriesCollection
+                {
+                    new ColumnSeries
+                    {
+                        Title = "Durée moyenne (jours)",
+                        Values = avgDaysValues,
+                        DataLabels = true,
+                        LabelPoint = cp => (cp.Y > 0 ? cp.Y.ToString("N0") : string.Empty)
+                    }
+                };
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Erreur lors de la mise à jour 'Durée avant réconciliation': {ex.Message}");
+                DeletionDelaySeries = new SeriesCollection();
+                DeletionDelayLabels = new List<string>();
+            }
+        }
+
+        /// <summary>
+        /// Récap quotidien: Nouveau vs Supprimé (Deleted), axe X = jours basé sur DeleteDate
+        /// </summary>
+        private void UpdateNewDeletedDailyChart()
+        {
+            try
+            {
+                if (_reconciliationViewData == null || !_reconciliationViewData.Any())
+                {
+                    NewDeletedDailySeries = new SeriesCollection();
+                    NewDeletedDailyLabels = new List<string>();
+                    return;
+                }
+
+                var deletions = _reconciliationViewData.Where(r => r.DeleteDate.HasValue).ToList();
+                if (!deletions.Any())
+                {
+                    NewDeletedDailySeries = new SeriesCollection();
+                    NewDeletedDailyLabels = new List<string>();
+                    return;
+                }
+
+                var minDay = deletions.Min(r => r.DeleteDate.Value.Date);
+                var maxDay = deletions.Max(r => r.DeleteDate.Value.Date);
+                // Add a small margin of days around
+                minDay = minDay.AddDays(-3);
+                maxDay = maxDay.AddDays(3);
+
+                var dayCount = (int)(maxDay - minDay).TotalDays + 1;
+                var labels = new List<string>(dayCount);
+                var newPerDay = new ChartValues<int>();
+                var deletedPerDay = new ChartValues<int>();
+
+                var creations = _reconciliationViewData.Where(r => r.CreationDate.HasValue).ToList();
+
+                for (int i = 0; i < dayCount; i++)
+                {
+                    var day = minDay.AddDays(i);
+                    labels.Add(day.ToString("dd/MM"));
+                    int newCount = creations.Count(r => r.CreationDate.Value.Date == day);
+                    int delCount = deletions.Count(r => r.DeleteDate.Value.Date == day);
+                    newPerDay.Add(newCount);
+                    deletedPerDay.Add(delCount);
+                }
+
+                NewDeletedDailyLabels = labels;
+                NewDeletedDailySeries = new SeriesCollection
+                {
+                    new LineSeries { Title = "Nouveaux", Values = newPerDay, PointGeometry = null },
+                    new LineSeries { Title = "Deleted", Values = deletedPerDay, PointGeometry = null }
+                };
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Erreur lors de la mise à jour 'Nouveau vs Deleted (jour)': {ex.Message}");
+                NewDeletedDailySeries = new SeriesCollection();
+                NewDeletedDailyLabels = new List<string>();
+            }
+        }
+
+        /// <summary>
+        /// Met à jour le graphique empilé Receivable vs Pivot par Action
+        /// </summary>
+        private void UpdateReceivablePivotByActionChart()
+        {
+            try
+            {
+                if (_reconciliationViewData == null || !_reconciliationViewData.Any())
+                {
+                    ReceivablePivotByActionSeries = new SeriesCollection();
+                    ReceivablePivotByActionLabels = new List<string>();
+                    return;
+                }
+
+                var currentCountry = _offlineFirstService?.CurrentCountry;
+                if (currentCountry == null)
+                {
+                    ReceivablePivotByActionSeries = new SeriesCollection();
+                    ReceivablePivotByActionLabels = new List<string>();
+                    return;
+                }
+
+                var receivableId = currentCountry.CNT_AmbreReceivable;
+                var pivotId = currentCountry.CNT_AmbrePivot;
+
+                // Resolve action labels from referential user fields (prefer USR_FieldName, then description)
+                var userFields = _offlineFirstService?.UserFields ?? new List<UserField>();
+                var actionFieldMap = userFields
+                    .Where(u => string.Equals(u.USR_Category, "Action", StringComparison.OrdinalIgnoreCase))
+                    .ToDictionary(u => u.USR_ID, u => u);
+
+                var actions = _reconciliationViewData
+                    .Where(r => r.Action.HasValue)
+                    .Select(r => r.Action.Value)
+                    .Distinct()
+                    .OrderBy(a =>
+                    {
+                        if (actionFieldMap.TryGetValue(a, out var uf) && uf != null)
+                            return string.IsNullOrWhiteSpace(uf.USR_FieldName) ? (uf.USR_FieldDescription ?? GetActionName(a)) : uf.USR_FieldName;
+                        return GetActionName(a);
+                    })
+                    .ToList();
+
+                var labels = actions.Select(a =>
+                {
+                    if (actionFieldMap.TryGetValue(a, out var uf) && uf != null)
+                        return !string.IsNullOrWhiteSpace(uf.USR_FieldName) ? uf.USR_FieldName : (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : GetActionName(a));
+                    return GetActionName(a);
+                }).ToList();
+
+                var receivableValues = new ChartValues<int>();
+                var pivotValues = new ChartValues<int>();
+
+                foreach (var a in actions)
+                {
+                    var rCount = _reconciliationViewData.Count(x => x.Action == a && x.Account_ID == receivableId);
+                    var pCount = _reconciliationViewData.Count(x => x.Action == a && x.Account_ID == pivotId);
+                    receivableValues.Add(rCount);
+                    pivotValues.Add(pCount);
+                }
+
+                var series = new SeriesCollection
+                {
+                    new StackedColumnSeries { Title = "Receivable", Values = receivableValues, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N0") },
+                    new StackedColumnSeries { Title = "Pivot", Values = pivotValues, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N0") }
+                };
+
+                ReceivablePivotByActionLabels = labels;
+                ReceivablePivotByActionSeries = series;
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Erreur lors de la mise à jour Receivable vs Pivot par Action: {ex.Message}");
+                ReceivablePivotByActionSeries = new SeriesCollection();
+                ReceivablePivotByActionLabels = new List<string>();
+            }
+        }
+
+        /// <summary>
+        /// Met à jour le graphique KPI × RiskyItem (stacked columns: Risky, NonRisky, Unknown)
+        /// </summary>
+        private void UpdateKpiRiskChart()
+        {
+            try
+            {
+                if (_reconciliationViewData == null || !_reconciliationViewData.Any())
+                {
+                    KpiRiskSeries = new SeriesCollection();
+                    KpiRiskLabels = new List<string>();
+                    return;
+                }
+
+                // Group by KPI; consider null as Non-Risky
+                var grouped = _reconciliationViewData
+                    .Where(r => r.KPI.HasValue)
+                    .GroupBy(r => r.KPI.Value)
+                    .OrderBy(g => g.Key)
+                    .ToList();
+
+                var labels = new List<string>();
+                var riskyValues = new ChartValues<int>();
+                var nonRiskyValues = new ChartValues<int>();
+                var unknownValues = new ChartValues<int>();
+
+                foreach (var g in grouped)
+                {
+                    labels.Add(GetKPIName(g.Key));
+                    riskyValues.Add(g.Count(x => x.RiskyItem == true));
+                    // null is treated as false
+                    nonRiskyValues.Add(g.Count(x => x.RiskyItem != true));
+                    // keep unknownValues zero to maintain variable integrity (not used in series)
+                    unknownValues.Add(0);
+                }
+
+                var series = new SeriesCollection
+                {
+                    new StackedColumnSeries { Title = "Risky", Values = riskyValues, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N0") },
+                    new StackedColumnSeries { Title = "Non-Risky", Values = nonRiskyValues, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N0") }
+                };
+
+                KpiRiskLabels = labels;
+                KpiRiskSeries = series;
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Erreur lors de la mise à jour KPI × RiskyItem: {ex.Message}");
+                KpiRiskSeries = new SeriesCollection();
+                KpiRiskLabels = new List<string>();
+            }
         }
 
         /// <summary>
@@ -68,6 +467,7 @@ namespace RecoTool.Windows
             _offlineFirstService = offlineFirstService;
             _reconciliationService = reconciliationService;
             DataContext = this;
+            _defaultBackground = MainScrollViewer?.Background;
         }
 
         /// <summary>
@@ -79,6 +479,9 @@ namespace RecoTool.Windows
         {
             _offlineFirstService = offlineFirstService;
             _reconciliationService = reconciliationService;
+            DataContext = this;
+            // Reload available snapshot dates when services/country change
+            _ = RefreshSnapshotDatePickerAsync();
         }
 
         /// <summary>
@@ -96,13 +499,21 @@ namespace RecoTool.Windows
             _pivotAccountsCount = 0;
             _currencyDistributionSeries = new SeriesCollection();
             _actionDistributionSeries = new SeriesCollection();
+            _kpiRiskSeries = new SeriesCollection();
             _statusMessage = "Prêt";
             _lastUpdateTime = DateTime.Now.ToString("HH:mm:ss");
             
             // Initialiser les nouvelles propriétés de graphiques
             _receivableChartData = new ChartValues<double>();
             _pivotChartData = new ChartValues<double>();
+            _receivablePivotByActionSeries = new SeriesCollection();
+            _receivablePivotByActionLabels = new List<string>();
             _actionLabels = new List<string>();
+            _kpiRiskLabels = new List<string>();
+            _deletionDelaySeries = new SeriesCollection();
+            _deletionDelayLabels = new List<string>();
+            _newDeletedDailySeries = new SeriesCollection();
+            _newDeletedDailyLabels = new List<string>();
         }
 
         public string CurrentCountryName => _offlineFirstService?.CurrentCountry?.CNT_Name;
@@ -221,6 +632,16 @@ namespace RecoTool.Windows
             }
         }
 
+        public SeriesCollection KpiRiskSeries
+        {
+            get => _kpiRiskSeries;
+            set
+            {
+                _kpiRiskSeries = value;
+                OnPropertyChanged();
+            }
+        }
+
         public string StatusMessage
         {
             get => _statusMessage;
@@ -271,6 +692,76 @@ namespace RecoTool.Windows
             }
         }
 
+        public List<string> KpiRiskLabels
+        {
+            get => _kpiRiskLabels;
+            set
+            {
+                _kpiRiskLabels = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public SeriesCollection ReceivablePivotByActionSeries
+        {
+            get => _receivablePivotByActionSeries;
+            set
+            {
+                _receivablePivotByActionSeries = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public List<string> ReceivablePivotByActionLabels
+        {
+            get => _receivablePivotByActionLabels;
+            set
+            {
+                _receivablePivotByActionLabels = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public SeriesCollection DeletionDelaySeries
+        {
+            get => _deletionDelaySeries;
+            set
+            {
+                _deletionDelaySeries = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public List<string> DeletionDelayLabels
+        {
+            get => _deletionDelayLabels;
+            set
+            {
+                _deletionDelayLabels = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public SeriesCollection NewDeletedDailySeries
+        {
+            get => _newDeletedDailySeries;
+            set
+            {
+                _newDeletedDailySeries = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public List<string> NewDeletedDailyLabels
+        {
+            get => _newDeletedDailyLabels;
+            set
+            {
+                _newDeletedDailyLabels = value;
+                OnPropertyChanged();
+            }
+        }
+
         #endregion
 
         #region IRefreshable Implementation
@@ -292,6 +783,8 @@ namespace RecoTool.Windows
             try
             {
                 RefreshStarted?.Invoke(this, EventArgs.Empty);
+                // Keep date picker in sync with DB snapshot dates
+                await RefreshSnapshotDatePickerAsync();
                 await LoadDashboardDataAsync();
             }
             finally
@@ -305,38 +798,570 @@ namespace RecoTool.Windows
         #region Data Loading
 
         /// <summary>
-        /// Charge les données réelles depuis la base
+        /// Charge les données (snapshot si sélectionné, sinon live) et met à jour les KPIs/graphes.
         /// </summary>
-        private async Task LoadDashboardDataAsync()
+        private async Task LoadDashboardDataAsync(bool retryIfCountryNotReady = true)
         {
             try
             {
                 IsLoading = true;
                 ShowLoadingIndicator(true);
 
-                if (_offlineFirstService == null || string.IsNullOrEmpty(_offlineFirstService.CurrentCountryId))
-                {
-                    ShowError("Aucune country sélectionnée");
-                    return;
-                }
+                // S'assurer qu'un pays est prêt avant de charger
+                if (!await EnsureCountryReadyAsync(retryIfCountryNotReady))
+                    return; // sortie silencieuse si toujours pas prêt
 
-                // Charger les données réelles depuis T_Data_Ambre et T_Reconciliation
-                await LoadRealDataFromDatabase();
-                
-                UpdateKPISummary();
-                UpdateCharts();
-                UpdateCountryInfo();
+                if (_selectedSnapshotDate.HasValue)
+                {
+                    var loaded = await TryLoadSnapshotAsync(_selectedSnapshotDate.Value, _offlineFirstService.CurrentCountryId);
+                    if (!loaded)
+                    {
+                        // Fallback aux données live
+                        await LoadLiveDashboardAsync();
+                    }
+                    else
+                    {
+                        // Graphes restent live; seules tuiles KPI proviennent du snapshot
+                        UpdateCountryInfo();
+                    }
+                }
+                else
+                {
+                    await LoadLiveDashboardAsync();
+                }
+                ApplyHistoricalBackground();
             }
             catch (Exception ex)
             {
                 ShowError($"Erreur lors du chargement des données: {ex.Message}");
-                LoadSampleData();
             }
             finally
             {
                 IsLoading = false;
                 ShowLoadingIndicator(false);
             }
+        }
+
+        /// <summary>
+        /// Vérifie que le pays courant est prêt. Optionnellement, effectue une unique attente courte avant nouvel essai.
+        /// </summary>
+        private async Task<bool> EnsureCountryReadyAsync(bool allowSingleRetry)
+        {
+            if (_offlineFirstService != null && !string.IsNullOrEmpty(_offlineFirstService.CurrentCountryId))
+                return true;
+
+            System.Diagnostics.Debug.WriteLine("HomePage.EnsureCountryReadyAsync: country not ready; scheduling a short retry...");
+            if (allowSingleRetry)
+            {
+                await Task.Delay(200);
+                return _offlineFirstService != null && !string.IsNullOrEmpty(_offlineFirstService.CurrentCountryId);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Charge les données live et met à jour KPIs, graphes et infos pays.
+        /// </summary>
+        private async Task LoadLiveDashboardAsync()
+        {
+            await LoadRealDataFromDatabase();
+            UpdateKPISummary();
+            UpdateCharts();
+            UpdateCountryInfo();
+        }
+
+        private async Task<bool> TryLoadSnapshotAsync(DateTime date, string countryId)
+        {
+            try
+            {
+                if (_reconciliationService == null || string.IsNullOrWhiteSpace(countryId)) return false;
+                var table = await _reconciliationService.GetKpiSnapshotAsync(date.Date, countryId);
+                if (table == null || table.Rows.Count == 0)
+                {
+                    _usingSnapshot = false;
+                    StatusMessage = $"No snapshot found for {date:dd/MM/yyyy}. Showing live data.";
+                    return false;
+                }
+
+                var row = table.Rows[0];
+                // Mettre à jour les tuiles KPI à partir des colonnes agrégées du snapshot
+                MissingInvoicesCount = SafeGetInt(row, "MissingInvoices");
+                PaidButNotReconciledCount = SafeGetInt(row, "PaidNotReconciled");
+                UnderInvestigationCount = SafeGetInt(row, "UnderInvestigation");
+                ReceivableAccountsCount = SafeGetInt(row, "ReceivableCount");
+                TotalReceivableAmount = SafeGetDecimal(row, "ReceivableAmount");
+                PivotAccountsCount = SafeGetInt(row, "PivotCount");
+                TotalPivotAmount = SafeGetDecimal(row, "PivotAmount");
+
+                _usingSnapshot = true;
+                StatusMessage = $"Snapshot loaded for {date:dd/MM/yyyy}.";
+                LastUpdateTime = DateTime.Now.ToString("HH:mm:ss");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _usingSnapshot = false;
+                StatusMessage = "Erreur de chargement du snapshot";
+                System.Diagnostics.Debug.WriteLine($"Erreur TryLoadSnapshotAsync: {ex.Message}");
+                return false;
+            }
+        }
+
+        private void ApplyHistoricalBackground()
+        {
+            try
+            {
+                if (MainScrollViewer == null) return;
+                bool isHistorical = _usingSnapshot && _selectedSnapshotDate.HasValue && _selectedSnapshotDate.Value.Date != DateTime.Today.Date;
+                if (isHistorical)
+                {
+                    MainScrollViewer.Background = new SolidColorBrush(Color.FromRgb(0xF2, 0xF2, 0xF2));
+                }
+                else
+                {
+                    MainScrollViewer.Background = _defaultBackground ?? MainScrollViewer.Background;
+                }
+            }
+            catch { }
+        }
+
+        private async void TodaySnapshotDate_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var today = DateTime.Today.Date;
+                // If today is a snapshot date, select it; else revert to live view
+                if (_availableSnapshotDates != null && _availableSnapshotDates.Any(d => d.Date == today))
+                {
+                    _selectedSnapshotDate = today;
+                    if (SnapshotDatePicker != null)
+                    {
+                        SnapshotDatePicker.SelectedDate = today;
+                        SnapshotDatePicker.DisplayDate = today;
+                    }
+                }
+                else
+                {
+                    _selectedSnapshotDate = null;
+                    _usingSnapshot = false;
+                    if (SnapshotDatePicker != null)
+                    {
+                        SnapshotDatePicker.SelectedDate = null;
+                        SnapshotDatePicker.DisplayDate = today;
+                    }
+                }
+                await RefreshAsync();
+            }
+            catch { }
+        }
+
+        private async void ExportDailyKpi_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_reconciliationService == null || string.IsNullOrWhiteSpace(CurrentCountryId))
+                {
+                    ShowError("Export is unavailable: missing service or country.");
+                    return;
+                }
+
+                // Determine range: from first to last available snapshot
+                var dates = _availableSnapshotDates ?? await _reconciliationService.GetKpiSnapshotDatesAsync(CurrentCountryId);
+                if (dates == null || dates.Count == 0)
+                {
+                    ShowError("No snapshots to export.");
+                    return;
+                }
+                var from = dates.Min().Date;
+                var to = dates.Max().Date;
+
+                var table = await _reconciliationService.GetKpiSnapshotsAsync(from, to, CurrentCountryId);
+                if (table == null || table.Rows.Count == 0)
+                {
+                    ShowError("No data returned for export.");
+                    return;
+                }
+
+                // Base columns: keep non-JSON fields
+                var jsonCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (DataColumn col in table.Columns)
+                {
+                    if (col.ColumnName.IndexOf("json", StringComparison.OrdinalIgnoreCase) >= 0)
+                        jsonCols.Add(col.ColumnName);
+                }
+                var exportCols = table.Columns.Cast<DataColumn>()
+                    .Where(c => !jsonCols.Contains(c.ColumnName))
+                    .ToList();
+
+                // Build flattened schema from JSON across all rows
+                var flatHeaders = BuildFlattenedHeaders(table);
+
+                var sfd = new Microsoft.Win32.SaveFileDialog
+                {
+                    FileName = $"KPI_{from:yyyyMMdd}_to_{to:yyyyMMdd}_{CurrentCountryId}.csv",
+                    Filter = "CSV Files (*.csv)|*.csv|All Files (*.*)|*.*",
+                    DefaultExt = ".csv"
+                };
+                var ok = sfd.ShowDialog();
+                if (ok != true) return;
+
+                WriteDataTableToCsv(table, exportCols, flatHeaders, sfd.FileName);
+                StatusMessage = $"Exported {table.Rows.Count} rows to {System.IO.Path.GetFileName(sfd.FileName)}";
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Export failed: {ex.Message}");
+            }
+        }
+
+        private List<string> BuildFlattenedHeaders(DataTable table)
+        {
+            var headers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (DataRow row in table.Rows)
+            {
+                TryAddDeletionDelayHeaders(row, headers);
+                TryAddReceivablePivotByActionHeaders(row, headers);
+                TryAddKpiDistributionHeaders(row, headers);
+                TryAddKpiRiskHeaders(row, headers);
+                TryAddCurrencyDistributionHeaders(row, headers);
+                TryAddActionDistributionHeaders(row, headers);
+            }
+            // Return ordered headers for stable CSV
+            return headers.OrderBy(h => h, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        private void WriteDataTableToCsv(DataTable table, List<DataColumn> cols, List<string> flatHeaders, string path)
+        {
+            using (var fs = new System.IO.FileStream(path, System.IO.FileMode.Create, System.IO.FileAccess.Write, System.IO.FileShare.None))
+            using (var writer = new System.IO.StreamWriter(fs, new System.Text.UTF8Encoding(true)))
+            {
+                // header: base columns + flattened
+                var header = cols.Select(c => c.ColumnName).Concat(flatHeaders).Select(CsvEscape);
+                writer.WriteLine(string.Join(",", header));
+                foreach (DataRow row in table.Rows)
+                {
+                    var values = cols.Select(c => CsvEscape(FormatCsvValue(row[c]))).ToList();
+                    var flatMap = ExtractFlattenedValues(row);
+                    foreach (var h in flatHeaders)
+                    {
+                        flatMap.TryGetValue(h, out var v);
+                        values.Add(CsvEscape(v ?? string.Empty));
+                    }
+                    writer.WriteLine(string.Join(",", values));
+                }
+            }
+        }
+
+        private static string FormatCsvValue(object v)
+        {
+            if (v == null || v == DBNull.Value) return string.Empty;
+            if (v is DateTime dt) return dt.ToString("yyyy-MM-dd");
+            return v.ToString();
+        }
+
+        private static string CsvEscape(string s)
+        {
+            if (s == null) return string.Empty;
+            bool needQuotes = s.Contains(',') || s.Contains('"') || s.Contains('\n') || s.Contains('\r');
+            if (s.Contains('"')) s = s.Replace("\"", "\"\"");
+            return needQuotes ? "\"" + s + "\"" : s;
+        }
+
+        private Dictionary<string, string> ExtractFlattenedValues(DataRow row)
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            TryFillDeletionDelay(row, map);
+            TryFillReceivablePivotByAction(row, map);
+            TryFillKpiDistribution(row, map);
+            TryFillKpiRisk(row, map);
+            TryFillCurrencyDistribution(row, map);
+            TryFillActionDistribution(row, map);
+            return map;
+        }
+
+        private static string SanitizeHeader(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return "_";
+            var bad = new char[] { ' ', '\\', '/', '\t', '\n', '\r', ',', ';', ':', '"', '\'', '(', ')', '[', ']', '{', '}', '<', '>', '|', '#', '%', '+', '=' };
+            foreach (var ch in bad) s = s.Replace(ch, '_');
+            return s;
+        }
+
+        private void TryAddDeletionDelayHeaders(DataRow row, HashSet<string> headers)
+        {
+            if (!row.Table.Columns.Contains("DeletionDelayBucketsJson")) return;
+            var json = row["DeletionDelayBucketsJson"]?.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    var bucket = el.GetProperty("bucket").GetString() ?? "Bucket";
+                    var key1 = $"DelDelay_avgDays_{SanitizeHeader(bucket)}";
+                    var key2 = $"DelDelay_count_{SanitizeHeader(bucket)}";
+                    headers.Add(key1);
+                    headers.Add(key2);
+                }
+            }
+            catch { }
+        }
+
+        private void TryFillDeletionDelay(DataRow row, Dictionary<string, string> map)
+        {
+            if (!row.Table.Columns.Contains("DeletionDelayBucketsJson")) return;
+            var json = row["DeletionDelayBucketsJson"]?.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    var bucket = el.TryGetProperty("bucket", out var p) ? p.GetString() : null;
+                    var avg = el.TryGetProperty("avgDays", out var a) ? a.ToString() : null;
+                    var cnt = el.TryGetProperty("count", out var c) ? c.ToString() : null;
+                    if (!string.IsNullOrEmpty(bucket))
+                    {
+                        map[$"DelDelay_avgDays_{SanitizeHeader(bucket)}"] = avg ?? string.Empty;
+                        map[$"DelDelay_count_{SanitizeHeader(bucket)}"] = cnt ?? string.Empty;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void TryAddReceivablePivotByActionHeaders(DataRow row, HashSet<string> headers)
+        {
+            if (!row.Table.Columns.Contains("ReceivablePivotByActionJson")) return;
+            var json = row["ReceivablePivotByActionJson"]?.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("labels", out var labels) || labels.ValueKind != JsonValueKind.Array) return;
+                foreach (var l in labels.EnumerateArray())
+                {
+                    var label = l.GetString() ?? "Action";
+                    headers.Add($"ActPivot_Receivable_{SanitizeHeader(label)}");
+                    headers.Add($"ActPivot_Pivot_{SanitizeHeader(label)}");
+                }
+            }
+            catch { }
+        }
+
+        private void TryFillReceivablePivotByAction(DataRow row, Dictionary<string, string> map)
+        {
+            if (!row.Table.Columns.Contains("ReceivablePivotByActionJson")) return;
+            var json = row["ReceivablePivotByActionJson"]?.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                var labels = root.GetProperty("labels").EnumerateArray().Select(x => x.GetString()).ToList();
+                var recv = root.GetProperty("receivable").EnumerateArray().Select(x => x.ToString()).ToList();
+                var piv = root.GetProperty("pivot").EnumerateArray().Select(x => x.ToString()).ToList();
+                for (int i = 0; i < labels.Count; i++)
+                {
+                    var label = labels[i] ?? "Action";
+                    var r = i < recv.Count ? recv[i] : string.Empty;
+                    var p = i < piv.Count ? piv[i] : string.Empty;
+                    map[$"ActPivot_Receivable_{SanitizeHeader(label)}"] = r;
+                    map[$"ActPivot_Pivot_{SanitizeHeader(label)}"] = p;
+                }
+            }
+            catch { }
+        }
+
+        private void TryAddKpiDistributionHeaders(DataRow row, HashSet<string> headers)
+        {
+            if (!row.Table.Columns.Contains("KpiDistributionJson")) return;
+            var json = row["KpiDistributionJson"]?.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    var kpi = el.TryGetProperty("kpi", out var p) ? (p.GetString() ?? "KPI") : "KPI";
+                    headers.Add($"KpiDist_Count_{SanitizeHeader(kpi)}");
+                }
+            }
+            catch { }
+        }
+
+        private void TryFillKpiDistribution(DataRow row, Dictionary<string, string> map)
+        {
+            if (!row.Table.Columns.Contains("KpiDistributionJson")) return;
+            var json = row["KpiDistributionJson"]?.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    var kpi = el.TryGetProperty("kpi", out var p) ? p.GetString() : null;
+                    var cnt = el.TryGetProperty("count", out var c) ? c.ToString() : null;
+                    if (!string.IsNullOrEmpty(kpi))
+                        map[$"KpiDist_Count_{SanitizeHeader(kpi)}"] = cnt ?? string.Empty;
+                }
+            }
+            catch { }
+        }
+
+        private void TryAddKpiRiskHeaders(DataRow row, HashSet<string> headers)
+        {
+            if (!row.Table.Columns.Contains("KpiRiskMatrixJson")) return;
+            var json = row["KpiRiskMatrixJson"]?.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("kpiLabels", out var labels) || labels.ValueKind != JsonValueKind.Array) return;
+                foreach (var l in labels.EnumerateArray())
+                {
+                    var label = l.GetString() ?? "KPI";
+                    headers.Add($"KpiRisk_Risky_{SanitizeHeader(label)}");
+                    headers.Add($"KpiRisk_NonRisky_{SanitizeHeader(label)}");
+                }
+            }
+            catch { }
+        }
+
+        private void TryFillKpiRisk(DataRow row, Dictionary<string, string> map)
+        {
+            if (!row.Table.Columns.Contains("KpiRiskMatrixJson")) return;
+            var json = row["KpiRiskMatrixJson"]?.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                var labels = root.GetProperty("kpiLabels").EnumerateArray().Select(x => x.GetString()).ToList();
+                var values = root.GetProperty("values").EnumerateArray().Select(arr => arr.EnumerateArray().Select(v => v.ToString()).ToList()).ToList();
+                // Expect values[0]=risky, values[1]=nonRisky
+                var risky = values.Count > 0 ? values[0] : new List<string>();
+                var nonRisky = values.Count > 1 ? values[1] : new List<string>();
+                for (int i = 0; i < labels.Count; i++)
+                {
+                    var label = labels[i] ?? "KPI";
+                    var r = i < risky.Count ? risky[i] : string.Empty;
+                    var n = i < nonRisky.Count ? nonRisky[i] : string.Empty;
+                    map[$"KpiRisk_Risky_{SanitizeHeader(label)}"] = r;
+                    map[$"KpiRisk_NonRisky_{SanitizeHeader(label)}"] = n;
+                }
+            }
+            catch { }
+        }
+
+        private void TryAddCurrencyDistributionHeaders(DataRow row, HashSet<string> headers)
+        {
+            if (!row.Table.Columns.Contains("CurrencyDistributionJson")) return;
+            var json = row["CurrencyDistributionJson"]?.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    var ccy = el.TryGetProperty("ccy", out var p) ? (p.GetString() ?? "CCY") : "CCY";
+                    headers.Add($"Ccy_Amount_{SanitizeHeader(ccy)}");
+                }
+            }
+            catch { }
+        }
+
+        private void TryFillCurrencyDistribution(DataRow row, Dictionary<string, string> map)
+        {
+            if (!row.Table.Columns.Contains("CurrencyDistributionJson")) return;
+            var json = row["CurrencyDistributionJson"]?.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    var ccy = el.TryGetProperty("ccy", out var p) ? p.GetString() : null;
+                    var amt = el.TryGetProperty("amount", out var a) ? a.ToString() : null;
+                    if (!string.IsNullOrEmpty(ccy))
+                        map[$"Ccy_Amount_{SanitizeHeader(ccy)}"] = amt ?? string.Empty;
+                }
+            }
+            catch { }
+        }
+
+        private void TryAddActionDistributionHeaders(DataRow row, HashSet<string> headers)
+        {
+            if (!row.Table.Columns.Contains("ActionDistributionJson")) return;
+            var json = row["ActionDistributionJson"]?.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    var action = el.TryGetProperty("action", out var p) ? (p.GetString() ?? "Action") : "Action";
+                    headers.Add($"ActionDist_Count_{SanitizeHeader(action)}");
+                }
+            }
+            catch { }
+        }
+
+        private void TryFillActionDistribution(DataRow row, Dictionary<string, string> map)
+        {
+            if (!row.Table.Columns.Contains("ActionDistributionJson")) return;
+            var json = row["ActionDistributionJson"]?.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    var action = el.TryGetProperty("action", out var p) ? p.GetString() : null;
+                    var cnt = el.TryGetProperty("count", out var c) ? c.ToString() : null;
+                    if (!string.IsNullOrEmpty(action))
+                        map[$"ActionDist_Count_{SanitizeHeader(action)}"] = cnt ?? string.Empty;
+                }
+            }
+            catch { }
+        }
+
+        private int SafeGetInt(DataRow row, string column)
+        {
+            try
+            {
+                if (!row.Table.Columns.Contains(column)) return 0;
+                var obj = row[column];
+                if (obj == null || obj == DBNull.Value) return 0;
+                if (int.TryParse(obj.ToString(), out var i)) return i;
+                if (double.TryParse(obj.ToString(), out var d)) return (int)Math.Round(d);
+                return 0;
+            }
+            catch { return 0; }
+        }
+
+        private decimal SafeGetDecimal(DataRow row, string column)
+        {
+            try
+            {
+                if (!row.Table.Columns.Contains(column)) return 0m;
+                var obj = row[column];
+                if (obj == null || obj == DBNull.Value) return 0m;
+                if (decimal.TryParse(obj.ToString(), out var m)) return m;
+                if (double.TryParse(obj.ToString(), out var d)) return (decimal)d;
+                return 0m;
+            }
+            catch { return 0m; }
         }
 
         /// <summary>
@@ -430,8 +1455,8 @@ namespace RecoTool.Windows
                     SwiftCode = entity.SwiftCode?.ToString(),
                     PaymentReference = entity.PaymentReference?.ToString(),
                     IncidentType = ConvertToNullableInt(entity.IncidentType),
-                    RiskyItem = ConvertToNullableInt(entity.RiskyItem),
-                    ReasonNonRisky = entity.ReasonNonRisky?.ToString()
+                    RiskyItem = ConvertToNullableBool(entity.RiskyItem),
+                    ReasonNonRisky = ConvertToNullableInt(entity.ReasonNonRisky)
                 };
             }
             catch (Exception ex)
@@ -469,21 +1494,14 @@ namespace RecoTool.Windows
             return value.ToString() == "1" || value.ToString().ToLower() == "true";
         }
 
-        /// <summary>
-        /// Charge des données d'exemple pour la démo
-        /// </summary>
-        private void LoadSampleData()
+        private bool? ConvertToNullableBool(object value)
         {
-            try
-            {
-                // Données de démonstration
-                UpdateKPISummaryWithSampleData();
-                UpdateChartsWithSampleData();
-            }
-            catch (Exception ex)
-            {
-                ShowError($"Erreur lors du chargement des données d'exemple: {ex.Message}");
-            }
+            if (value == null || value == DBNull.Value) return null;
+            if (value is bool b) return b;
+            var s = value.ToString();
+            if (bool.TryParse(s, out var parsed)) return parsed;
+            if (int.TryParse(s, out var i)) return i != 0;
+            return null;
         }
 
         #endregion
@@ -532,19 +1550,6 @@ namespace RecoTool.Windows
             UpdateTextBlock("ReconciledAmountText", $"{receivableData.Where(r => r.KPI == (int)KPIType.PaidButNotReconciled).Sum(r => r.SignedAmount):N2}");
         }
 
-        /// <summary>
-        /// Met à jour le résumé des KPI avec des données d'exemple
-        /// </summary>
-        private void UpdateKPISummaryWithSampleData()
-        {
-            UpdateTextBlock("TotalLinesText", "1,234");
-            UpdateTextBlock("ReconciledText", "987");
-            UpdateTextBlock("PendingText", "184");
-            UpdateTextBlock("IssuesText", "63");
-            UpdateTextBlock("TotalAmountText", "€ 2,456,789.12");
-            UpdateTextBlock("ReconciledAmountText", "€ 1,987,654.32");
-        }
-
         #endregion
 
         #region Charts Updates
@@ -559,7 +1564,11 @@ namespace RecoTool.Windows
             UpdateKPIChart();
             UpdateCurrencyChart();
             UpdateActionChart();
+            UpdateKpiRiskChart();
             UpdateReceivablePivotMiniCharts();
+            UpdateReceivablePivotByActionChart();
+            UpdateDeletionDelayChart();
+            UpdateNewDeletedDailyChart();
         }
 
         /// <summary>
@@ -697,22 +1706,61 @@ namespace RecoTool.Windows
                     return;
                 }
 
+                // Build a lookup for user fields in the "Action" category to resolve labels/colors
+                var userFields = _offlineFirstService?.UserFields ?? new List<UserField>();
+                var actionFields = userFields
+                    .Where(u => string.Equals(u.USR_Category, "Action", StringComparison.OrdinalIgnoreCase))
+                    .ToDictionary(u => u.USR_ID, u => u);
+
                 var seriesCollection = new SeriesCollection();
                 var labels = new List<string>();
-                var counts = new ChartValues<int>();
 
+                // Build labels first to determine each action's index
                 foreach (var item in actionData)
                 {
-                    var actionName = GetActionName(item.Action);
+                    // Prefer USR_FieldName from referential; fallback to description, then enum description
+                    string actionName;
+                    if (actionFields.TryGetValue(item.Action, out var uf) && uf != null)
+                    {
+                        actionName = !string.IsNullOrWhiteSpace(uf.USR_FieldName)
+                            ? uf.USR_FieldName
+                            : (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : GetActionName(item.Action));
+                    }
+                    else
+                    {
+                        actionName = GetActionName(item.Action);
+                    }
                     labels.Add(actionName);
-                    counts.Add(item.Count);
                 }
 
-                seriesCollection.Add(new ColumnSeries
+                // Create one colored series per action; each series has a single non-zero point at its index
+                for (int i = 0; i < actionData.Count; i++)
                 {
-                    Title = "Actions",
-                    Values = counts
-                });
+                    var item = actionData[i];
+                    var values = new ChartValues<int>();
+                    for (int j = 0; j < actionData.Count; j++)
+                        values.Add(j == i ? item.Count : 0);
+
+                    Brush fillBrush = null;
+                    if (actionFields.TryGetValue(item.Action, out var uf))
+                    {
+                        fillBrush = MapActionColor(uf?.USR_Color);
+                    }
+
+                    var series = new ColumnSeries
+                    {
+                        Title = labels[i],
+                        Values = values,
+                        DataLabels = true,
+                        LabelPoint = cp => cp.Y > 0 ? cp.Y.ToString("N0") : string.Empty
+                    };
+                    if (fillBrush != null)
+                    {
+                        series.Fill = fillBrush;
+                        series.Stroke = fillBrush;
+                    }
+                    seriesCollection.Add(series);
+                }
 
                 // Mettre à jour les propriétés liées au CartesianChart
                 ActionLabels = labels;
@@ -722,6 +1770,47 @@ namespace RecoTool.Windows
             {
                 ShowError($"Erreur lors de la mise à jour du graphique actions: {ex.Message}");
             }
+        }
+
+        // Map referential color names (e.g., "RED", "GREEN") and common strings to a Brush.
+        // Reuses the same semantics as the existing mapping used in ReconciliationView (ActionColorConverter).
+        private static Brush MapActionColor(string colorRaw)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(colorRaw)) return null;
+                var color = colorRaw.Trim();
+                switch (color.ToUpperInvariant())
+                {
+                    case "RED": return Brushes.Red;
+                    case "GREEN": return Brushes.Green;
+                    case "YELLOW": return Brushes.Yellow;
+                    case "BLUE": return Brushes.Blue;
+                    case "AMBER": return Brushes.Orange;
+                }
+
+                // Try parse via BrushConverter with raw string first
+                try
+                {
+                    var conv = new BrushConverter();
+                    if (conv.ConvertFromString(color) is Brush b1) return b1;
+                }
+                catch { }
+
+                // If it's a hex code without '#', try prefixing '#'
+                if (!color.StartsWith("#"))
+                {
+                    try
+                    {
+                        var conv = new BrushConverter();
+                        if (conv.ConvertFromString("#" + color) is Brush b2) return b2;
+                    }
+                    catch { }
+                }
+
+                return null;
+            }
+            catch { return null; }
         }
 
         /// <summary>
@@ -844,51 +1933,6 @@ namespace RecoTool.Windows
             }
         }
 
-        /// <summary>
-        /// Met à jour les graphiques avec des données d'exemple
-        /// </summary>
-        private void UpdateChartsWithSampleData()
-        {
-            try
-            {
-                // Graphique KPI exemple
-                var kpiSeriesCollection = new SeriesCollection
-                {
-                    new PieSeries { Title = "Paid But Not Reconciled", Values = new ChartValues<int> { 450 } },
-                    new PieSeries { Title = "Under Investigation", Values = new ChartValues<int> { 230 } },
-                    new PieSeries { Title = "IT Issues", Values = new ChartValues<int> { 180 } },
-                    new PieSeries { Title = "Not Claimed", Values = new ChartValues<int> { 120 } }
-                };
-
-                var kpiChart = FindName("KPIChart") as LiveCharts.Wpf.PieChart;
-                if (kpiChart != null)
-                {
-                    kpiChart.Series = kpiSeriesCollection;
-                }
-
-                // Graphique devise exemple
-                var currencySeriesCollection = new SeriesCollection
-                {
-                    new ColumnSeries
-                    {
-                        Title = "Montants par devise",
-                        Values = new ChartValues<decimal> { 1200000, 850000, 650000, 450000, 320000 }
-                    }
-                };
-
-                var currencyChart = FindName("CurrencyChart") as LiveCharts.Wpf.CartesianChart;
-                if (currencyChart != null)
-                {
-                    currencyChart.Series = currencySeriesCollection;
-                    currencyChart.AxisX[0].Labels = new[] { "EUR", "USD", "GBP", "JPY", "CHF" };
-                }
-            }
-            catch (Exception ex)
-            {
-                ShowError($"Erreur lors de la mise à jour des graphiques d'exemple: {ex.Message}");
-            }
-        }
-
         #endregion
 
         #region Event Handlers
@@ -911,14 +1955,6 @@ namespace RecoTool.Windows
             {
                 ShowError($"Erreur lors de l'affichage du détail: {ex.Message}");
             }
-        }
-
-        /// <summary>
-        /// Rafraîchissement manuel des données
-        /// </summary>
-        private async void RefreshButton_Click(object sender, RoutedEventArgs e)
-        {
-            await LoadDashboardDataAsync();
         }
 
         #endregion
@@ -985,6 +2021,21 @@ namespace RecoTool.Windows
         /// </summary>
         private string GetKPIName(int kpiId)
         {
+            try
+            {
+                var fields = _offlineFirstService?.UserFields;
+                if (fields != null)
+                {
+                    var uf = fields.FirstOrDefault(u => u.USR_ID == kpiId && string.Equals(u.USR_Category, "KPI", StringComparison.OrdinalIgnoreCase));
+                    if (uf != null)
+                    {
+                        return !string.IsNullOrWhiteSpace(uf.USR_FieldName)
+                            ? uf.USR_FieldName
+                            : (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : $"KPI {kpiId}");
+                    }
+                }
+            }
+            catch { }
             return Enum.GetName(typeof(KPIType), kpiId) ?? $"KPI {kpiId}";
         }
 
@@ -993,7 +2044,29 @@ namespace RecoTool.Windows
         /// </summary>
         private string GetActionName(int actionId)
         {
-            return Enum.GetName(typeof(ActionType), actionId) ?? $"Action {actionId}";
+            return GetEnumDescription<ActionType>(actionId);
+        }
+
+        /// <summary>
+        /// Récupère la DescriptionAttribute d'un enum si présente, sinon renvoie le nom ou un fallback
+        /// </summary>
+        private string GetEnumDescription<TEnum>(int value) where TEnum : struct, Enum
+        {
+            var type = typeof(TEnum);
+            var name = Enum.GetName(type, value);
+            if (string.IsNullOrEmpty(name))
+            {
+                // Fallback générique
+                return type == typeof(ActionType) ? $"Action {value}" : value.ToString();
+            }
+
+            var field = type.GetField(name, BindingFlags.Public | BindingFlags.Static);
+            if (field == null) return name;
+
+            var attr = field.GetCustomAttributes(typeof(DescriptionAttribute), inherit: false)
+                            .OfType<DescriptionAttribute>()
+                            .FirstOrDefault();
+            return attr?.Description ?? name;
         }
 
         /// <summary>

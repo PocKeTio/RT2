@@ -6,8 +6,9 @@
              xmlns:local="clr-namespace:RecoTool.Windows"
              xmlns:lvc="clr-namespace:LiveCharts.Wpf;assembly=LiveCharts.Wpf"
              mc:Ignorable="d" 
-             d:DesignHeight="700" d:DesignWidth="1200">
-    <ScrollViewer VerticalScrollBarVisibility="Auto" Background="{DynamicResource BNPBackground}">
+             d:DesignHeight="700" d:DesignWidth="1200"
+             Loaded="UserControl_Loaded">
+    <ScrollViewer x:Name="MainScrollViewer" VerticalScrollBarVisibility="Auto" Background="{DynamicResource BNPBackground}">
         <StackPanel Margin="16,16,16,16">
             <!-- Header of the home page -->
             <Grid Margin="0,0,0,20">
@@ -22,13 +23,16 @@
                 </StackPanel>
 
                 <WrapPanel Grid.Column="1" ItemHeight="38" VerticalAlignment="Center">
-                    <Border Background="#F5F5F5" CornerRadius="4" Padding="5,0" Margin="0,0,10,10" VerticalAlignment="Center">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                        </Grid>
+                    <Border Background="#F5F5F5" CornerRadius="4" Padding="8,4" VerticalAlignment="Center" Height="38">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="Snapshot date:" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <DatePicker x:Name="SnapshotDatePicker" Width="140" FontSize="12"
+                                        IsEnabled="False"
+                                        SelectedDateChanged="SnapshotDatePicker_SelectedDateChanged"
+                                        DateValidationError="SnapshotDatePicker_DateValidationError"
+                                        CalendarOpened="SnapshotDatePicker_CalendarOpened"/>
+                            <Button Content="Today" Margin="8,0,0,0" Height="24" Padding="8,0" Click="TodaySnapshotDate_Click"/>
+                        </StackPanel>
                     </Border>
                     <Button Height="38" MinWidth="160" Style="{StaticResource StandardButtonStyle}" VerticalAlignment="Center" Click="ImportAmbre_Click" Margin="0,0,10,10">
                         <StackPanel Orientation="Horizontal">
@@ -36,18 +40,26 @@
                             <TextBlock Text="Import Ambre" FontSize="14" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Button Height="38" MinWidth="160" Style="{StaticResource StandardButtonStyle}" VerticalAlignment="Center" Click="OpenReports_Click" Margin="0,0,0,10">
+                    <Button Height="38" MinWidth="160" Style="{StaticResource StandardButtonStyle}" VerticalAlignment="Center" Click="OpenReports_Click" Margin="0,0,10,10">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE9F9;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,10,0"/>
                             <TextBlock Text="Reports &amp; Exports" FontSize="14" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
+                    <Button Height="38" MinWidth="160" Style="{StaticResource StandardButtonStyle}" VerticalAlignment="Center" Click="ExportDailyKpi_Click" Margin="0,0,0,10">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                            <TextBlock Text="Export Daily KPI" FontSize="14" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
                 </WrapPanel>
             </Grid>
-            
+
+            <!-- Charts will be inserted after the Missing Invoices section -->
+
             <!-- Missing Invoices Section -->
             <TextBlock Text="MISSING INVOICES" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-            
+
             <Border Style="{StaticResource KPICardStyle}" Margin="0,0,0,20">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -55,24 +67,24 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    
+
                     <Grid Grid.Row="0" Margin="0,0,0,20">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        
+
                         <StackPanel Grid.Column="0" HorizontalAlignment="Center">
                             <TextBlock Text="{Binding MissingInvoicesCount}" FontSize="32" FontWeight="Bold" Foreground="{DynamicResource BNPMainGreenBrush}" HorizontalAlignment="Center"/>
                             <TextBlock Text="Missing Invoices" FontSize="12" Foreground="#666666" HorizontalAlignment="Center"/>
                         </StackPanel>
-                        
+
                         <StackPanel Grid.Column="1" HorizontalAlignment="Center">
                             <TextBlock Text="{Binding PaidButNotReconciledCount}" FontSize="32" FontWeight="Bold" Foreground="#FF9800" HorizontalAlignment="Center"/>
                             <TextBlock Text="Paid but not reconciled" FontSize="12" Foreground="#666666" HorizontalAlignment="Center"/>
                         </StackPanel>
-                        
+
                         <StackPanel Grid.Column="2" HorizontalAlignment="Center">
                             <TextBlock Text="{Binding UnderInvestigationCount}" FontSize="32" FontWeight="Bold" Foreground="#F44336" HorizontalAlignment="Center"/>
                             <TextBlock Text="Under investigation" FontSize="12" Foreground="#666666" HorizontalAlignment="Center"/>
@@ -80,16 +92,74 @@
                     </Grid>
                 </Grid>
             </Border>
-            
+
+            <!-- Time to Reconciliation (Archived) -->
+            <TextBlock Text="TIME TO RECONCILIATION (ARCHIVED)" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+            <Border Style="{StaticResource KPICardStyle}" Margin="0,0,0,30">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="Average time before archiving by bucket" FontSize="16" FontWeight="Bold" Margin="0,0,0,15" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                    <lvc:CartesianChart Grid.Row="1" Height="200" DisableAnimations="True" Series="{Binding DeletionDelaySeries}">
+                        <lvc:CartesianChart.AxisX>
+                            <lvc:Axis Labels="{Binding DeletionDelayLabels}">
+                                <lvc:Axis.Separator>
+                                    <lvc:Separator IsEnabled="False"/>
+                                </lvc:Axis.Separator>
+                            </lvc:Axis>
+                        </lvc:CartesianChart.AxisX>
+                        <lvc:CartesianChart.AxisY>
+                            <lvc:Axis Title="Days">
+                                <lvc:Axis.Separator>
+                                    <lvc:Separator IsEnabled="False"/>
+                                </lvc:Axis.Separator>
+                            </lvc:Axis>
+                        </lvc:CartesianChart.AxisY>
+                    </lvc:CartesianChart>
+                </Grid>
+            </Border>
+
+            <!-- New vs Archived Daily Recap -->
+            <TextBlock Text="NEW VS ARCHIVED (DAILY)" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+            <Border Style="{StaticResource KPICardStyle}" Margin="0,0,0,30">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="New vs Archived per day" FontSize="16" FontWeight="Bold" Margin="0,0,0,15" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                    <lvc:CartesianChart Grid.Row="1" Height="220" DisableAnimations="True" Series="{Binding NewDeletedDailySeries}">
+                        <lvc:CartesianChart.AxisX>
+                            <lvc:Axis Labels="{Binding NewDeletedDailyLabels}">
+                                <lvc:Axis.Separator>
+                                    <lvc:Separator IsEnabled="False"/>
+                                </lvc:Axis.Separator>
+                            </lvc:Axis>
+                        </lvc:CartesianChart.AxisX>
+                        <lvc:CartesianChart.AxisY>
+                            <lvc:Axis>
+                                <lvc:Axis.Separator>
+                                    <lvc:Separator IsEnabled="False"/>
+                                </lvc:Axis.Separator>
+                            </lvc:Axis>
+                        </lvc:CartesianChart.AxisY>
+                    </lvc:CartesianChart>
+                </Grid>
+            </Border>
+
             <!-- Receivable vs Pivot Accounts -->
             <TextBlock Text="RECEIVABLE VS PIVOT ACCOUNTS" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,15" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-            
+
             <Grid Margin="0,0,0,30">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                
+
                 <Border Grid.Column="0" Style="{StaticResource KPICardStyle}" Margin="0,0,10,0">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -97,26 +167,26 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        
+
                         <TextBlock Grid.Row="0" Text="Receivable Accounts" FontSize="16" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-                        
+
                         <Grid Grid.Row="1" Margin="0,0,0,15">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            
+
                             <StackPanel Grid.Column="0">
                                 <TextBlock Text="Total Amount" FontSize="12" Foreground="#666666"/>
                                 <TextBlock Text="{Binding TotalReceivableAmount}" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource BNPMainGreenBrush}"/>
                             </StackPanel>
-                            
+
                             <StackPanel Grid.Column="1">
                                 <TextBlock Text="Count" FontSize="12" Foreground="#666666"/>
                                 <TextBlock Text="{Binding ReceivableAccountsCount}" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource BNPMainGreenBrush}"/>
                             </StackPanel>
                         </Grid>
-                        
+
                         <lvc:CartesianChart Grid.Row="2" Height="110" DisableAnimations="True">
                             <lvc:CartesianChart.Series>
                                 <lvc:LineSeries Values="{Binding ReceivableChartData}" 
@@ -142,7 +212,7 @@
                         </lvc:CartesianChart>
                     </Grid>
                 </Border>
-                
+
                 <Border Grid.Column="1" Style="{StaticResource KPICardStyle}">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -150,26 +220,26 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        
+
                         <TextBlock Grid.Row="0" Text="Pivot Accounts" FontSize="16" FontWeight="Bold" Margin="0,0,0,10" Foreground="#2196F3"/>
-                        
+
                         <Grid Grid.Row="1" Margin="0,0,0,15">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            
+
                             <StackPanel Grid.Column="0">
                                 <TextBlock Text="Total Amount" FontSize="12" Foreground="#666666"/>
                                 <TextBlock Text="{Binding TotalPivotAmount}" FontSize="20" FontWeight="Bold" Foreground="#2196F3"/>
                             </StackPanel>
-                            
+
                             <StackPanel Grid.Column="1">
                                 <TextBlock Text="Count" FontSize="12" Foreground="#666666"/>
                                 <TextBlock Text="{Binding PivotAccountsCount}" FontSize="20" FontWeight="Bold" Foreground="#2196F3"/>
                             </StackPanel>
                         </Grid>
-                        
+
                         <lvc:CartesianChart Grid.Row="2" Height="120" DisableAnimations="True">
                             <lvc:CartesianChart.Series>
                                 <lvc:LineSeries Values="{Binding PivotChartData}" 
@@ -196,40 +266,120 @@
                     </Grid>
                 </Border>
             </Grid>
-            
-            <!-- Currency Distribution Charts -->
-            <TextBlock Text="CURRENCY DISTRIBUTION" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-            
+
+            <!-- Receivable vs Pivot by Action (sub-categories) -->
+            <TextBlock Text="RECEIVABLE VS PIVOT BY ACTION" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+            <Border Style="{StaticResource KPICardStyle}" Margin="0,0,0,30">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="Receivable vs Pivot (by Action)" FontSize="16" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+
+                    <lvc:CartesianChart Grid.Row="1" Height="200" DisableAnimations="True" Series="{Binding ReceivablePivotByActionSeries}">
+                        <lvc:CartesianChart.AxisX>
+                            <lvc:Axis Labels="{Binding ReceivablePivotByActionLabels}">
+                                <lvc:Axis.Separator>
+                                    <lvc:Separator IsEnabled="False"/>
+                                </lvc:Axis.Separator>
+                            </lvc:Axis>
+                        </lvc:CartesianChart.AxisX>
+                        <lvc:CartesianChart.AxisY>
+                            <lvc:Axis>
+                                <lvc:Axis.Separator>
+                                    <lvc:Separator IsEnabled="False"/>
+                                </lvc:Axis.Separator>
+                            </lvc:Axis>
+                        </lvc:CartesianChart.AxisY>
+                    </lvc:CartesianChart>
+                </Grid>
+            </Border>
+
+            <!-- KPI Distribution -->
+            <TextBlock Text="KPI DISTRIBUTION" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" Foreground="{DynamicResource BNPMainGreenBrush}"/>
             <Grid Margin="0,0,0,30">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                
+
+                <!-- KPI Pie -->
                 <Border Grid.Column="0" Style="{StaticResource KPICardStyle}" Margin="0,0,10,0">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        
-                        <TextBlock Grid.Row="0" Text="Currency Distribution" FontSize="16" FontWeight="Bold" Margin="0,0,0,15" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-                        
-                        <lvc:PieChart Grid.Row="1" Height="170" DisableAnimations="True" 
-                                     Series="{Binding CurrencyDistributionSeries}"
-                                     LegendLocation="Right"/>
+
+                        <TextBlock Grid.Row="0" Text="KPI (Count)" FontSize="16" FontWeight="Bold" Margin="0,0,0,15" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                        <lvc:PieChart x:Name="KPIChart" Grid.Row="1" Height="170" DisableAnimations="True" LegendLocation="Right"/>
                     </Grid>
                 </Border>
-                
+
+                <!-- KPI × RiskyItem -->
                 <Border Grid.Column="1" Style="{StaticResource KPICardStyle}">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        
+
+                        <TextBlock Grid.Row="0" Text="KPI × RiskyItem" FontSize="16" FontWeight="Bold" Margin="0,0,0,15" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                        <lvc:CartesianChart Grid.Row="1" Height="170" DisableAnimations="True" Series="{Binding KpiRiskSeries}">
+                            <lvc:CartesianChart.AxisX>
+                                <lvc:Axis Labels="{Binding KpiRiskLabels}">
+                                    <lvc:Axis.Separator>
+                                        <lvc:Separator IsEnabled="False"/>
+                                    </lvc:Axis.Separator>
+                                </lvc:Axis>
+                            </lvc:CartesianChart.AxisX>
+                            <lvc:CartesianChart.AxisY>
+                                <lvc:Axis>
+                                    <lvc:Axis.Separator>
+                                        <lvc:Separator IsEnabled="False"/>
+                                    </lvc:Axis.Separator>
+                                </lvc:Axis>
+                            </lvc:CartesianChart.AxisY>
+                        </lvc:CartesianChart>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- Currency Distribution Charts -->
+            <TextBlock Text="CURRENCY DISTRIBUTION" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+
+            <Grid Margin="0,0,0,30">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Style="{StaticResource KPICardStyle}" Margin="0,0,10,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Text="Currency Distribution" FontSize="16" FontWeight="Bold" Margin="0,0,0,15" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+
+                        <lvc:PieChart Grid.Row="1" Height="170" DisableAnimations="True" 
+                                     Series="{Binding CurrencyDistributionSeries}"
+                                     LegendLocation="Right"/>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource KPICardStyle}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
                         <TextBlock Grid.Row="0" Text="Actions Distribution" FontSize="16" FontWeight="Bold" Margin="0,0,0,15" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-                        
+
                         <lvc:CartesianChart Grid.Row="1" Height="170" DisableAnimations="True"
                                            Series="{Binding ActionDistributionSeries}">
                             <lvc:CartesianChart.AxisX>
@@ -250,7 +400,7 @@
                     </Grid>
                 </Border>
             </Grid>
-            
+
             <!-- Status and recent activity -->
             <Border Style="{StaticResource KPICardStyle}" Margin="0,0,0,30">
                 <Grid>
@@ -258,9 +408,9 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    
+
                     <TextBlock Grid.Row="0" Text="Recent Activity" FontSize="16" FontWeight="Bold" Margin="0,0,0,15" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-                    
+
                     <StackPanel Grid.Row="1">
                         <TextBlock Text="{Binding StatusMessage}" FontSize="14" Foreground="#666666" Margin="0,0,0,10"/>
                         <TextBlock Text="{Binding LastUpdateTime, StringFormat='Last updated: {0:dd/MM/yyyy HH:mm}'}" FontSize="12" Foreground="#999999"/>

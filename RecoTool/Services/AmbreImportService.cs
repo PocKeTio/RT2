@@ -41,6 +41,20 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Importe plusieurs fichiers Excel Ambre (fusionnés) pour un pays donné en une seule opération.
+        /// Utiliser lorsque les fichiers sont séparés par compte (Pivot/Receivable). Limité à 2 fichiers.
+        /// </summary>
+        public async Task<ImportResult> ImportAmbreFiles(string[] filePaths, string countryId,
+            Action<string, int> progressCallback = null)
+        {
+            // Wrapper: multi-fichier, limite à 2 fichiers, stratégie pré-vol: pousser réconciliation + refresh RECON
+            if (filePaths == null || filePaths.Length == 0)
+                return new ImportResult { CountryId = countryId, Errors = { "No files provided" } };
+
+            var take = filePaths.Take(2).ToArray();
+            return await ImportAmbreCoreAsync(take, countryId, isMultiFile: true, progressCallback);
+        }
+        /// <summary>
         /// Importe un fichier Excel Ambre pour un pays donné
         /// </summary>
         /// <param name="filePath">Chemin vers le fichier Excel</param>
@@ -50,147 +64,207 @@ namespace RecoTool.Services
         public async Task<ImportResult> ImportAmbreFile(string filePath, string countryId,
             Action<string, int> progressCallback = null)
         {
-            var result = new ImportResult { CountryId = countryId, StartTime = DateTime.Now };
+            // Wrapper: mono-fichier, stratégie pré-vol: zéro changes locaux + refresh AMBRE
+            if (string.IsNullOrWhiteSpace(filePath))
+                return new ImportResult { CountryId = countryId, Errors = { "File path is required" } };
 
+            return await ImportAmbreCoreAsync(new[] { filePath }, countryId, isMultiFile: false, progressCallback);
+        }
+
+        /// <summary>
+        /// Logique commune d'import AMBRE pour 1 ou 2 fichiers.
+        /// </summary>
+        private async Task<ImportResult> ImportAmbreCoreAsync(string[] filePaths, string countryId, bool isMultiFile, Action<string, int> progressCallback)
+        {
+            var result = new ImportResult { CountryId = countryId, StartTime = DateTime.Now };
             try
             {
-                progressCallback?.Invoke("Validation du fichier...", 0);
+                progressCallback?.Invoke(isMultiFile ? "Validating files..." : "Validating file...", 0);
 
-                // Validation du fichier
-                var validationErrors = ValidationHelper.ValidateImportFile(filePath);
-                if (validationErrors.Any())
+                // 1) Validation des fichiers
+                var files = (filePaths ?? Array.Empty<string>()).Where(p => !string.IsNullOrWhiteSpace(p)).Take(2).ToArray();
+                if (files.Length == 0)
                 {
-                    result.Errors.AddRange(validationErrors);
+                    result.Errors.Add("No files provided");
                     return result;
                 }
+                foreach (var fp in files)
+                {
+                    var errs = ValidationHelper.ValidateImportFile(fp);
+                    if (errs.Any())
+                    {
+                        if (isMultiFile)
+                            result.Errors.AddRange(errs.Select(e => $"{Path.GetFileName(fp)}: {e}"));
+                        else
+                            result.Errors.AddRange(errs);
+                    }
+                }
+                if (result.Errors.Any()) return result;
 
-                progressCallback?.Invoke("Chargement des configurations...", 10);
-
-                // Chargement des configurations
+                // 2) Chargement des configurations
+                progressCallback?.Invoke("Loading configurations...", 10);
                 var country = await LoadCountryConfiguration(countryId);
                 var importFields = await LoadImportFieldsConfiguration();
                 var transforms = await LoadTransformConfigurations();
-
                 if (country == null)
                 {
-                    result.Errors.Add($"Configuration non trouvée pour le pays: {countryId}");
+                    result.Errors.Add($"Configuration not found for country: {countryId}");
                     return result;
                 }
 
-                // Pré-validation: vérifier l'absence de changements locaux non synchronisés
-                progressCallback?.Invoke("Vérification des modifications locales non synchronisées...", 15);
+                // 3) Préparation (lock + pré-sync selon stratégie)
+                progressCallback?.Invoke("Preparing environment (lock and pre-sync)...", 15);
                 try
                 {
-                    // S'assurer que le pays courant est correctement initialisé pour obtenir la chaîne locale
                     var switched = await _offlineFirstService.SetCurrentCountryAsync(countryId);
                     if (!switched)
                     {
-                        result.Errors.Add($"Impossible d'initialiser la base locale pour {countryId}");
+                        result.Errors.Add($"Unable to initialize local database for {countryId}");
                         return result;
                     }
 
-                    var unsyncedCount = await _offlineFirstService.GetUnsyncedChangeCountAsync(countryId);
-                    if (unsyncedCount > 0)
+                    var preflightTimeout = TimeSpan.FromMinutes(2);
+                    using (var preflightLock = await _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImportPreflight", preflightTimeout))
                     {
-                        LogManager.Warning($"Import annulé: {unsyncedCount} changement(s) non synchronisé(s) détecté(s) dans la base lock.");
-                        result.Errors.Add($"Import annulé: {unsyncedCount} changement(s) non synchronisé(s) détecté(s). Veuillez synchroniser avant de relancer l'import.");
-                        return result;
+                        if (preflightLock == null)
+                        {
+                            result.Errors.Add($"Unable to acquire global lock (pre-import) for {countryId}");
+                            return result;
+                        }
+
+                        var unsyncedCount = await _offlineFirstService.GetUnsyncedChangeCountAsync(countryId);
+                        if (isMultiFile)
+                        {
+                            // Multi: pousser les changements de réconciliation si présents, puis refresh RECON
+                            if (unsyncedCount > 0)
+                            {
+                                LogManager.Info($"{unsyncedCount} unsynced change(s) found. Pushing to network under global lock...");
+                                try { await _offlineFirstService.SetSyncStatusAsync("PreSync"); } catch { }
+                                var syncRes = await _offlineFirstService.SynchronizeAsync(countryId, null, null);
+                                if (syncRes == null || !syncRes.Success)
+                                {
+                                    result.Errors.Add("Unable to push local reconciliation changes before import.");
+                                    return result;
+                                }
+                            }
+                            try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
+                            await _offlineFirstService.CopyNetworkToLocalReconciliationAsync(countryId);
+                        }
+                        else
+                        {
+                            // Mono: interdire tout changement local et refresh AMBRE
+                            if (unsyncedCount > 0)
+                            {
+                                result.Errors.Add($"{unsyncedCount} unsynced local change(s) detected. Please publish or discard local changes before importing.");
+                                return result;
+                            }
+                            try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
+                            await _offlineFirstService.CopyNetworkToLocalAmbreAsync(countryId);
+                        }
                     }
                 }
                 catch (Exception preCheckEx)
                 {
-                    LogManager.Error("Erreur lors de la vérification des changements non synchronisés", preCheckEx);
-                    result.Errors.Add($"Erreur lors de la vérification des changements non synchronisés: {preCheckEx.Message}");
+                    LogManager.Error("Error during pre-import preparation (lock/pre-sync)", preCheckEx);
+                    result.Errors.Add($"Error during pre-import preparation: {preCheckEx.Message}");
                     return result;
                 }
 
-                // Mise à jour d'état (best-effort) après initialisation réussie et pré-vérifications
+                // 4) Lecture
                 try { await _offlineFirstService.SetSyncStatusAsync("Importing"); } catch { }
-
-                progressCallback?.Invoke("Lecture du fichier Excel...", 20);
-
-                // Lecture du fichier Excel avec progression (20% -> 40%)
-                var rawData = await ReadExcelFile(filePath, importFields, p =>
+                progressCallback?.Invoke(isMultiFile ? "Reading Excel files..." : "Reading Excel file...", 20);
+                var allRaw = new List<Dictionary<string, object>>();
+                for (int i = 0; i < files.Length; i++)
                 {
-                    int mapped = 20 + (p * 20 / 100); // map 0-100 => 20-40
-                    if (mapped > 40) mapped = 40;
-                    progressCallback?.Invoke($"Lecture du fichier Excel... ({p}%)", mapped);
-                });
-
-                // S'assurer d'atteindre 40% après la lecture
-                progressCallback?.Invoke("Lecture du fichier Excel terminée", 40);
-                if (!rawData.Any())
+                    var fp = files[i];
+                    // Répartir la progression 20->40
+                    var baseStart = isMultiFile ? 20 + (i * 10) : 20;
+                    var raw = await ReadExcelFile(fp, importFields, p =>
+                    {
+                        int mapped = baseStart + (p * (isMultiFile ? 10 : 20) / 100);
+                        if (mapped > 40) mapped = 40;
+                        var label = isMultiFile ? $"Reading: {Path.GetFileName(fp)} ({p}%)" : $"Reading Excel file... ({p}%)";
+                        progressCallback?.Invoke(label, mapped);
+                    });
+                    allRaw.AddRange(raw);
+                }
+                progressCallback?.Invoke(isMultiFile ? "Excel files read complete" : "Excel file read complete", 40);
+                if (!allRaw.Any())
                 {
-                    result.Errors.Add("Aucune donnée trouvée dans le fichier Excel.");
+                    result.Errors.Add(isMultiFile ? "No data found in the Excel files." : "No data found in the Excel file.");
                     return result;
                 }
 
-                // Filtrer les lignes pour ne conserver que celles du compte Pivot ou Receivable du pays
-                var filteredRawData = FilterRowsByCountryAccounts(rawData, country);
-                if (!filteredRawData.Any())
+                // 5) Filtrer/comptes requis
+                var filtered = FilterRowsByCountryAccounts(allRaw, country);
+                if (!filtered.Any())
                 {
-                    var pivot = country?.CNT_AmbrePivot;
-                    var recv = country?.CNT_AmbreReceivable;
-                    result.Errors.Add($"Aucune ligne ne correspond aux comptes du pays ({country?.CNT_Id}): Pivot={pivot}, Receivable={recv}.");
+                    var pivot = country?.CNT_AmbrePivot; var recv = country?.CNT_AmbreReceivable;
+                    result.Errors.Add($"No rows match the country's AMBRE accounts ({country?.CNT_Id}): Pivot={pivot}, Receivable={recv}.");
+                    return result;
+                }
+                var accounts = filtered
+                    .Select(r => r.ContainsKey("Account_ID") ? r["Account_ID"]?.ToString() : null)
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                bool hasPivot = !string.IsNullOrWhiteSpace(country?.CNT_AmbrePivot) && accounts.Any(a => string.Equals(a, country.CNT_AmbrePivot, StringComparison.OrdinalIgnoreCase));
+                bool hasReceivable = !string.IsNullOrWhiteSpace(country?.CNT_AmbreReceivable) && accounts.Any(a => string.Equals(a, country.CNT_AmbreReceivable, StringComparison.OrdinalIgnoreCase));
+                if (!(hasPivot && hasReceivable))
+                {
+                    var missing = new List<string>();
+                    if (!hasPivot) missing.Add($"Pivot={country?.CNT_AmbrePivot}");
+                    if (!hasReceivable) missing.Add($"Receivable={country?.CNT_AmbreReceivable}");
+                    result.Errors.Add($"Import aborted: both AMBRE accounts are required. Missing: {string.Join(", ", missing)}.");
                     return result;
                 }
 
-                progressCallback?.Invoke("Transformation des données...", 40);
-
-                // Transformation des données
-                var transformedData = await TransformData(filteredRawData, transforms, country);
-
-                progressCallback?.Invoke("Validation des données...", 60);
-
-                // Validation des données transformées
-                var validationResult = ValidateTransformedData(transformedData, country);
-                result.ValidationErrors.AddRange(validationResult.errors);
-                var validData = validationResult.validData;
-
-                if (!validData.Any())
+                // 6) Transform + validate
+                progressCallback?.Invoke("Transforming data...", 40);
+                var transformed = await TransformData(filtered, transforms, country);
+                progressCallback?.Invoke("Validating data...", 60);
+                var val = ValidateTransformedData(transformed, country);
+                result.ValidationErrors.AddRange(val.errors);
+                var valid = val.validData;
+                if (!valid.Any())
                 {
-                    result.Errors.Add("Aucune donnée valide après transformation et validation.");
+                    result.Errors.Add("No valid data after transformation and validation.");
                     return result;
                 }
 
-                progressCallback?.Invoke("Synchronisation avec la base de données...", 80);
-
-                // Synchronisation avec la base locale (offline-first) uniquement
-                // La synchronisation réseau sera lancée en arrière-plan après l'import
-                var syncResult = await SynchronizeWithDatabase(validData, countryId, performNetworkSync: false);
+                // 7) Sync DB
+                progressCallback?.Invoke("Synchronizing with database...", 80);
+                var syncResult = await SynchronizeWithDatabase(valid, countryId, performNetworkSync: true);
                 result.NewRecords = syncResult.newCount;
                 result.UpdatedRecords = syncResult.updatedCount;
                 result.DeletedRecords = syncResult.deletedCount;
 
-                // Rafraîchir la configuration/cache local(e) de façon atomique après import local réussi
-                progressCallback?.Invoke("Rafraîchissement de la configuration locale...", 90);
+                // 8) Refresh config + anchors
+                progressCallback?.Invoke("Refreshing local configuration...", 90);
                 try
                 {
                     await _offlineFirstService.RefreshConfigurationAsync();
-                    // S'assurer que le pays courant reste celui de l'import après rafraîchissement
                     await _offlineFirstService.SetCurrentCountryAsync(countryId);
+                    await _offlineFirstService.SetLastSyncAnchorAsync(countryId, DateTime.UtcNow);
                 }
                 catch (Exception refreshEx)
                 {
-                    LogManager.Error("Erreur lors du rafraîchissement de la configuration après import", refreshEx);
-                    result.Errors.Add($"Erreur lors du rafraîchissement de la configuration locale: {refreshEx.Message}");
+                    LogManager.Error("Error while refreshing configuration after import", refreshEx);
+                    result.Errors.Add($"Error while refreshing local configuration: {refreshEx.Message}");
                     result.EndTime = DateTime.Now;
                     return result;
                 }
 
-                progressCallback?.Invoke("Finalisation...", 100);
-
+                // 9) Final
+                progressCallback?.Invoke("Finalizing...", 100);
                 result.IsSuccess = true;
                 result.EndTime = DateTime.Now;
-                result.ProcessedRecords = validData.Count;
-
-                // Synchronisation réseau en arrière-plan supprimée (flux simplifié)
-
+                result.ProcessedRecords = valid.Count;
                 return result;
             }
             catch (Exception ex)
             {
-                result.Errors.Add($"Erreur durant l'import: {ex.Message}");
+                result.Errors.Add($"Error during import: {ex.Message}");
                 try { await _offlineFirstService.SetSyncStatusAsync("Error"); } catch { }
                 result.EndTime = DateTime.Now;
                 return result;
@@ -390,25 +464,25 @@ namespace RecoTool.Services
             try
             {
                 // 1) Charger les données existantes et calculer les changements SANS verrou global
-                var existingData = await LoadExistingDataAsync(countryId);
+              var existingData = await LoadExistingDataAsync(countryId);
                 changes = CalculateChanges(existingData, newData);
-                LogManager.Info($"Changements calculés pour {countryId} - Nouveaux: {changes.ToAdd.Count}, Modifiés: {changes.ToUpdate.Count}, Supprimés: {changes.ToArchive.Count}");
+                LogManager.Info($"Calculated changes for {countryId} - New: {changes.ToAdd.Count}, Updated: {changes.ToUpdate.Count}, Deleted: {changes.ToArchive.Count}");
 
                 // 2) Protéger uniquement la phase d'écriture (apply + reconciliation)
                 // Plus de synchronisation réseau concurrente: on acquiert directement le verrou global
 
                 var lockWaitStart = DateTime.Now;
                 var lockTimeout = TimeSpan.FromMinutes(2); // Timeout explicite pour éviter l'attente infinie
-                LogManager.Info($"Tentative d'acquisition du verrou global pour {countryId} (timeout {lockTimeout.TotalSeconds} sec)...");
+                LogManager.Info($"Attempting to acquire global lock for {countryId} (timeout {lockTimeout.TotalSeconds} sec)...");
 
                 var acquireTask = _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", TimeSpan.FromMinutes(30));
                 var completed = await Task.WhenAny(acquireTask, Task.Delay(lockTimeout));
                 if (completed != acquireTask)
                 {
                     var waited = DateTime.Now - lockWaitStart;
-                    var msg = $"Impossible d'obtenir le verrou global pour {countryId} dans le délai imparti ({lockTimeout.TotalSeconds} sec). Veuillez réessayer.";
+                    var msg = $"Unable to obtain global lock for {countryId} within the allotted time ({lockTimeout.TotalSeconds} sec). Please try again.";
                     var timeoutEx = new TimeoutException(msg);
-                    LogManager.Error($"Timeout ({waited.TotalSeconds:F0}s) lors de l'attente du verrou global pour {countryId}. Opération annulée.", timeoutEx);
+                    LogManager.Error($"Timeout ({waited.TotalSeconds:F0}s) while waiting for global lock for {countryId}. Operation canceled.", timeoutEx);
                     throw timeoutEx;
                 }
 
@@ -417,74 +491,94 @@ namespace RecoTool.Services
                 {
                     if (globalLock == null)
                     {
-                        throw new InvalidOperationException($"Impossible d'acquérir le verrou global pour {countryId}. Import annulé.");
+                        throw new InvalidOperationException($"Unable to acquire global lock for {countryId}. Import canceled.");
                     }
 
                     var waited = DateTime.Now - lockWaitStart;
-                    LogManager.Info($"Verrou global acquis pour {countryId} après {waited.TotalSeconds:F0}s d'attente");
+                    LogManager.Info($"Global lock acquired for {countryId} after {waited.TotalSeconds:F0}s wait");
 
                     try
                     {
+                        // Sauvegarde locale RECON avant modifications (non bloquant si erreur)
+                        try { await _offlineFirstService.CreateLocalReconciliationBackupAsync(countryId, "PreImport"); } catch { }
+
                         // Statut: application des changements
                         try { await _offlineFirstService.SetSyncStatusAsync("ApplyingChanges"); } catch { }
 
                         // Appliquer les changements via les API natives d'OfflineFirstService
                         await ApplyChangesAsync(changes);
 
-                        // Statut: réconciliation
+                        // Status: reconciling
                         try { await _offlineFirstService.SetSyncStatusAsync("Reconciling"); } catch { }
 
-                        // Mettre à jour T_Reconciliation
+                        // Update T_Reconciliation
                         await UpdateReconciliationTable(changes.ToAdd, changes.ToUpdate, changes.ToArchive, countryId);
 
-                        LogManager.Info($"Import local terminé avec succès pour {countryId}");
+                        // Before network publish: freeze the latest snapshot (if exists) and insert the snapshot for last AMBRE operation date
+                        try
+                        {
+                            if (!string.IsNullOrWhiteSpace(countryId))
+                            {
+                                var cs = _offlineFirstService.GetCurrentLocalConnectionString();
+                                var countries = await _offlineFirstService.GetCountries();
+                                var recoSvc = new ReconciliationService(cs, Environment.UserName, countries, _offlineFirstService);
+                                // Freeze previous non-frozen snapshot
+                                await recoSvc.FreezeLatestSnapshotAsync(countryId);
+                                // Determine snapshot date from AMBRE data (fallback to today)
+                                var lastOpDate = await recoSvc.GetLastAmbreOperationDateAsync(countryId) ?? DateTime.Today;
+                                await recoSvc.SaveDailyKpiSnapshotAsync(lastOpDate, countryId, sourceVersion: "PostAmbreImport");
+                            }
+                        }
+                        catch (Exception snapEx)
+                        {
+                            LogManager.Warning($"Non-blocking KPI snapshot: {snapEx.Message}");
+                        }
 
-                        // Publier la base locale vers le réseau tant que le verrou global est détenu
+                        LogManager.Info($"Local import completed successfully for {countryId}");
+
+                        // Publier les bases locales vers le réseau tant que le verrou global est détenu
                         try { await _offlineFirstService.SetSyncStatusAsync("Publishing"); } catch { }
-                        await _offlineFirstService.CopyLocalToNetworkAsync(countryId);
+                        await _offlineFirstService.CopyLocalToNetworkAmbreAsync(countryId);
+                        await _offlineFirstService.CopyLocalToNetworkReconciliationAsync(countryId);
 
-                        // Finaliser: les changements de l'import sont déjà publiés (copie fichier). Marquer comme synchronisés dans le ChangeLog.
+                        // Finalize: import changes are already published (file copy). Mark them as synced in ChangeLog.
                         try { await _offlineFirstService.SetSyncStatusAsync("Finalizing"); } catch { }
                         await _offlineFirstService.MarkAllLocalChangesAsSyncedAsync(countryId);
-
-                        // Rafraîchir la base locale depuis le réseau (copie atomique) pour garantir un état propre et incluant les pending appliqués
-                        try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
-                        await _offlineFirstService.CopyNetworkToLocalAsync(countryId);
-
-                        // Terminé
+                        
+                        // Completed
                         try { await _offlineFirstService.SetSyncStatusAsync("Completed"); } catch { }
                     }
                     catch (Exception ex)
                     {
-                        LogManager.Error($"Erreur lors de l'import local pour {countryId}", ex);
+                        LogManager.Error($"Error during local import for {countryId}", ex);
                         try { await _offlineFirstService.SetSyncStatusAsync("Error"); } catch { }
-                        throw new InvalidOperationException($"Erreur lors de la synchronisation avec la base de données: {ex.Message}", ex);
+                        throw new InvalidOperationException($"Error while synchronizing with the database: {ex.Message}", ex);
                     }
-                    // Le verrou global est libéré automatiquement par Dispose() à la fin du using
+                    // The global lock is automatically released by Dispose() at the end of the using
                 }
 
                 if (performNetworkSync)
                 {
                     try
                     {
-                        LogManager.Info($"Démarrage de la synchronisation réseau pour {countryId}");
+                        LogManager.Info($"Starting network synchronization for {countryId}");
 
                         // Synchroniser avec la base réseau via OfflineFirstService
                         bool syncSuccess = await _offlineFirstService.SynchronizeData();
 
                         if (syncSuccess)
                         {
-                            LogManager.Info($"Synchronisation réseau réussie pour {countryId}");
+                            LogManager.Info($"Network synchronization succeeded for {countryId}");
                         }
                         else
                         {
-                            LogManager.Warning($"Synchronisation réseau échouée pour {countryId} - Les données restent en local");
+                            LogManager.Warning($"Network synchronization failed for {countryId} - Data remains local");
                         }
                     }
                     catch (Exception syncEx)
                     {
-                        LogManager.Error($"Erreur lors de la synchronisation réseau pour {countryId}", syncEx);
-                        // Ne pas faire échouer l'import si seule la sync réseau échoue
+                        LogManager.Error($"Error during network synchronization for {countryId}", syncEx);
+                        // Do not fail the import if only the network sync fails
                     }
                 }
 
@@ -779,9 +873,9 @@ namespace RecoTool.Services
         {
             try
             {
-                LogManager.Info($"[Staging] Insertion uniquement dans T_Reconciliation pour {countryId} - Candidats à l'insertion (issus de 'nouveaux'): {newRecords?.Count ?? 0}. Aucun UPDATE/DELETE ne sera effectué.");
+                LogManager.Info($"[Direct] Insertion uniquement dans T_Reconciliation pour {countryId} - Candidats à l'insertion (issus de 'nouveaux'): {newRecords?.Count ?? 0}. Aucun UPDATE/DELETE ne sera effectué.");
 
-                // 1) Préparer uniquement les lignes à insérer (pas de mise à jour)
+                // Préparer uniquement les lignes à insérer (pas de mise à jour)
                 var now = DateTime.Now;
                 var toInsert = new List<Reconciliation>();
 
@@ -794,34 +888,95 @@ namespace RecoTool.Services
                     toInsert.Add(rec);
                 }
 
-                // 2) Instancier le service de staging pour la base du pays
+                // Connexion directe à la base du pays
                 var connectionString = _offlineFirstService.GetCountryConnectionString(countryId);
-                var staging = new StagingImportService(connectionString, _currentUser);
+                using (var conn = new OleDbConnection(connectionString))
+                {
+                    await conn.OpenAsync();
 
-                // 3) Assurer l'existence et l'indexation des tables nécessaires
-                await staging.EnsureStagingForReconciliationAsync();
-                await staging.EnsureTargetIndexesAsync();
+                    // Construire un set d'IDs existants pour insert-only
+                    var ids = toInsert.Select(r => r.ID).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+                    var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    if (ids.Count > 0)
+                    {
+                        // Chunk pour éviter trop de paramètres
+                        const int chunk = 500;
+                        for (int i = 0; i < ids.Count; i += chunk)
+                        {
+                            var sub = ids.Skip(i).Take(chunk).ToList();
+                            var placeholders = string.Join(",", Enumerable.Repeat("?", sub.Count));
+                            var sql = $"SELECT [ID] FROM [T_Reconciliation] WHERE [ID] IN ({placeholders})";
+                            using (var cmd = new OleDbCommand(sql, conn))
+                            {
+                                foreach (var id in sub) cmd.Parameters.AddWithValue("@ID", id);
+                                using (var rdr = await cmd.ExecuteReaderAsync())
+                                {
+                                    while (await rdr.ReadAsync())
+                                    {
+                                        var id = rdr[0]?.ToString();
+                                        if (!string.IsNullOrWhiteSpace(id)) existing.Add(id);
+                                    }
+                                }
+                            }
+                        }
+                    }
 
-                // 4) Charger le staging et fusionner
-                await staging.TruncateStagingAsync();
-                var staged = await staging.InsertStagingRowsAsync(toInsert, chunkSize: 2000);
+                    int insertedCount = 0;
+                    using (var tx = conn.BeginTransaction())
+                    {
+                        try
+                        {
+                            foreach (var r in toInsert)
+                            {
+                                if (existing.Contains(r.ID))
+                                    continue; // insert-only
 
-                // Calculer les IDs déjà existants pour consigner correctement les INSERTs effectifs
-                var candidateIds = (newRecords ?? new List<DataAmbre>())
-                    .Select(r => r.ID)
-                    .Where(id => !string.IsNullOrWhiteSpace(id))
-                    .ToList();
-                var existing = await staging.GetExistingIdsAsync(candidateIds);
+                                using (var cmd = new OleDbCommand(@"INSERT INTO [T_Reconciliation] (
+    [ID],[DWINGS_GuaranteeID],[DWINGS_InvoiceID],[DWINGS_CommissionID],
+    [Action],[Comments],[InternalInvoiceReference],[FirstClaimDate],[LastClaimDate],
+    [ToRemind],[ToRemindDate],[ACK],[SwiftCode],[PaymentReference],[KPI],
+    [IncidentType],[RiskyItem],[ReasonNonRisky],[CreationDate],[ModifiedBy],[LastModified]
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", conn, tx))
+                                {
+                                    // Paramètres (ordre strict pour OLE DB)
+                                    cmd.Parameters.AddWithValue("@ID", (object)r.ID ?? DBNull.Value);
+                                    cmd.Parameters.AddWithValue("@DWINGS_GuaranteeID", (object)r.DWINGS_GuaranteeID ?? DBNull.Value);
+                                    cmd.Parameters.AddWithValue("@DWINGS_InvoiceID", (object)r.DWINGS_InvoiceID ?? DBNull.Value);
+                                    cmd.Parameters.AddWithValue("@DWINGS_CommissionID", (object)r.DWINGS_CommissionID ?? DBNull.Value);
+                                    cmd.Parameters.AddWithValue("@Action", (object)r.Action ?? DBNull.Value);
+                                    cmd.Parameters.AddWithValue("@Comments", (object)r.Comments ?? DBNull.Value);
+                                    cmd.Parameters.AddWithValue("@InternalInvoiceReference", (object)r.InternalInvoiceReference ?? DBNull.Value);
+                                    var pFirst = cmd.Parameters.Add("@FirstClaimDate", OleDbType.Date); pFirst.Value = r.FirstClaimDate.HasValue ? (object)r.FirstClaimDate.Value : DBNull.Value;
+                                    var pLast  = cmd.Parameters.Add("@LastClaimDate",  OleDbType.Date); pLast.Value  = r.LastClaimDate.HasValue  ? (object)r.LastClaimDate.Value  : DBNull.Value;
+                                    var pRem   = cmd.Parameters.Add("@ToRemind",      OleDbType.Boolean); pRem.Value   = r.ToRemind;
+                                    var pRemD  = cmd.Parameters.Add("@ToRemindDate",  OleDbType.Date); pRemD.Value  = r.ToRemindDate.HasValue  ? (object)r.ToRemindDate.Value  : DBNull.Value;
+                                    var pAck   = cmd.Parameters.Add("@ACK",          OleDbType.Boolean); pAck.Value   = r.ACK;
+                                    cmd.Parameters.AddWithValue("@SwiftCode", (object)r.SwiftCode ?? DBNull.Value);
+                                    cmd.Parameters.AddWithValue("@PaymentReference", (object)r.PaymentReference ?? DBNull.Value);
+                                    var pKpi   = cmd.Parameters.Add("@KPI",          OleDbType.Integer); pKpi.Value   = r.KPI.HasValue ? (object)r.KPI.Value : DBNull.Value;
+                                    var pInc   = cmd.Parameters.Add("@IncidentType", OleDbType.Integer); pInc.Value   = r.IncidentType.HasValue ? (object)r.IncidentType.Value : DBNull.Value;
+                                    var pRisky = cmd.Parameters.Add("@RiskyItem",    OleDbType.Boolean); pRisky.Value = r.RiskyItem.HasValue ? (object)r.RiskyItem.Value : DBNull.Value;
+                                    var pReason= cmd.Parameters.Add("@ReasonNonRisky", OleDbType.Integer); pReason.Value = r.ReasonNonRisky.HasValue ? (object)r.ReasonNonRisky.Value : DBNull.Value;
+                                    var pCre   = cmd.Parameters.Add("@CreationDate", OleDbType.Date); pCre.Value = r.CreationDate.HasValue ? (object)r.CreationDate.Value : DBNull.Value;
+                                    cmd.Parameters.AddWithValue("@ModifiedBy", (object)(r.ModifiedBy ?? _currentUser) ?? DBNull.Value);
+                                    var pMod   = cmd.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = r.LastModified.HasValue ? (object)r.LastModified.Value : DBNull.Value;
 
-                var insertedCount = await staging.InsertMissingFromStagingAsync();
+                                    insertedCount += await cmd.ExecuteNonQueryAsync();
+                                }
+                            }
 
-                // 5) Archivage des enregistrements supprimés
-                // Désactivé pour Ambre: on ne supprime/masque jamais T_Reconciliation lors d'un import Ambre
-                int archived = 0;
+                            tx.Commit();
+                            LogManager.Info($"[Direct] T_Reconciliation (insert-only) pour {countryId}: Inserted={insertedCount}");
+                        }
+                        catch
+                        {
+                            tx.Rollback();
+                            throw;
+                        }
+                    }
+                }
 
-                LogManager.Info($"[Staging] T_Reconciliation (insert-only) pour {countryId}: Staged={staged}, Inserted={insertedCount}, Archived={archived} (désactivé)");
-
-                // 6) Change-tracking désactivé pour Ambre: ne pas impacter ChangeLog
+                // Change-tracking désactivé pour Ambre: pas d'écriture ChangeLog
                 LogManager.Info("[ChangeLog] Désactivé pour Ambre: aucune écriture dans ChangeLog pour T_Reconciliation.");
             }
             catch (Exception ex)

@@ -42,14 +42,423 @@ namespace RecoTool.Services
 
         #endregion
 
+        #region Background Push Control
+
+        // Prevent overlapping background pushes and storm of triggers
+        private static readonly ConcurrentDictionary<string, SemaphoreSlim> _pushSemaphores = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
+        private static readonly ConcurrentDictionary<string, DateTime> _lastPushTimesUtc = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan _pushCooldown = TimeSpan.FromSeconds(5);
+
+        #endregion
+
         #region Lock Helpers
 
         private string GetRemoteLockConnectionString(string countryId)
         {
+            // Prefer a Control DB per country if configured; fallback to legacy per-country lock file next to data DBs
+            var perCountryControl = GetControlDbPath(countryId);
+            if (!string.IsNullOrWhiteSpace(perCountryControl))
+                return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={perCountryControl};";
+
             string remoteDir = GetParameter("CountryDatabaseDirectory");
             string countryDatabasePrefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
             string lockPath = Path.Combine(remoteDir, $"{countryDatabasePrefix}{countryId}_lock.accdb");
             return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={lockPath};";
+        }
+
+        /// <summary>
+        /// S'assure que les instantanés locaux AMBRE et DW sont à jour versus le réseau.
+        /// Copie réseau -> local si différence détectée. Lecture seule; sans lock global.
+        /// </summary>
+        public async Task EnsureLocalSnapshotsUpToDateAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId requis", nameof(countryId));
+
+            // Helper local pour comparer et copier si besoin
+            async Task CopyIfDifferentAsync(string networkPath, string localPath)
+            {
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(networkPath) || string.IsNullOrWhiteSpace(localPath)) return;
+                    if (!File.Exists(networkPath)) return; // rien à copier
+
+                    var netFi = new FileInfo(networkPath);
+                    var locFi = new FileInfo(localPath);
+                    bool needCopy = !locFi.Exists || locFi.Length != netFi.Length || locFi.LastWriteTimeUtc != netFi.LastWriteTimeUtc;
+                    if (needCopy)
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(localPath) ?? string.Empty);
+                        // Copie atomique au mieux: copier vers temp puis replace
+                        string tmp = localPath + ".tmp_copy";
+                        File.Copy(networkPath, tmp, true);
+                        // Remplace en conservant ACL; File.Replace nécessite un backup, sinon fallback move
+                        try { File.Replace(tmp, localPath, localPath + ".bak", true); }
+                        catch
+                        {
+                            try { if (File.Exists(localPath)) File.Delete(localPath); } catch { }
+                            File.Move(tmp, localPath);
+                        }
+                        // Cleanup backup best-effort
+                        try { var bak = localPath + ".bak"; if (File.Exists(bak)) File.Delete(bak); } catch { }
+                    }
+                }
+                catch { /* best-effort */ }
+                await Task.CompletedTask;
+            }
+
+            // AMBRE
+            try
+            {
+                var netAmbre = GetNetworkAmbreDbPath(countryId);
+                var locAmbre = GetLocalAmbreDbPath(countryId);
+                await CopyIfDifferentAsync(netAmbre, locAmbre);
+            }
+            catch { }
+
+            // DWINGS
+            try
+            {
+                var netDw = GetNetworkDwDbPath(countryId);
+                var locDw = GetLocalDwDbPath(countryId);
+                await CopyIfDifferentAsync(netDw, locDw);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Pousse les changements locaux de réconciliation s'il y en a, si le réseau est disponible et aucun lock global.
+        /// </summary>
+        public async Task<bool> PushReconciliationIfPendingAsync(string countryId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(countryId)) return false;
+                // Basculer si besoin
+                if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
+                {
+                    var ok = await SetCurrentCountryAsync(countryId);
+                    if (!ok) return false;
+                }
+
+                var cid = _currentCountryId;
+
+                // Debounce: skip if a push just happened very recently
+                var last = _lastPushTimesUtc.TryGetValue(cid, out var t) ? t : DateTime.MinValue;
+                if (DateTime.UtcNow - last < _pushCooldown)
+                    return false;
+
+                var sem = _pushSemaphores.GetOrAdd(cid, _ => new SemaphoreSlim(1, 1));
+                if (!await sem.WaitAsync(0))
+                {
+                    // Already pushing for this country
+                    return false;
+                }
+                try
+                {
+                    // Re-check debounce after acquiring
+                    last = _lastPushTimesUtc.TryGetValue(cid, out t) ? t : DateTime.MinValue;
+                    if (DateTime.UtcNow - last < _pushCooldown)
+                        return false;
+
+                    // Vérifier réseau et lock
+                    if (!IsNetworkSyncAvailable) return false;
+                    bool lockActive = false; try { lockActive = await IsGlobalLockActiveAsync(); } catch { lockActive = false; }
+                    if (lockActive) return false;
+
+                    // Y a-t-il des changements non synchronisés ?
+                    bool hasPending = true;
+                    try
+                    {
+                        var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(cid));
+                        var unsynced = await tracker.GetUnsyncedChangesAsync();
+                        hasPending = unsynced != null && unsynced.Any();
+                    }
+                    catch { /* en cas d'erreur, tenter quand même */ }
+
+                    if (!hasPending)
+                    {
+                        _lastPushTimesUtc[cid] = DateTime.UtcNow;
+                        return true;
+                    }
+
+                    var res = await SynchronizeAsync(cid, null, null);
+                    _lastPushTimesUtc[cid] = DateTime.UtcNow;
+                    return res != null && res.Success;
+                }
+                finally
+                {
+                    try { sem.Release(); } catch { }
+                }
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Returns the Control DB connection string. Control DB is MANDATORY for KPI snapshots and sync metadata.
+        /// Tries the explicit single ControlDatabasePath first, then per-country Control DB built from
+        /// ControlDatabaseDirectory/ControlDatabasePrefix (with Country* fallbacks). Throws if not resolvable.
+        /// </summary>
+        public string GetControlConnectionString(string countryId = null)
+        {
+            // 1) Explicit single Control DB path (legacy single DB) wins
+            var globalControlPath = GetCentralConfig("ControlDatabasePath");
+            if (!string.IsNullOrWhiteSpace(globalControlPath))
+                return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={globalControlPath};";
+
+            // 2) Per-country Control DB
+            var cid = countryId ?? CurrentCountryId;
+            var perCountryPath = GetControlDbPath(cid);
+            if (!string.IsNullOrWhiteSpace(perCountryPath))
+                return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={perCountryPath};";
+
+            // No valid Control DB configuration found
+            throw new InvalidOperationException(
+                "Control DB is mandatory. Configure either 'ControlDatabasePath' for a single Control DB, or " +
+                "use 'CountryDatabaseDirectory' with 'ControlDatabasePrefix' (or fallback to 'CountryDatabasePrefix') to build a per-country Control DB path.");
+        }
+
+        /// <summary>
+        /// Builds the country-specific Control DB path using CountryDatabaseDirectory and an optional ControlDatabasePrefix
+        /// (falls back to CountryDatabasePrefix). Returns null if not enough info to construct.
+        /// </summary>
+        private string GetControlDbPath(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) return null;
+
+            // Directory always comes from CountryDatabaseDirectory (single place)
+            string dir = GetCentralConfig("CountryDatabaseDirectory");
+            if (string.IsNullOrWhiteSpace(dir))
+                dir = GetParameter("CountryDatabaseDirectory");
+            if (string.IsNullOrWhiteSpace(dir)) return null;
+
+            string prefix = GetCentralConfig("ControlDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix))
+                prefix = GetCentralConfig("CountryDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix))
+                prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+
+            string file = $"{prefix}{countryId}.accdb";
+            return Path.Combine(dir, file);
+        }
+
+        /// <summary>
+        /// Ensure core Control DB schema exists: _SyncConfig and T_ConfigParameters.
+        /// Safe to call multiple times.
+        /// </summary>
+        public async Task EnsureControlSchemaAsync()
+        {
+            var connStr = GetControlConnectionString(CurrentCountry?.CNT_Id);
+            using (var connection = new OleDbConnection(connStr))
+            {
+                await connection.OpenAsync();
+
+                // Existing tables snapshot
+                var tables = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new object[] { null, null, null, "TABLE" });
+                bool Has(string name) => tables != null && tables.Rows.OfType<System.Data.DataRow>()
+                    .Any(r => string.Equals(Convert.ToString(r["TABLE_NAME"]), name, StringComparison.OrdinalIgnoreCase));
+
+                // _SyncConfig
+                if (!Has("_SyncConfig"))
+                {
+                    using (var cmd = new OleDbCommand("CREATE TABLE _SyncConfig (ConfigKey TEXT(255) PRIMARY KEY, ConfigValue MEMO)", connection))
+                        await cmd.ExecuteNonQueryAsync();
+                }
+
+                // T_ConfigParameters removed: configuration is read from referential T_Param only
+
+                // SyncLocks (global locking metadata)
+                if (!Has("SyncLocks"))
+                {
+                    var sql = @"CREATE TABLE SyncLocks (
+                        LockID TEXT(255) PRIMARY KEY,
+                        Reason MEMO,
+                        CreatedAt DATETIME,
+                        ExpiresAt DATETIME,
+                        MachineName TEXT(100),
+                        ProcessId LONG,
+                        SyncStatus TEXT(50)
+                    )";
+                    using (var cmd = new OleDbCommand(sql, connection))
+                        await cmd.ExecuteNonQueryAsync();
+                }
+
+                // ImportRuns (import auditing)
+                if (!Has("ImportRuns"))
+                {
+                    var sql = @"CREATE TABLE ImportRuns (
+                        Id COUNTER PRIMARY KEY,
+                        CountryId TEXT(50),
+                        Source TEXT(255),
+                        StartedAtUtc DATETIME,
+                        CompletedAtUtc DATETIME,
+                        Status TEXT(50),
+                        Message MEMO,
+                        Version TEXT(255)
+                    )";
+                    using (var cmd = new OleDbCommand(sql, connection))
+                        await cmd.ExecuteNonQueryAsync();
+                }
+
+                // SystemVersion (app/control DB versioning)
+                if (!Has("SystemVersion"))
+                {
+                    var sql = @"CREATE TABLE SystemVersion (
+                        Id COUNTER PRIMARY KEY,
+                        Component TEXT(100),
+                        Version TEXT(50),
+                        AppliedAtUtc DATETIME
+                    )";
+                    using (var cmd = new OleDbCommand(sql, connection))
+                        await cmd.ExecuteNonQueryAsync();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Reads configuration from referential table T_Param only.
+        /// Returns fallback if key is missing or empty.
+        /// </summary>
+        private string GetCentralConfig(string key, string fallback = null)
+        {
+            if (string.IsNullOrWhiteSpace(key)) return fallback;
+            var tparam = GetParameter(key);
+            return string.IsNullOrWhiteSpace(tparam) ? fallback : tparam;
+        }
+
+        /// <summary>
+        /// Returns network path for Ambre DB for a country.
+        /// Directory comes from CountryDatabaseDirectory; prefix can use AmbreDatabasePrefix with fallback to CountryDatabasePrefix.
+        /// </summary>
+        private string GetNetworkAmbreDbPath(string countryId)
+        {
+            string remoteDir = GetCentralConfig("CountryDatabaseDirectory");
+            if (string.IsNullOrWhiteSpace(remoteDir)) remoteDir = GetParameter("CountryDatabaseDirectory");
+            string prefix = GetCentralConfig("AmbreDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetCentralConfig("CountryDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            return Path.Combine(remoteDir, $"{prefix}{countryId}.accdb");
+        }
+
+        /// <summary>
+        /// Returns network path for Reconciliation DB for a country.
+        /// Directory comes from CountryDatabaseDirectory; prefix uses CountryDatabasePrefix.
+        /// </summary>
+        private string GetNetworkReconciliationDbPath(string countryId)
+        {
+            string remoteDir = GetCentralConfig("CountryDatabaseDirectory");
+            if (string.IsNullOrWhiteSpace(remoteDir)) remoteDir = GetParameter("CountryDatabaseDirectory");
+            string prefix = GetCentralConfig("CountryDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            return Path.Combine(remoteDir, $"{prefix}{countryId}.accdb");
+        }
+
+        /// <summary>
+        /// Returns local path for Ambre DB for a country. Uses DataDirectory + Ambre prefix fallback.
+        /// </summary>
+        private string GetLocalAmbreDbPath(string countryId)
+        {
+            string dataDirectory = GetParameter("DataDirectory");
+            string prefix = GetCentralConfig("AmbreDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetCentralConfig("CountryDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            return Path.Combine(dataDirectory, $"{prefix}{countryId}.accdb");
+        }
+
+        /// <summary>
+        /// Public accessor for the local Ambre database path for a given country (or current country if null).
+        /// </summary>
+        public string GetLocalAmbreDatabasePath(string countryId = null)
+        {
+            var cid = string.IsNullOrWhiteSpace(countryId) ? _currentCountryId : countryId;
+            if (string.IsNullOrWhiteSpace(cid)) return null;
+            try { return GetLocalAmbreDbPath(cid); } catch { return null; }
+        }
+
+        /// <summary>
+        /// Returns local path for Reconciliation DB for a country. Uses DataDirectory + Recon prefix fallback.
+        /// </summary>
+        private string GetLocalReconciliationDbPath(string countryId)
+        {
+            string dataDirectory = GetParameter("DataDirectory");
+            string prefix = GetCentralConfig("CountryDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            return Path.Combine(dataDirectory, $"{prefix}{countryId}.accdb");
+        }
+
+        /// <summary>
+        /// Returns network path for DWINGS (DW) DB for a country.
+        /// Directory comes from CountryDatabaseDirectory; prefix uses DWDatabasePrefix with fallback to CountryDatabasePrefix.
+        /// </summary>
+        private string GetNetworkDwDbPath(string countryId)
+        {
+            string remoteDir = GetCentralConfig("CountryDatabaseDirectory");
+            if (string.IsNullOrWhiteSpace(remoteDir)) remoteDir = GetParameter("CountryDatabaseDirectory");
+            string prefix = GetCentralConfig("DWDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("DWDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetCentralConfig("CountryDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            return Path.Combine(remoteDir, $"{prefix}{countryId}.accdb");
+        }
+
+        /// <summary>
+        /// Returns local path for DWINGS (DW) DB for a country. Uses DataDirectory + DW prefix fallback.
+        /// </summary>
+        private string GetLocalDwDbPath(string countryId)
+        {
+            string dataDirectory = GetParameter("DataDirectory");
+            string prefix = GetCentralConfig("DWDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("DWDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetCentralConfig("CountryDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            return Path.Combine(dataDirectory, $"{prefix}{countryId}.accdb");
+        }
+
+        /// <summary>
+        /// Tente un Compact & Repair de la base Access en utilisant Access.Application (COM) en late-binding.
+        /// Retourne le chemin du fichier compacté si succès, sinon null. Best-effort: ne jette pas en cas d'absence d'Access.
+        /// </summary>
+        /// <param name="sourcePath">Chemin de la base source (.accdb)</param>
+        /// <returns>Chemin du fichier compacté temporaire, ou null en cas d'échec</returns>
+        private async Task<string> TryCompactAccessDatabaseAsync(string sourcePath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath)) return null;
+                string dir = Path.GetDirectoryName(sourcePath);
+                string nameNoExt = Path.GetFileNameWithoutExtension(sourcePath);
+                string tempCompact = Path.Combine(dir ?? "", $"{nameNoExt}.compact_{Guid.NewGuid():N}.accdb");
+
+                return await Task.Run(() =>
+                {
+                    try
+                    {
+                        // Late-bind Access.Application to avoid adding COM references
+                        var accType = Type.GetTypeFromProgID("Access.Application");
+                        if (accType == null) return null;
+                        dynamic app = Activator.CreateInstance(accType);
+                        try
+                        {
+                            // Some versions return bool, some void; rely on file existence afterwards
+                            try { var _ = app.CompactRepair(sourcePath, tempCompact, true); }
+                            catch { app.CompactRepair(sourcePath, tempCompact, true); }
+
+                            return File.Exists(tempCompact) ? tempCompact : null;
+                        }
+                        finally
+                        {
+                            try { app.Quit(); } catch { }
+                        }
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+                });
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -65,6 +474,105 @@ namespace RecoTool.Services
                 throw new InvalidOperationException("Paramètre DataDirectory manquant (T_Param)");
             string localDbPath = Path.Combine(dataDirectory, $"{countryPrefix}{countryId}.accdb");
             return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={localDbPath};";
+        }
+
+        /// <summary>
+        /// Met à jour explicitement l'ancre LastSyncTimestamp dans la base locale du pays donné.
+        /// Utilise un format ISO 8601 (Round-trip) pour robustesse.
+        /// </summary>
+        public async Task SetLastSyncAnchorAsync(string countryId, DateTime utcNow)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+            string iso = utcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture);
+
+            // 1) Tentative sur la base de contrôle (centralisée)
+            try
+            {
+                var controlConnStr = GetControlConnectionString(countryId);
+                using (var connection = new OleDbConnection(controlConnStr))
+                {
+                    await connection.OpenAsync();
+
+                    // Assurer le schéma de contrôle si nécessaire
+                    try { await EnsureControlSchemaAsync(); } catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[SYNC][WARN] EnsureControlSchemaAsync a échoué: {ex.Message}");
+                    }
+
+                    // S'assurer que la table _SyncConfig existe
+                    var schema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new object[] { null, null, null, "TABLE" });
+                    bool tableExists = schema != null && schema.Rows.OfType<System.Data.DataRow>()
+                        .Any(r => string.Equals(r["TABLE_NAME"].ToString(), "_SyncConfig", StringComparison.OrdinalIgnoreCase));
+                    if (!tableExists)
+                    {
+                        using (var create = new OleDbCommand("CREATE TABLE _SyncConfig (ConfigKey TEXT(255) PRIMARY KEY, ConfigValue MEMO)", connection))
+                        {
+                            await create.ExecuteNonQueryAsync();
+                        }
+                    }
+
+                    using (var update = new OleDbCommand("UPDATE _SyncConfig SET ConfigValue = @val WHERE ConfigKey = 'LastSyncTimestamp'", connection))
+                    {
+                        update.Parameters.AddWithValue("@val", iso);
+                        int rows = await update.ExecuteNonQueryAsync();
+                        if (rows == 0)
+                        {
+                            using (var insert = new OleDbCommand("INSERT INTO _SyncConfig (ConfigKey, ConfigValue) VALUES ('LastSyncTimestamp', @val)", connection))
+                            {
+                                insert.Parameters.AddWithValue("@val", iso);
+                                await insert.ExecuteNonQueryAsync();
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SYNC][WARN] Echec mise à jour LastSyncTimestamp sur la base de contrôle ({countryId}): {ex.Message}. Tentative sur la base locale.");
+            }
+
+            // 2) Fallback: stocker l'ancre dans la base LOCALE du pays
+            try
+            {
+                var localConnStr = GetCountryConnectionString(countryId);
+                using (var connection = new OleDbConnection(localConnStr))
+                {
+                    await connection.OpenAsync();
+
+                    // S'assurer que la table _SyncConfig existe côté local
+                    var schema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new object[] { null, null, null, "TABLE" });
+                    bool tableExists = schema != null && schema.Rows.OfType<System.Data.DataRow>()
+                        .Any(r => string.Equals(r["TABLE_NAME"].ToString(), "_SyncConfig", StringComparison.OrdinalIgnoreCase));
+                    if (!tableExists)
+                    {
+                        using (var create = new OleDbCommand("CREATE TABLE _SyncConfig (ConfigKey TEXT(255) PRIMARY KEY, ConfigValue MEMO)", connection))
+                        {
+                            await create.ExecuteNonQueryAsync();
+                        }
+                    }
+
+                    using (var update = new OleDbCommand("UPDATE _SyncConfig SET ConfigValue = @val WHERE ConfigKey = 'LastSyncTimestamp'", connection))
+                    {
+                        update.Parameters.AddWithValue("@val", iso);
+                        int rows = await update.ExecuteNonQueryAsync();
+                        if (rows == 0)
+                        {
+                            using (var insert = new OleDbCommand("INSERT INTO _SyncConfig (ConfigKey, ConfigValue) VALUES ('LastSyncTimestamp', @val)", connection))
+                            {
+                                insert.Parameters.AddWithValue("@val", iso);
+                                await insert.ExecuteNonQueryAsync();
+                            }
+                        }
+                    }
+                }
+                System.Diagnostics.Debug.WriteLine($"[SYNC][INFO] LastSyncTimestamp stocké côté LOCAL pour {countryId} (fallback).");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SYNC][ERROR] Impossible de stocker LastSyncTimestamp (control et local ont échoué) pour {countryId}: {ex.Message}");
+                throw; // remonter l'erreur pour que l'appelant puisse informer l'utilisateur
+            }
         }
 
         /// <summary>
@@ -1267,7 +1775,7 @@ namespace RecoTool.Services
         /// </summary>
         public async Task<OfflineFirstAccess.ChangeTracking.IChangeLogSession> BeginChangeLogSessionAsync(string countryId)
         {
-            EnsureInitialized();
+            // Pas besoin d'initialisation complète: ne dépend que de la base de lock distante
             var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(countryId));
             return await tracker.BeginSessionAsync();
         }
@@ -1278,7 +1786,7 @@ namespace RecoTool.Services
         /// </summary>
         public async Task<int> GetUnsyncedChangeCountAsync(string countryId)
         {
-            EnsureInitialized();
+            // Pas besoin d'initialisation complète: ne dépend que de la base de lock distante
             var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(countryId));
             var entries = await tracker.GetUnsyncedChangesAsync();
             return entries?.Count() ?? 0;
@@ -1513,12 +2021,12 @@ namespace RecoTool.Services
             
             System.Diagnostics.Debug.WriteLine($"Paramètres T_Param vérifiés:");
             System.Diagnostics.Debug.WriteLine($"  - DataDirectory: {GetParameter("DataDirectory")}");
-            System.Diagnostics.Debug.WriteLine($"  - DWDatabasePath: {GetParameter("DWDatabasePath")}");
             System.Diagnostics.Debug.WriteLine($"  - CountryDatabaseDirectory: {GetParameter("CountryDatabaseDirectory")}");
             System.Diagnostics.Debug.WriteLine($"  - CountryDatabasePrefix: {GetParameter("CountryDatabasePrefix")}");
 
-            // Récupérer et charger la dernière country utilisée
-            SetCurrentCountryAsync(GetParameter("LastCountryUsed")).Wait();
+            // Ne pas initialiser automatiquement un pays au démarrage.
+            // Le pays sera défini explicitement par l'UI (sélection utilisateur),
+            // afin d'éviter toute copie réseau->local avant choix explicite.
         }
         
         /// <summary>
@@ -1551,7 +2059,7 @@ namespace RecoTool.Services
             string localDwPath = GetLocalDWDatabasePath();
             if (string.IsNullOrEmpty(localDwPath))
             {
-                throw new InvalidOperationException("Chemin local de la base DW introuvable (vérifier T_Param: DataDirectory et DWDatabasePath)");
+                throw new InvalidOperationException("Chemin local de la base DW introuvable (vérifier DataDirectory, CountryDatabaseDirectory et DWDatabasePrefix, et qu'un pays est sélectionné)");
             }
             return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={localDwPath};";
         }
@@ -1561,14 +2069,10 @@ namespace RecoTool.Services
         /// </summary>
         public string GetLocalDWDatabasePath()
         {
-            string dwDatabasePath = GetParameter("DWDatabasePath");
-            string dataDirectory = GetParameter("DataDirectory");
-            if (string.IsNullOrEmpty(dwDatabasePath) || string.IsNullOrEmpty(dataDirectory))
-            {
-                return null;
-            }
-            var fileName = System.IO.Path.GetFileName(dwDatabasePath);
-            return System.IO.Path.Combine(dataDirectory, fileName);
+            // Réutilise la logique unifiée: DW est par pays via CountryDatabaseDirectory + DWDatabasePrefix
+            // Si aucun pays courant n'est défini, on ne peut pas résoudre le chemin local DW
+            if (string.IsNullOrEmpty(_currentCountryId)) return null;
+            try { return GetLocalDwDbPath(_currentCountryId); } catch { return null; }
         }
 
         /// <summary>
@@ -1577,55 +2081,14 @@ namespace RecoTool.Services
         /// <param name="onProgress">Callback progression (0-100, message)</param>
         public async Task EnsureLocalDWCopyAsync(Action<int, string> onProgress = null)
         {
+            // Nouvelle implémentation: s'appuie sur la copie unifiée réseau->local pour le pays courant
+            if (string.IsNullOrEmpty(_currentCountryId))
+                throw new InvalidOperationException("Aucun pays sélectionné: impossible de préparer la base DW.");
             try
             {
-                string remotePath = GetParameter("DWDatabasePath");
-                string localPath = GetLocalDWDatabasePath();
-                if (string.IsNullOrEmpty(remotePath) || string.IsNullOrEmpty(localPath))
-                    throw new InvalidOperationException("DWDatabasePath ou DataDirectory non configuré.");
-
-                if (!File.Exists(remotePath))
-                    throw new FileNotFoundException($"Base DW distante introuvable: {remotePath}");
-
-                var remoteInfo = new FileInfo(remotePath);
-                var needCopy = !File.Exists(localPath);
-
-                if (!needCopy)
-                {
-                    var localInfo = new FileInfo(localPath);
-                    needCopy = remoteInfo.LastWriteTimeUtc > localInfo.LastWriteTimeUtc;
-                }
-
-                if (!needCopy)
-                {
-                    onProgress?.Invoke(100, "Base DW locale à jour");
-                    return;
-                }
-
-                Directory.CreateDirectory(Path.GetDirectoryName(localPath));
-                onProgress?.Invoke(0, "Préparation de la copie de la base DW...");
-
-                const int bufferSize = 1024 * 1024; // 1 MB
-                long totalBytes = remoteInfo.Length;
-                long copied = 0;
-
-                using (var source = new FileStream(remotePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-                using (var dest = new FileStream(localPath, FileMode.Create, FileAccess.Write, FileShare.None))
-                {
-                    var buffer = new byte[bufferSize];
-                    int read;
-                    while ((read = await source.ReadAsync(buffer, 0, buffer.Length)) > 0)
-                    {
-                        await dest.WriteAsync(buffer, 0, read);
-                        copied += read;
-                        int percent = totalBytes > 0 ? (int)(copied * 100 / totalBytes) : 0;
-                        onProgress?.Invoke(percent, $"Copie de la base DW... {percent}%");
-                    }
-                }
-
-                // Align last write time
-                File.SetLastWriteTimeUtc(localPath, remoteInfo.LastWriteTimeUtc);
-                onProgress?.Invoke(100, "Copie DW terminée");
+                onProgress?.Invoke(10, "Préparation DW...");
+                await CopyNetworkToLocalDwAsync(_currentCountryId);
+                onProgress?.Invoke(100, "DW prêt");
             }
             catch (Exception ex)
             {
@@ -1980,54 +2443,6 @@ namespace RecoTool.Services
         {
             return await UpdateEntityAsync(countryId, entity, null);
         }
-
-        /// <summary>
-        /// Définit le pays courant et initialise la configuration/synchronisation locale si nécessaire.
-        /// </summary>
-        public async Task<bool> SetCurrentCountryAsync(string countryId)
-        {
-            if (string.IsNullOrWhiteSpace(countryId))
-                throw new ArgumentException("countryId est requis", nameof(countryId));
-
-            // Mettre à jour le pays courant depuis le référentiel si disponible
-            lock (_referentialLock)
-            {
-                _currentCountry = _countries?.FirstOrDefault(c => string.Equals(c?.CNT_Id, countryId, StringComparison.OrdinalIgnoreCase))
-                                  ?? _currentCountry; // conserver si non trouvé
-            }
-
-            // Construire la configuration et initialiser les couches locales
-            _syncConfig = BuildSyncConfiguration(countryId);
-            _syncService = new SynchronizationService();
-
-            var initialized = await InitializeLocalDatabaseAsync(countryId);
-            if (initialized)
-            {
-                _currentCountryId = countryId;
-
-                // Au démarrage/changement de pays, pousser d'éventuels changements en attente
-                try
-                {
-                    var pending = await GetUnsyncedChangeCountAsync(countryId);
-                    if (pending > 0)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Pending changes detected ({pending}) for {countryId} on startup. Pushing to network...");
-                        await PushPendingChangesToNetworkAsync(countryId);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Erreur lors du push des changements en attente pour {countryId} au démarrage: {ex.Message}");
-                    // Ne pas interrompre l'initialisation si le push échoue; l'utilisateur pourra réessayer manuellement
-                }
-            }
-            return initialized;
-        }
-
-        /// <summary>
-        /// Construit la SyncConfiguration à partir des paramètres T_Param et d'un pays donné
-        /// </summary>
-        /// <param name="countryId">ID du pays</param>
         /// <returns>SyncConfiguration prête pour SynchronizationService</returns>
         private SyncConfiguration BuildSyncConfiguration(string countryId)
         {
@@ -2063,6 +2478,55 @@ namespace RecoTool.Services
                 RemoteDatabasePath = remoteDbPath,
                 LockDatabasePath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}_lock.accdb"),
                 TablesToSync = tables
+            };
+        }
+
+        /// <summary>
+        /// Construit une configuration de synchro pour la base AMBRE (tables AMBRE uniquement)
+        /// </summary>
+        [Obsolete("La base AMBRE est publiée via l'import (CopyLocalToNetworkAsync). Aucune synchro incrémentale n'est effectuée ici.")]
+        private SyncConfiguration BuildAmbreSyncConfiguration(string countryId, List<string> ambreTables)
+        {
+            if (ambreTables == null) ambreTables = new List<string>();
+            if (ambreTables.Count == 0) ambreTables.Add("T_Data_Ambre");
+
+            string localDbPath = GetLocalAmbreDbPath(countryId);
+            string remoteDbPath = GetNetworkAmbreDbPath(countryId);
+
+            // Utilise le même lock DB par pays
+            string remoteDir = Path.GetDirectoryName(remoteDbPath);
+            string countryPrefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+
+            return new SyncConfiguration
+            {
+                LocalDatabasePath = localDbPath,
+                RemoteDatabasePath = remoteDbPath,
+                LockDatabasePath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}_lock.accdb"),
+                TablesToSync = ambreTables
+            };
+        }
+
+        /// <summary>
+        /// Construit une configuration de synchro pour la base RECONCILIATION (tables RECON uniquement)
+        /// </summary>
+        private SyncConfiguration BuildReconciliationSyncConfiguration(string countryId, List<string> reconTables)
+        {
+            if (reconTables == null) reconTables = new List<string>();
+            if (reconTables.Count == 0) reconTables.Add("T_Reconciliation");
+
+            string localDbPath = GetLocalReconciliationDbPath(countryId);
+            string remoteDbPath = GetNetworkReconciliationDbPath(countryId);
+
+            // Utilise le même lock DB par pays
+            string remoteDir = Path.GetDirectoryName(remoteDbPath);
+            string countryPrefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+
+            return new SyncConfiguration
+            {
+                LocalDatabasePath = localDbPath,
+                RemoteDatabasePath = remoteDbPath,
+                LockDatabasePath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}_lock.accdb"),
+                TablesToSync = reconTables
             };
         }
 
@@ -2302,6 +2766,69 @@ namespace RecoTool.Services
         }
         
         /// <summary>
+        /// Définit le pays courant et prépare l'environnement local.
+        /// Règle: s'il existe des changements locaux non synchronisés, on les pousse d'abord vers le réseau,
+        /// puis on recopie toutes les bases pertinentes (Reconciliation, Ambre, DW) du réseau vers le local.
+        /// </summary>
+        public async Task<bool> SetCurrentCountryAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId))
+                return false;
+
+            // 1) Initialiser/assurer la base locale principale (et positionner _currentCountryId)
+            var initialized = await InitializeLocalDatabaseAsync(countryId);
+            if (!initialized)
+                return false;
+
+            // 1.a) Construire et enregistrer la configuration de synchronisation (utile pour GetLocalConnectionString et EnsureInitialized)
+            _syncConfig = BuildSyncConfiguration(countryId);
+            try { EnsureLockTablesExist(_syncConfig.LockDatabasePath); } catch { }
+            // Préparer le service de synchronisation
+            if (_syncService == null)
+            {
+                _syncService = new SynchronizationService();
+            }
+
+            // 1.b) Positionner également l'objet Country courant depuis les référentiels
+            try
+            {
+                _currentCountry = await GetCountryByIdAsync(countryId);
+            }
+            catch
+            {
+                _currentCountry = null; // si échec de chargement, rester prudent
+            }
+
+            // 2) Pousser d'éventuels changements locaux en attente
+            try
+            {
+                var pending = await GetUnsyncedChangeCountAsync(countryId);
+                if (pending > 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[{nameof(SetCurrentCountryAsync)}] Pending changes detected ({pending}) for {countryId}. Pushing to network...");
+                    await PushPendingChangesToNetworkAsync(countryId);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[{nameof(SetCurrentCountryAsync)}] Erreur lors du push des changements en attente pour {countryId}: {ex.Message}");
+                // Ne pas interrompre: on va quand même tenter de réaligner local depuis réseau
+            }
+
+            // 3) Après le push, rafraîchir toutes les bases locales depuis le réseau (best-effort)
+            try { await CopyNetworkToLocalReconciliationAsync(countryId); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"RECON: échec copie réseau->local pour {countryId}: {ex.Message}"); }
+
+            try { await CopyNetworkToLocalAmbreAsync(countryId); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"AMBRE: échec copie réseau->local pour {countryId}: {ex.Message}"); }
+
+            try { await CopyNetworkToLocalDwAsync(countryId); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"DW: échec copie réseau->local pour {countryId}: {ex.Message}"); }
+
+            return true;
+        }
+        
+        /// <summary>
         /// Vérifie si une base de données est verrouillée (import en cours)
         /// </summary>
         /// <param name="databasePath">Chemin de la base à vérifier</param>
@@ -2384,12 +2911,51 @@ namespace RecoTool.Services
                 System.Diagnostics.Debug.WriteLine($"Avertissement: impossible de vérifier le verrou de la base réseau ({ex.Message}). Poursuite de la copie.");
             }
 
+            // Sauvegarde journalière côté serveur dans un répertoire Saved/ (best-effort)
+            try
+            {
+                if (File.Exists(networkDbPath))
+                {
+                    string savedDir = Path.Combine(remoteDir, "Saved");
+                    if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
+
+                    // Sauvegarde quotidienne: créer un fichier par jour et ne pas dupliquer si déjà présent
+                    string dayStamp = DateTime.Now.ToString("yyyy-MM-dd");
+                    string dailyBackupPath = Path.Combine(savedDir, $"{countryPrefix}{countryId}_{dayStamp}.accdb");
+                    if (!File.Exists(dailyBackupPath))
+                    {
+                        File.Copy(networkDbPath, dailyBackupPath, true);
+                        System.Diagnostics.Debug.WriteLine($"Daily backup created: {dailyBackupPath}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Avertissement: sauvegarde journalière échouée ({ex.Message}). Poursuite de la publication.");
+            }
+
             // Chemins temporaires et sauvegarde
             string tempPath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}.accdb.tmp_{Guid.NewGuid():N}");
             string backupPath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}.accdb.bak");
 
+            // Compact & Repair local DB to a temporary file before publishing (best-effort)
+            string sourceForPublish = localDbPath;
+            string compactTempLocal = null;
+            try
+            {
+                compactTempLocal = await TryCompactAccessDatabaseAsync(localDbPath);
+                if (!string.IsNullOrEmpty(compactTempLocal) && File.Exists(compactTempLocal))
+                {
+                    sourceForPublish = compactTempLocal;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Compact/Repair échec ({ex.Message}). Publication avec la base locale telle quelle.");
+            }
+
             // Copier vers un fichier temporaire sur le même volume réseau
-            File.Copy(localDbPath, tempPath, true);
+            File.Copy(sourceForPublish, tempPath, true);
 
             // Remplacer atomiquement la base réseau (ou déplacer si inexistant)
             if (File.Exists(networkDbPath))
@@ -2403,6 +2969,41 @@ namespace RecoTool.Services
             }
 
             System.Diagnostics.Debug.WriteLine($"Base locale publiée vers le réseau pour {countryId} -> {networkDbPath}");
+
+            // Nettoyer le fichier compact temporaire s'il existe
+            try { if (!string.IsNullOrEmpty(compactTempLocal) && File.Exists(compactTempLocal)) File.Delete(compactTempLocal); } catch { }
+        }
+
+        /// <summary>
+        /// Crée une sauvegarde locale de la base RECON avant un import (fichier copié dans un dossier SavedLocal/ avec horodatage).
+        /// Best-effort: nève pas d'exception si la sauvegarde échoue.
+        /// </summary>
+        public async Task CreateLocalReconciliationBackupAsync(string countryId, string label = null)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(countryId)) return;
+                string localDbPath = GetLocalReconciliationDbPath(countryId);
+                if (!File.Exists(localDbPath)) return;
+
+                string dir = Path.GetDirectoryName(localDbPath);
+                if (string.IsNullOrWhiteSpace(dir)) return;
+                string savedDir = Path.Combine(dir, "SavedLocal");
+                if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
+
+                string baseName = Path.GetFileNameWithoutExtension(localDbPath);
+                string timeStamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string suffix = string.IsNullOrWhiteSpace(label) ? "PreImport" : label.Trim();
+                string backupPath = Path.Combine(savedDir, $"{baseName}_{suffix}_{timeStamp}.accdb");
+
+                // Copier via thread pool
+                await Task.Run(() => File.Copy(localDbPath, backupPath, true));
+                System.Diagnostics.Debug.WriteLine($"RECON: sauvegarde locale créée: {backupPath}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"RECON: échec sauvegarde locale (non bloquant): {ex.Message}");
+            }
         }
         
         /// <summary>
@@ -2473,6 +3074,262 @@ namespace RecoTool.Services
             }
 
             System.Diagnostics.Debug.WriteLine($"Base réseau copiée vers le local pour {countryId} -> {localDbPath}");
+            // Après un rafraîchissement complet local <- réseau, initialiser/mettre à jour l'ancre de synchronisation
+            try { await SetLastSyncAnchorAsync(countryId, DateTime.UtcNow); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SYNC][WARN] Echec SetLastSyncAnchorAsync après copie réseau->local ({countryId}): {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Copie la base AMBRE réseau vers la base AMBRE locale (atomique côté local).
+        /// Utilise les paramètres Ambre* si présents, sinon retombe sur Country*.
+        /// </summary>
+        public async Task CopyNetworkToLocalAmbreAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            string localDbPath = GetLocalAmbreDbPath(countryId);
+            string networkDbPath = GetNetworkAmbreDbPath(countryId);
+            string dataDirectory = Path.GetDirectoryName(localDbPath);
+            if (string.IsNullOrWhiteSpace(dataDirectory)) throw new InvalidOperationException("DataDirectory invalide");
+
+            if (!File.Exists(networkDbPath))
+                throw new FileNotFoundException($"Base AMBRE réseau introuvable pour {countryId}", networkDbPath);
+
+            if (await IsDatabaseLockedAsync(networkDbPath))
+                throw new IOException($"La base AMBRE réseau est verrouillée: {networkDbPath}");
+
+            if (!Directory.Exists(dataDirectory)) Directory.CreateDirectory(dataDirectory);
+
+            string baseName = Path.GetFileNameWithoutExtension(networkDbPath);
+            string tempLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.tmp_{Guid.NewGuid():N}");
+            string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
+
+            File.Copy(networkDbPath, tempLocal, true);
+            if (File.Exists(localDbPath)) File.Replace(tempLocal, localDbPath, backupLocal); else File.Move(tempLocal, localDbPath);
+
+            System.Diagnostics.Debug.WriteLine($"AMBRE: base réseau copiée vers local pour {countryId} -> {localDbPath}");
+            // Initialiser/mettre à jour l'ancre suite au rafraîchissement complet AMBRE
+            try { await SetLastSyncAnchorAsync(countryId, DateTime.UtcNow); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SYNC][WARN] Echec SetLastSyncAnchorAsync après copie réseau->local AMBRE ({countryId}): {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Copie la base RECONCILIATION réseau vers la base locale (atomique côté local).
+        /// Utilise les paramètres Reconciliation* si présents, sinon retombe sur Country*.
+        /// </summary>
+        public async Task CopyNetworkToLocalReconciliationAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            string localDbPath = GetLocalReconciliationDbPath(countryId);
+            string networkDbPath = GetNetworkReconciliationDbPath(countryId);
+            string dataDirectory = Path.GetDirectoryName(localDbPath);
+            if (string.IsNullOrWhiteSpace(dataDirectory)) throw new InvalidOperationException("DataDirectory invalide");
+
+            if (!File.Exists(networkDbPath))
+                throw new FileNotFoundException($"Base RECON réseau introuvable pour {countryId}", networkDbPath);
+
+            if (await IsDatabaseLockedAsync(networkDbPath))
+                throw new IOException($"La base RECON réseau est verrouillée: {networkDbPath}");
+
+            if (!Directory.Exists(dataDirectory)) Directory.CreateDirectory(dataDirectory);
+
+            string baseName = Path.GetFileNameWithoutExtension(networkDbPath);
+            string tempLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.tmp_{Guid.NewGuid():N}");
+            string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
+
+            File.Copy(networkDbPath, tempLocal, true);
+            if (File.Exists(localDbPath)) File.Replace(tempLocal, localDbPath, backupLocal); else File.Move(tempLocal, localDbPath);
+
+            System.Diagnostics.Debug.WriteLine($"RECON: base réseau copiée vers local pour {countryId} -> {localDbPath}");
+            // Après un rafraîchissement complet local <- réseau, initialiser/mettre à jour l'ancre de synchronisation
+            try { await SetLastSyncAnchorAsync(countryId, DateTime.UtcNow); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SYNC][WARN] Echec SetLastSyncAnchorAsync après copie réseau->local RECON ({countryId}): {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Copie la base DWINGS réseau vers la base locale (atomique côté local).
+        /// </summary>
+        public async Task CopyNetworkToLocalDwAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            string localDbPath = GetLocalDwDbPath(countryId);
+            string networkDbPath = GetNetworkDwDbPath(countryId);
+            string dataDirectory = Path.GetDirectoryName(localDbPath);
+            if (string.IsNullOrWhiteSpace(dataDirectory)) throw new InvalidOperationException("DataDirectory invalide");
+
+            if (!File.Exists(networkDbPath))
+                throw new FileNotFoundException($"Base DW réseau introuvable pour {countryId}", networkDbPath);
+
+            if (await IsDatabaseLockedAsync(networkDbPath))
+                throw new IOException($"La base DW réseau est verrouillée: {networkDbPath}");
+
+            if (!Directory.Exists(dataDirectory)) Directory.CreateDirectory(dataDirectory);
+
+            string baseName = Path.GetFileNameWithoutExtension(networkDbPath);
+            string tempLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.tmp_{Guid.NewGuid():N}");
+            string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
+
+            File.Copy(networkDbPath, tempLocal, true);
+            if (File.Exists(localDbPath)) File.Replace(tempLocal, localDbPath, backupLocal); else File.Move(tempLocal, localDbPath);
+
+            System.Diagnostics.Debug.WriteLine($"DW: base réseau copiée vers local pour {countryId} -> {localDbPath}");
+        }
+
+        /// <summary>
+        /// Publie la base AMBRE locale vers le réseau (File.Replace) avec sauvegarde quotidienne Saved/ best-effort.
+        /// </summary>
+        public async Task CopyLocalToNetworkAmbreAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            string localDbPath = GetLocalAmbreDbPath(countryId);
+            string networkDbPath = GetNetworkAmbreDbPath(countryId);
+            if (!File.Exists(localDbPath)) throw new FileNotFoundException($"Base AMBRE locale introuvable pour {countryId}", localDbPath);
+
+            string remoteDir = Path.GetDirectoryName(networkDbPath);
+            if (string.IsNullOrWhiteSpace(remoteDir)) throw new InvalidOperationException("Répertoire réseau AMBRE invalide");
+            if (!Directory.Exists(remoteDir)) Directory.CreateDirectory(remoteDir);
+
+            try
+            {
+                if (File.Exists(networkDbPath))
+                {
+                    bool locked = await IsDatabaseLockedAsync(networkDbPath);
+                    if (locked) throw new IOException($"La base AMBRE réseau est verrouillée: {networkDbPath}");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"AMBRE: avertissement vérification verrou échouée ({ex.Message}). Poursuite.");
+            }
+
+            // Backup quotidienne Saved/
+            try
+            {
+                if (File.Exists(networkDbPath))
+                {
+                    string savedDir = Path.Combine(remoteDir, "Saved");
+                    if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
+                    string baseName = Path.GetFileNameWithoutExtension(networkDbPath);
+                    string dayStamp = DateTime.Now.ToString("yyyy-MM-dd");
+                    string dailyBackupPath = Path.Combine(savedDir, $"{baseName}_{dayStamp}.accdb");
+                    if (!File.Exists(dailyBackupPath))
+                    {
+                        File.Copy(networkDbPath, dailyBackupPath, true);
+                        System.Diagnostics.Debug.WriteLine($"AMBRE: Daily backup created: {dailyBackupPath}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"AMBRE: sauvegarde journalière échouée ({ex.Message}). Poursuite de la publication.");
+            }
+
+            // Compact & Replace atomique
+            string baseNameForTemp = Path.GetFileNameWithoutExtension(networkDbPath);
+            string tempPath = Path.Combine(remoteDir, $"{baseNameForTemp}.accdb.tmp_{Guid.NewGuid():N}");
+            string backupPath = Path.Combine(remoteDir, $"{baseNameForTemp}.accdb.bak");
+
+            string sourceForPublish = localDbPath;
+            string compactTempLocal = null;
+            try
+            {
+                compactTempLocal = await TryCompactAccessDatabaseAsync(localDbPath);
+                if (!string.IsNullOrEmpty(compactTempLocal) && File.Exists(compactTempLocal)) sourceForPublish = compactTempLocal;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"AMBRE: Compact/Repair échec ({ex.Message}). Publication avec la base locale.");
+            }
+
+            File.Copy(sourceForPublish, tempPath, true);
+            if (File.Exists(networkDbPath)) File.Replace(tempPath, networkDbPath, backupPath); else File.Move(tempPath, networkDbPath);
+            System.Diagnostics.Debug.WriteLine($"AMBRE: base locale publiée vers réseau pour {countryId} -> {networkDbPath}");
+            try { if (!string.IsNullOrEmpty(compactTempLocal) && File.Exists(compactTempLocal)) File.Delete(compactTempLocal); } catch { }
+        }
+
+        /// <summary>
+        /// Publie la base RECONCILIATION locale vers le réseau (File.Replace) avec sauvegarde quotidienne Saved/ best-effort.
+        /// </summary>
+        public async Task CopyLocalToNetworkReconciliationAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            string localDbPath = GetLocalReconciliationDbPath(countryId);
+            string networkDbPath = GetNetworkReconciliationDbPath(countryId);
+            if (!File.Exists(localDbPath)) throw new FileNotFoundException($"Base RECON locale introuvable pour {countryId}", localDbPath);
+
+            string remoteDir = Path.GetDirectoryName(networkDbPath);
+            if (string.IsNullOrWhiteSpace(remoteDir)) throw new InvalidOperationException("Répertoire réseau RECON invalide");
+            if (!Directory.Exists(remoteDir)) Directory.CreateDirectory(remoteDir);
+
+            try
+            {
+                if (File.Exists(networkDbPath))
+                {
+                    bool locked = await IsDatabaseLockedAsync(networkDbPath);
+                    if (locked) throw new IOException($"La base RECON réseau est verrouillée: {networkDbPath}");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"RECON: avertissement vérification verrou échouée ({ex.Message}). Poursuite.");
+            }
+
+            // Backup quotidienne Saved/
+            try
+            {
+                if (File.Exists(networkDbPath))
+                {
+                    string savedDir = Path.Combine(remoteDir, "Saved");
+                    if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
+                    string baseName = Path.GetFileNameWithoutExtension(networkDbPath);
+                    string dayStamp = DateTime.Now.ToString("yyyy-MM-dd");
+                    string dailyBackupPath = Path.Combine(savedDir, $"{baseName}_{dayStamp}.accdb");
+                    if (!File.Exists(dailyBackupPath))
+                    {
+                        File.Copy(networkDbPath, dailyBackupPath, true);
+                        System.Diagnostics.Debug.WriteLine($"RECON: Daily backup created: {dailyBackupPath}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"RECON: sauvegarde journalière échouée ({ex.Message}). Poursuite de la publication.");
+            }
+
+            // Compact & Replace atomique
+            string baseNameForTemp = Path.GetFileNameWithoutExtension(networkDbPath);
+            string tempPath = Path.Combine(remoteDir, $"{baseNameForTemp}.accdb.tmp_{Guid.NewGuid():N}");
+            string backupPath = Path.Combine(remoteDir, $"{baseNameForTemp}.accdb.bak");
+
+            string sourceForPublish = localDbPath;
+            string compactTempLocal = null;
+            try
+            {
+                compactTempLocal = await TryCompactAccessDatabaseAsync(localDbPath);
+                if (!string.IsNullOrEmpty(compactTempLocal) && File.Exists(compactTempLocal)) sourceForPublish = compactTempLocal;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"RECON: Compact/Repair échec ({ex.Message}). Publication avec la base locale.");
+            }
+
+            File.Copy(sourceForPublish, tempPath, true);
+            if (File.Exists(networkDbPath)) File.Replace(tempPath, networkDbPath, backupPath); else File.Move(tempPath, networkDbPath);
+            System.Diagnostics.Debug.WriteLine($"RECON: base locale publiée vers réseau pour {countryId} -> {networkDbPath}");
+            try { if (!string.IsNullOrEmpty(compactTempLocal) && File.Exists(compactTempLocal)) File.Delete(compactTempLocal); } catch { }
         }
         
         /// <summary>
@@ -2567,6 +3424,7 @@ namespace RecoTool.Services
                             // Caches de schéma
                             var tableColsCache = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
                             var pkColCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                            var colTypeCache = new Dictionary<string, Dictionary<string, OleDbType>>(StringComparer.OrdinalIgnoreCase);
 
                             Func<string, Task<HashSet<string>>> getColsAsync = async (table) =>
                             {
@@ -2584,6 +3442,63 @@ namespace RecoTool.Services
                                 return pkc;
                             };
 
+                            // Network schema column types for robust parameter binding
+                            Func<string, Task<Dictionary<string, OleDbType>>> getColTypesAsync = async (table) =>
+                            {
+                                if (colTypeCache.TryGetValue(table, out var map)) return map;
+                                var dt = netConn.GetSchema("Columns", new string[] { null, null, table, null });
+                                map = new Dictionary<string, OleDbType>(StringComparer.OrdinalIgnoreCase);
+                                foreach (System.Data.DataRow row in dt.Rows)
+                                {
+                                    var colName = Convert.ToString(row["COLUMN_NAME"]);
+                                    if (string.IsNullOrEmpty(colName)) continue;
+                                    // DATA_TYPE is an Int16 OLE DB type enum; cast to OleDbType
+                                    var typeCode = Convert.ToInt32(row["DATA_TYPE"]);
+                                    map[colName] = (OleDbType)typeCode;
+                                }
+                                colTypeCache[table] = map;
+                                return map;
+                            };
+
+                            // Helper for robust parameter creation with type coercion
+                            Action<OleDbCommand, string, object, string, Dictionary<string, OleDbType>> addParam = (cmd, name, value, col, typeMap) =>
+                            {
+                                object v = value;
+                                OleDbType? t = null;
+                                if (typeMap != null && col != null && typeMap.TryGetValue(col, out var mapped)) t = mapped;
+
+                                if (v == null)
+                                {
+                                    var p = cmd.Parameters.Add(name, t ?? OleDbType.Variant);
+                                    p.Value = DBNull.Value;
+                                    return;
+                                }
+
+                                // Coerce common problematic types
+                                if (t.HasValue && (t.Value == OleDbType.DBDate || t.Value == OleDbType.DBTime || t.Value == OleDbType.DBTimeStamp || t.Value == OleDbType.Date))
+                                {
+                                    if (v is double d) v = DateTime.FromOADate(d);
+                                    else if (v is float f) v = DateTime.FromOADate(f);
+                                    else if (v is string s)
+                                    {
+                                        if (double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var od)) v = DateTime.FromOADate(od);
+                                        else if (DateTime.TryParse(s, out var dt2)) v = dt2;
+                                    }
+                                    else if (v is DateTimeOffset dto) v = dto.UtcDateTime;
+                                }
+
+                                if (t.HasValue)
+                                {
+                                    var p = cmd.Parameters.Add(name, t.Value);
+                                    p.Value = v;
+                                }
+                                else
+                                {
+                                    // Fallback: infer from value
+                                    var p = cmd.Parameters.AddWithValue(name, v);
+                                }
+                            };
+
                             foreach (var entry in unsynced)
                             {
                                 if (token.IsCancellationRequested) break;
@@ -2595,6 +3510,7 @@ namespace RecoTool.Services
                                 var cols = await getColsAsync(table);
                                 if (cols == null || cols.Count == 0) continue;
                                 var pkCol = await getPkAsync(table);
+                                var typeMap = await getColTypesAsync(table);
 
                                 // 1) Lire la ligne locale (si elle existe)
                                 object localPkVal = entry.RecordId;
@@ -2630,18 +3546,19 @@ namespace RecoTool.Services
                                     if (hasIsDeleted || hasDeleteDate)
                                     {
                                         var setParts = new List<string>();
+                                        var paramCols = new List<string>();
                                         var parameters = new List<object>();
                                         if (hasIsDeleted) setParts.Add($"[{_syncConfig.IsDeletedColumn}] = true");
-                                        if (hasDeleteDate) { setParts.Add("[DeleteDate] = @p0"); parameters.Add(DateTime.UtcNow); }
+                                        if (hasDeleteDate) { setParts.Add("[DeleteDate] = @p0"); parameters.Add(DateTime.UtcNow); paramCols.Add("DeleteDate"); }
                                         if (hasLastMod)
                                         {
                                             var col = cols.Contains(_syncConfig.LastModifiedColumn) ? _syncConfig.LastModifiedColumn : "LastModified";
-                                            setParts.Add($"[{col}] = @p1"); parameters.Add(DateTime.UtcNow);
+                                            setParts.Add($"[{col}] = @p1"); parameters.Add(DateTime.UtcNow); paramCols.Add(col);
                                         }
                                         using (var cmd = new OleDbCommand($"UPDATE [{table}] SET {string.Join(", ", setParts)} WHERE [{pkCol}] = @key", netConn, tx))
                                         {
-                                            for (int i = 0; i < parameters.Count; i++) cmd.Parameters.AddWithValue($"@p{i}", Prepare(parameters[i]));
-                                            cmd.Parameters.AddWithValue("@key", Prepare(localPkVal));
+                                            for (int i = 0; i < parameters.Count; i++) addParam(cmd, $"@p{i}", parameters[i], i < paramCols.Count ? paramCols[i] : null, typeMap);
+                                            addParam(cmd, "@key", localPkVal, pkCol, typeMap);
                                             await cmd.ExecuteNonQueryAsync();
                                         }
                                     }
@@ -2649,7 +3566,7 @@ namespace RecoTool.Services
                                     {
                                         using (var cmd = new OleDbCommand($"DELETE FROM [{table}] WHERE [{pkCol}] = @key", netConn, tx))
                                         {
-                                            cmd.Parameters.AddWithValue("@key", Prepare(localPkVal));
+                                            addParam(cmd, "@key", localPkVal, pkCol, typeMap);
                                             await cmd.ExecuteNonQueryAsync();
                                         }
                                     }
@@ -2667,7 +3584,7 @@ namespace RecoTool.Services
                                     int exists;
                                     using (var exCmd = new OleDbCommand($"SELECT COUNT(*) FROM [{table}] WHERE [{pkCol}] = @key", netConn, tx))
                                     {
-                                        exCmd.Parameters.AddWithValue("@key", Prepare(localPkVal));
+                                        addParam(exCmd, "@key", localPkVal, pkCol, typeMap);
                                         exists = Convert.ToInt32(await exCmd.ExecuteScalarAsync());
                                     }
 
@@ -2681,8 +3598,8 @@ namespace RecoTool.Services
                                         for (int i = 0; i < allCols.Count; i++) setParts.Add($"[{allCols[i]}] = @p{i}");
                                         using (var up = new OleDbCommand($"UPDATE [{table}] SET {string.Join(", ", setParts)} WHERE [{pkCol}] = @key", netConn, tx))
                                         {
-                                            for (int i = 0; i < allCols.Count; i++) up.Parameters.AddWithValue($"@p{i}", Prepare(localValues[allCols[i]]));
-                                            up.Parameters.AddWithValue("@key", Prepare(localPkVal));
+                                            for (int i = 0; i < allCols.Count; i++) addParam(up, $"@p{i}", localValues[allCols[i]], allCols[i], typeMap);
+                                            addParam(up, "@key", localPkVal, pkCol, typeMap);
                                             await up.ExecuteNonQueryAsync();
                                         }
                                     }
@@ -2694,7 +3611,7 @@ namespace RecoTool.Services
                                         var colList = string.Join(", ", insertCols.Select(c => $"[{c}]"));
                                         using (var ins = new OleDbCommand($"INSERT INTO [{table}] ({colList}) VALUES ({ph})", netConn, tx))
                                         {
-                                            for (int i = 0; i < insertCols.Count; i++) ins.Parameters.AddWithValue($"@p{i}", Prepare(localValues[insertCols[i]]));
+                                            for (int i = 0; i < insertCols.Count; i++) addParam(ins, $"@p{i}", localValues[insertCols[i]], insertCols[i], typeMap);
                                             await ins.ExecuteNonQueryAsync();
                                         }
                                     }
@@ -3048,7 +3965,22 @@ namespace RecoTool.Services
             EnsureInitialized();
 
             var list = new List<Entity>();
-            using (var connection = new OleDbConnection(GetLocalConnectionString()))
+            // Choisir la base locale cible en fonction de la table
+            string targetDbPath;
+            if (string.Equals(tableName, "T_Data_Ambre", StringComparison.OrdinalIgnoreCase))
+            {
+                targetDbPath = GetLocalAmbreDbPath(_currentCountryId);
+            }
+            else
+            {
+                targetDbPath = GetLocalReconciliationDbPath(_currentCountryId);
+            }
+
+            if (string.IsNullOrWhiteSpace(targetDbPath) || !File.Exists(targetDbPath))
+                throw new FileNotFoundException($"Base locale introuvable pour la table '{tableName}'", targetDbPath ?? "<null>");
+
+            var connStr = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={targetDbPath};";
+            using (var connection = new OleDbConnection(connStr))
             {
                 await connection.OpenAsync();
                 using (var cmd = new OleDbCommand($"SELECT * FROM [{tableName}]", connection))
@@ -3099,12 +4031,11 @@ namespace RecoTool.Services
 
             try
             {
-                // Fast-path: si la base locale vient d'être rafraîchie depuis le réseau (copie identique)
-                // et qu'aucun changement en attente n'est présent dans le ChangeLog, on évite une synchro complète.
+                // Fast-path: comparer uniquement la base de réconciliation (AMBRE est géré par import)
                 try
                 {
-                    var localPath = _syncConfig?.LocalDatabasePath;
-                    var remotePath = _syncConfig?.RemoteDatabasePath;
+                    var localPath = GetLocalReconciliationDbPath(_currentCountryId);
+                    var remotePath = GetNetworkReconciliationDbPath(_currentCountryId);
                     if (!string.IsNullOrWhiteSpace(localPath) && !string.IsNullOrWhiteSpace(remotePath)
                         && File.Exists(localPath) && File.Exists(remotePath))
                     {
@@ -3119,7 +4050,7 @@ namespace RecoTool.Services
                             var unsynced = await tracker.GetUnsyncedChangesAsync();
                             if (unsynced == null || !unsynced.Any())
                             {
-                                onProgress?.Invoke(100, "Bases identiques - aucune synchronisation nécessaire.");
+                                onProgress?.Invoke(100, "Bases identiques (RECON) - aucune synchronisation nécessaire.");
                                 return new SyncResult { Success = true, Message = "No-op (identique)" };
                             }
                         }
@@ -3127,17 +4058,37 @@ namespace RecoTool.Services
                 }
                 catch { /* best-effort, en cas d'erreur on continue avec la synchro normale */ }
 
-                onProgress?.Invoke(0, "Initialisation de la synchronisation...");
-                await _syncService.InitializeAsync(_syncConfig);
+                // Déterminer les tables de réconciliation à synchroniser
+                var reconTables = new List<string>();
+                var syncTables = GetParameter("SyncTables");
+                if (!string.IsNullOrWhiteSpace(syncTables))
+                {
+                    foreach (var t in syncTables.Split(','))
+                    {
+                        var name = t?.Trim();
+                        if (!string.IsNullOrEmpty(name) && name.StartsWith("T_Reconciliation", StringComparison.OrdinalIgnoreCase))
+                            reconTables.Add(name);
+                    }
+                }
+                if (reconTables.Count == 0)
+                {
+                    // Valeur par défaut minimale
+                    reconTables.Add("T_Reconciliation");
+                }
 
-                var token = cancellationToken ?? default;
-                onProgress?.Invoke(5, "Démarrage...");
-                var result = await _syncService.SynchronizeAsync(onProgress);
-                if (result != null && result.Success)
+                onProgress?.Invoke(0, "Initialisation synchro RECON...");
+                var reconCfg = BuildReconciliationSyncConfiguration(_currentCountryId, reconTables);
+                if (_syncService == null) _syncService = new SynchronizationService();
+                await _syncService.InitializeAsync(reconCfg);
+                onProgress?.Invoke(5, "Démarrage RECON...");
+                var reconRes = await _syncService.SynchronizeAsync(onProgress);
+
+                if (reconRes != null && reconRes.Success)
                 {
                     _lastSyncTimes[_currentCountryId] = DateTime.UtcNow;
+                    return reconRes;
                 }
-                return result;
+                return reconRes ?? new SyncResult { Success = false, Message = "Résultat RECON nul" };
             }
             catch (Exception ex)
             {

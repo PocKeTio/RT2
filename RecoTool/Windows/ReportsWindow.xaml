@@ -1,7 +1,7 @@
 <Window x:Class="RecoTool.Windows.ReportsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Rapports et Exports" Height="700" Width="1000"
+        Title="Reports and Exports" Height="700" Width="1000"
         WindowStartupLocation="CenterScreen"
         Style="{DynamicResource WindowStyle}">
     
@@ -174,6 +174,9 @@
                             <Button Content="Export IT" Style="{StaticResource ExportButtonStyle}"
                                     Click="ExportITParam_Click"/>
 
+                            <Button Content="Export KPI History" Style="{StaticResource ExportButtonStyle}"
+                                    Click="ExportKpiHistory_Click"/>
+
                             <Separator Width="20"/>
 
                             <Button Content="Complete Excel Export" Style="{StaticResource ExportButtonStyle}" 
@@ -197,9 +200,9 @@
                 <TextBlock Text="Scheduled Reports" Style="{StaticResource SectionHeaderStyle}"/>
                 <Border Background="White" BorderBrush="#E0E0E0" BorderThickness="1" Padding="12" Margin="0,0,0,16">
                     <StackPanel>
-                        <CheckBox x:Name="ScheduleDailyReportCheckBox" Content="Rapport quotidien automatique" Margin="0,5"/>
-                        <CheckBox x:Name="ScheduleWeeklyReportCheckBox" Content="Rapport hebdomadaire automatique" Margin="0,5"/>
-                        <CheckBox x:Name="ScheduleMonthlyReportCheckBox" Content="Rapport mensuel automatique" Margin="0,5"/>
+                        <CheckBox x:Name="ScheduleDailyReportCheckBox" Content="Daily automatic report" Margin="0,5"/>
+                        <CheckBox x:Name="ScheduleWeeklyReportCheckBox" Content="Weekly automatic report" Margin="0,5"/>
+                        <CheckBox x:Name="ScheduleMonthlyReportCheckBox" Content="Monthly automatic report" Margin="0,5"/>
                         
                         <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                             <TextBlock Text="Notification email:" VerticalAlignment="Center" Margin="0,0,10,0"/>
@@ -232,11 +235,11 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock x:Name="StatusText" Grid.Column="0" VerticalAlignment="Center" Foreground="Gray"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Content="Actualiser Données" Style="{StaticResource ReportButtonStyle}" 
+                    <Button Content="Refresh Data" Style="{StaticResource ReportButtonStyle}" 
                            Click="RefreshData_Click"/>
-                    <Button Content="Ouvrir Dossier Exports" Style="{StaticResource ExportButtonStyle}" 
+                    <Button Content="Open Exports Folder" Style="{StaticResource ExportButtonStyle}" 
                            Click="OpenExportsFolder_Click"/>
-                    <Button Content="Fermer" Style="{StaticResource ReportButtonStyle}" 
+                    <Button Content="Close" Style="{StaticResource ReportButtonStyle}" 
                            Background="Gray" Click="Close_Click"/>
                 </StackPanel>
             </Grid>

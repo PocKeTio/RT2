@@ -13,6 +13,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
+using System.ComponentModel;
+using System.Reflection;
 
 namespace RecoTool.Services
 {
@@ -32,6 +34,63 @@ namespace RecoTool.Services
             _connectionString = connectionString;
             _currentUser = currentUser;
             _countries = countries?.ToDictionary(c => c.CNT_Id, c => c) ?? new Dictionary<string, Country>();
+        }
+
+        /// <summary>
+        /// Returns all distinct snapshot dates available for a country, sorted ascending.
+        /// </summary>
+        public async Task<List<DateTime>> GetKpiSnapshotDatesAsync(string countryId, CancellationToken cancellationToken = default)
+        {
+            var dates = new List<DateTime>();
+            if (string.IsNullOrWhiteSpace(countryId)) return dates;
+
+            // KPI snapshots are stored in the Control DB, not the country DB
+            using (var connection = new OleDbConnection(GetControlConnectionString()))
+            {
+                await connection.OpenAsync(cancellationToken);
+                await EnsureKpiDailySnapshotTableAsync(connection, cancellationToken);
+                var cmd = new OleDbCommand("SELECT DISTINCT SnapshotDate FROM KpiDailySnapshot WHERE CountryId = ? ORDER BY SnapshotDate", connection);
+                cmd.Parameters.AddWithValue("@p1", countryId);
+                using (var reader = await cmd.ExecuteReaderAsync(cancellationToken))
+                {
+                    while (await reader.ReadAsync(cancellationToken))
+                    {
+                        if (!reader.IsDBNull(0))
+                        {
+                            var dt = Convert.ToDateTime(reader.GetValue(0));
+                            dates.Add(dt.Date);
+                        }
+                    }
+                }
+            }
+
+            return dates.Distinct().OrderBy(d => d).ToList();
+        }
+
+        /// <summary>
+        /// Returns the last known AMBRE operation date in the current dataset for the country.
+        /// Used as the snapshot date for the pre-import KPI snapshot.
+        /// </summary>
+        public async Task<DateTime?> GetLastAmbreOperationDateAsync(string countryId, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) return null;
+
+            // Use the AMBRE database for this country
+            var ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
+            if (string.IsNullOrWhiteSpace(ambrePath) || !File.Exists(ambrePath)) return null;
+            var ambreCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={ambrePath};";
+
+            using (var connection = new OleDbConnection(ambreCs))
+            {
+                await connection.OpenAsync(cancellationToken);
+                var cmd = new OleDbCommand("SELECT MAX(Operation_Date) FROM T_Data_Ambre", connection);
+                var obj = await cmd.ExecuteScalarAsync(cancellationToken);
+                if (obj != null && obj != DBNull.Value)
+                {
+                    try { return Convert.ToDateTime(obj).Date; } catch { return null; }
+                }
+            }
+            return null;
         }
 
         /// <summary>
@@ -107,13 +166,18 @@ namespace RecoTool.Services
         /// </summary>
         public async Task<List<DataAmbre>> GetAmbreDataAsync(string countryId, bool includeDeleted = false)
         {
-            // Base de données déjà spécifique au pays: ne pas filtrer par Country
+            // Ambre est désormais dans une base séparée par pays
+            var ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
+            if (string.IsNullOrWhiteSpace(ambrePath))
+                throw new InvalidOperationException("Chemin de la base AMBRE introuvable pour le pays courant.");
+            var ambreCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={ambrePath};";
+
             var query = @"SELECT * FROM T_Data_Ambre";
             if (!includeDeleted)
                 query += " WHERE DeleteDate IS NULL";
             query += " ORDER BY Operation_Date DESC";
 
-            return await ExecuteQueryAsync<DataAmbre>(query);
+            return await ExecuteQueryAsync<DataAmbre>(query, ambreCs);
         }
 
         /// <summary>
@@ -121,9 +185,13 @@ namespace RecoTool.Services
         /// </summary>
         public async Task<List<Reconciliation>> GetReconciliationDataAsync(string countryId, bool includeDeleted = false)
         {
-            // Base de données déjà spécifique au pays: ne pas filtrer par Country
-            var query = @"SELECT r.* FROM T_Reconciliation r 
-                         INNER JOIN T_Data_Ambre a ON r.ID = a.ID";
+            // Jointure entre Réconciliation (base locale courante) et AMBRE (base séparée)
+            string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
+            string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
+            string ambreJoin = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre AS a" : $"(SELECT * FROM [{ambreEsc}].T_Data_Ambre) AS a";
+
+            var query = $@"SELECT r.* FROM (T_Reconciliation AS r 
+                         INNER JOIN {ambreJoin} ON r.ID = a.ID)";
             if (!includeDeleted)
                 query += " WHERE r.DeleteDate IS NULL";
             query += " ORDER BY r.LastModified DESC";
@@ -138,11 +206,14 @@ namespace RecoTool.Services
         {
             var swBuild = Stopwatch.StartNew();
             string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
+            string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
             string dwEsc = string.IsNullOrEmpty(dwPath) ? null : dwPath.Replace("'", "''");
+            string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
             // Build JOIN targets: use IN 'path' subqueries when external, otherwise direct tables
             string dwDataJoinInv = string.IsNullOrEmpty(dwEsc) ? "T_DW_Data AS dInv" : $"(SELECT * FROM [{dwEsc}].T_DW_Data) AS dInv";
             string dwDataJoinCom = string.IsNullOrEmpty(dwEsc) ? "T_DW_Data AS dCom" : $"(SELECT * FROM [{dwEsc}].T_DW_Data) AS dCom";
             string dwGuaranteeJoin = string.IsNullOrEmpty(dwEsc) ? "T_DW_Guarantee AS g" : $"(SELECT * FROM [{dwEsc}].T_DW_Guarantee) AS g";
+            string ambreJoin = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre AS a" : $"(SELECT * FROM [{ambreEsc}].T_Data_Ambre) AS a";
 
             var query = $@"SELECT 
                                    a.*,
@@ -150,6 +221,7 @@ namespace RecoTool.Services
                                    r.DWINGS_InvoiceID,
                                    r.DWINGS_CommissionID,
                                    r.Action,
+                                   r.Assignee,
                                    r.Comments,
                                    r.InternalInvoiceReference,
                                    r.FirstClaimDate,
@@ -171,7 +243,7 @@ namespace RecoTool.Services
                                    dInv.INVOICE_ID AS INVOICE_ID,
                                    dCom.COMMISSION_ID AS COMMISSION_ID,
                                    g.GUARANTEE_ID
-                           FROM (((T_Data_Ambre AS a 
+                           FROM ((({ambreJoin} 
                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
                            LEFT JOIN {dwDataJoinInv} ON r.DWINGS_InvoiceID = dInv.INVOICE_ID)
                            LEFT JOIN {dwDataJoinCom} ON r.DWINGS_CommissionID = dCom.COMMISSION_ID)
@@ -208,7 +280,7 @@ namespace RecoTool.Services
             {
                 LogPerf(
                     "GetReconciliationView",
-                    $"country={countryId} | usingDW={(string.IsNullOrEmpty(dwPath) ? "false" : "true")} | filterLen={(filterSql?.Length ?? 0)} | buildMs={swBuild.ElapsedMilliseconds} | execMs={swExec.ElapsedMilliseconds} | rows={list?.Count ?? 0} | queryLen={(query?.Length ?? 0)}"
+                    $"country={countryId} | usingDW={(string.IsNullOrEmpty(dwPath) ? "false" : "true")} | usingAmbre={(string.IsNullOrEmpty(ambrePath) ? "false" : "true")} | filterLen={(filterSql?.Length ?? 0)} | buildMs={swBuild.ElapsedMilliseconds} | execMs={swExec.ElapsedMilliseconds} | rows={list?.Count ?? 0} | queryLen={(query?.Length ?? 0)}"
                 );
             }
             catch { }
@@ -217,6 +289,55 @@ namespace RecoTool.Services
         }
 
         #endregion
+
+        /// <summary>
+        /// Returns Control DB connection string via OfflineFirstService, with fallback to local DB if not configured.
+        /// </summary>
+        private string GetControlConnectionString()
+        {
+            if (_offlineFirstService != null)
+                return _offlineFirstService.GetControlConnectionString(_offlineFirstService.CurrentCountryId);
+            return _connectionString;
+        }
+
+        /// <summary>
+        /// Ensure KpiDailySnapshot table exists in the provided connection. Creates it if missing.
+        /// </summary>
+        private async Task EnsureKpiDailySnapshotTableAsync(OleDbConnection connection, CancellationToken ct)
+        {
+            // Check existence via schema
+            var tables = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new object[] { null, null, "KpiDailySnapshot", "TABLE" });
+            if (tables != null && tables.Rows.Count > 0) return;
+
+            var createSql = @"CREATE TABLE KpiDailySnapshot (
+                Id COUNTER PRIMARY KEY,
+                SnapshotDate DATETIME,
+                CountryId TEXT(50),
+                MissingInvoices LONG,
+                PaidNotReconciled LONG,
+                UnderInvestigation LONG,
+                ReceivableCount LONG,
+                ReceivableAmount CURRENCY,
+                PivotCount LONG,
+                PivotAmount CURRENCY,
+                NewCount LONG,
+                DeletedCount LONG,
+                DeletionDelayBucketsJson LONGTEXT,
+                ReceivablePivotByActionJson LONGTEXT,
+                KpiDistributionJson LONGTEXT,
+                KpiRiskMatrixJson LONGTEXT,
+                CurrencyDistributionJson LONGTEXT,
+                ActionDistributionJson LONGTEXT,
+                CreatedAtUtc DATETIME,
+                SourceVersion TEXT(255),
+                FrozenAt DATETIME
+            )";
+
+            using (var cmd = new OleDbCommand(createSql, connection))
+            {
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+        }
 
         #region Exports (T_param driven)
 
@@ -626,9 +747,11 @@ namespace RecoTool.Services
                             var changeTuples = new List<(string TableName, string RecordId, string OperationType)>();
                             foreach (var reconciliation in reconciliations)
                             {
-                                reconciliation.UpdateModification(_currentUser);
                                 var op = await SaveSingleReconciliationAsync(connection, transaction, reconciliation);
-                                changeTuples.Add(("T_Reconciliation", reconciliation.ID, op));
+                                if (!string.Equals(op, "NOOP", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    changeTuples.Add(("T_Reconciliation", reconciliation.ID, op));
+                                }
                             }
 
                             transaction.Commit();
@@ -656,6 +779,23 @@ namespace RecoTool.Services
                             {
                                 // Swallow change-log errors to not block user saves
                             }
+
+                            // Background push of reconciliation changes when possible (fire-and-forget)
+                            try
+                            {
+                                if (_offlineFirstService != null)
+                                {
+                                    var cid = _offlineFirstService.CurrentCountryId;
+                                    if (!string.IsNullOrWhiteSpace(cid))
+                                    {
+                                        _ = Task.Run(async () =>
+                                        {
+                                            try { await _offlineFirstService.PushReconciliationIfPendingAsync(cid); } catch { }
+                                        });
+                                    }
+                                }
+                            }
+                            catch { }
                             return true;
                         }
                         catch
@@ -672,6 +812,67 @@ namespace RecoTool.Services
             }
         }
 
+        #region Snapshot label helpers
+        private static string GetActionName(int action)
+        {
+            try
+            {
+                var value = (ActionType)action;
+                return GetEnumDescription(value);
+            }
+            catch
+            {
+                return action.ToString();
+            }
+        }
+
+        private static string GetKPIName(int kpi)
+        {
+            try
+            {
+                var value = (KPIType)kpi;
+                switch (value)
+                {
+                    case KPIType.ITIssues: return "IT Issues";
+                    case KPIType.PaidButNotReconciled: return "Paid but not reconciled";
+                    case KPIType.CorrespondentChargesToBeInvoiced: return "Corr. charges to be invoiced";
+                    case KPIType.UnderInvestigation: return "Under investigation";
+                    case KPIType.NotClaimed: return "Not claimed";
+                    case KPIType.ClaimedButNotPaid: return "Claimed but not paid";
+                    case KPIType.CorrespondentChargesPendingTrigger: return "Corr. charges pending trigger";
+                    default: return SplitCamelCase(value.ToString());
+                }
+            }
+            catch
+            {
+                return kpi.ToString();
+            }
+        }
+
+        private static string GetEnumDescription(Enum value)
+        {
+            try
+            {
+                var fi = value.GetType().GetField(value.ToString());
+                if (fi != null)
+                {
+                    var attrs = (DescriptionAttribute[])fi.GetCustomAttributes(typeof(DescriptionAttribute), false);
+                    if (attrs != null && attrs.Length > 0)
+                        return attrs[0].Description;
+                }
+            }
+            catch { }
+            return SplitCamelCase(value.ToString());
+        }
+
+        private static string SplitCamelCase(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return s;
+            var spaced = Regex.Replace(s, "([a-z])([A-Z])", "$1 $2");
+            return spaced.Replace('_', ' ');
+        }
+        #endregion
+
         /// <summary>
         /// Sauvegarde une réconciliation unique dans une transaction
         /// </summary>
@@ -684,33 +885,107 @@ namespace RecoTool.Services
                 checkCmd.Parameters.AddWithValue("@ID", reconciliation.ID);
                 var exists = (int)await checkCmd.ExecuteScalarAsync() > 0;
 
-                string query;
+                // If the row exists, compare business fields to avoid no-op updates
                 if (exists)
                 {
-                    query = @"UPDATE T_Reconciliation SET 
+                    var selectCmd = new OleDbCommand(@"SELECT 
+                                [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_CommissionID],
+                                [Action], [Assignee], [Comments], [InternalInvoiceReference],
+                                [FirstClaimDate], [LastClaimDate], [ToRemind], [ToRemindDate],
+                                [ACK], [SwiftCode], [PaymentReference], [KPI],
+                                [IncidentType], [RiskyItem], [ReasonNonRisky]
+                              FROM T_Reconciliation WHERE [ID] = ?", connection, transaction);
+                    selectCmd.Parameters.AddWithValue("@ID", reconciliation.ID);
+                    using (var rdr = await selectCmd.ExecuteReaderAsync())
+                    {
+                        if (await rdr.ReadAsync())
+                        {
+                            object DbVal(int i) => rdr.IsDBNull(i) ? null : rdr.GetValue(i);
+                            bool Equal(object a, object b) => (a == null && b == null) || (a != null && a.Equals(b));
+
+                            bool? DbBool(object o)
+                            {
+                                if (o == null) return null;
+                                try
+                                {
+                                    if (o is bool bb) return bb;
+                                    if (o is byte by) return by != 0;
+                                    if (o is short s) return s != 0;
+                                    if (o is int ii) return ii != 0;
+                                    return Convert.ToBoolean(o);
+                                }
+                                catch { return null; }
+                            }
+
+                            var same =
+                                Equal(DbVal(0), (object)reconciliation.DWINGS_GuaranteeID) &&
+                                Equal(DbVal(1), (object)reconciliation.DWINGS_InvoiceID) &&
+                                Equal(DbVal(2), (object)reconciliation.DWINGS_CommissionID) &&
+                                Equal(DbVal(3), (object)reconciliation.Action) &&
+                                Equal(DbVal(4), (object)reconciliation.Assignee) &&
+                                Equal(DbVal(5), (object)reconciliation.Comments) &&
+                                Equal(DbVal(6), (object)reconciliation.InternalInvoiceReference) &&
+                                Equal(DbVal(7), reconciliation.FirstClaimDate.HasValue ? (object)reconciliation.FirstClaimDate.Value : null) &&
+                                Equal(DbVal(8), reconciliation.LastClaimDate.HasValue ? (object)reconciliation.LastClaimDate.Value : null) &&
+                                Equal(DbBool(DbVal(9)), (object)reconciliation.ToRemind) &&
+                                Equal(DbVal(10), reconciliation.ToRemindDate.HasValue ? (object)reconciliation.ToRemindDate.Value : null) &&
+                                Equal(DbBool(DbVal(11)), (object)reconciliation.ACK) &&
+                                Equal(DbVal(12), (object)reconciliation.SwiftCode) &&
+                                Equal(DbVal(13), (object)reconciliation.PaymentReference) &&
+                                Equal(DbVal(14), (object)reconciliation.KPI) &&
+                                Equal(DbVal(15), (object)reconciliation.IncidentType) &&
+                                Equal(DbBool(DbVal(16)), (object)reconciliation.RiskyItem) &&
+                                Equal(DbVal(17), (object)reconciliation.ReasonNonRisky);
+
+                            if (same)
+                            {
+                                // No business-field change: skip UPDATE and ChangeLog
+                                return "NOOP";
+                            }
+                        }
+                    }
+
+                    // Apply update with refreshed modification metadata
+                    reconciliation.ModifiedBy = _currentUser;
+                    reconciliation.LastModified = DateTime.UtcNow;
+
+                    var updateQuery = @"UPDATE T_Reconciliation SET 
                              [DWINGS_GuaranteeID] = ?, [DWINGS_InvoiceID] = ?, [DWINGS_CommissionID] = ?,
-                             [Action] = ?, [Comments] = ?, [InternalInvoiceReference] = ?,
+                             [Action] = ?, [Assignee] = ?, [Comments] = ?, [InternalInvoiceReference] = ?,
                              [FirstClaimDate] = ?, [LastClaimDate] = ?, [ToRemind] = ?, [ToRemindDate] = ?,
                              [ACK] = ?, [SwiftCode] = ?, [PaymentReference] = ?, [KPI] = ?,
                              [IncidentType] = ?, [RiskyItem] = ?, [ReasonNonRisky] = ?,
                              [ModifiedBy] = ?, [LastModified] = ?
                              WHERE [ID] = ?";
+
+                    using (var cmd = new OleDbCommand(updateQuery, connection, transaction))
+                    {
+                        AddReconciliationParameters(cmd, reconciliation, isInsert: false);
+                        await cmd.ExecuteNonQueryAsync();
+                        return "UPDATE";
+                    }
                 }
                 else
                 {
-                    query = @"INSERT INTO T_Reconciliation 
+                    // Prepare metadata for insert
+                    if (!reconciliation.CreationDate.HasValue)
+                        reconciliation.CreationDate = DateTime.UtcNow;
+                    reconciliation.ModifiedBy = _currentUser;
+                    reconciliation.LastModified = DateTime.UtcNow;
+
+                    var insertQuery = @"INSERT INTO T_Reconciliation 
                              ([ID], [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_CommissionID],
-                              [Action], [Comments], [InternalInvoiceReference], [FirstClaimDate], [LastClaimDate],
+                              [Action], [Assignee], [Comments], [InternalInvoiceReference], [FirstClaimDate], [LastClaimDate],
                               [ToRemind], [ToRemindDate], [ACK], [SwiftCode], [PaymentReference], [KPI],
                               [IncidentType], [RiskyItem], [ReasonNonRisky], [CreationDate], [ModifiedBy], [LastModified])
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-                }
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
-                using (var cmd = new OleDbCommand(query, connection, transaction))
-                {
-                    AddReconciliationParameters(cmd, reconciliation, !exists);
-                    var tot = await cmd.ExecuteNonQueryAsync();
-                    return exists ? "UPDATE" : "INSERT";
+                    using (var cmd = new OleDbCommand(insertQuery, connection, transaction))
+                    {
+                        AddReconciliationParameters(cmd, reconciliation, isInsert: true);
+                        await cmd.ExecuteNonQueryAsync();
+                        return "INSERT";
+                    }
                 }
             }
         }
@@ -730,22 +1005,29 @@ namespace RecoTool.Services
             cmd.Parameters.AddWithValue("@DWINGS_InvoiceID", reconciliation.DWINGS_InvoiceID ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@DWINGS_CommissionID", reconciliation.DWINGS_CommissionID ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@Action", reconciliation.Action ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("@Assignee", string.IsNullOrWhiteSpace(reconciliation.Assignee) ? (object)DBNull.Value : reconciliation.Assignee);
             cmd.Parameters.AddWithValue("@Comments", reconciliation.Comments ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@InternalInvoiceReference", reconciliation.InternalInvoiceReference ?? (object)DBNull.Value);
             var pFirst = cmd.Parameters.Add("@FirstClaimDate", OleDbType.Date);
             pFirst.Value = reconciliation.FirstClaimDate.HasValue ? (object)reconciliation.FirstClaimDate.Value : DBNull.Value;
             var pLast = cmd.Parameters.Add("@LastClaimDate", OleDbType.Date);
             pLast.Value = reconciliation.LastClaimDate.HasValue ? (object)reconciliation.LastClaimDate.Value : DBNull.Value;
-            cmd.Parameters.AddWithValue("@ToRemind", reconciliation.ToRemind);
+            var pToRemind = cmd.Parameters.Add("@ToRemind", OleDbType.Boolean);
+            pToRemind.Value = reconciliation.ToRemind;
             var pRem = cmd.Parameters.Add("@ToRemindDate", OleDbType.Date);
             pRem.Value = reconciliation.ToRemindDate.HasValue ? (object)reconciliation.ToRemindDate.Value : DBNull.Value;
-            cmd.Parameters.AddWithValue("@ACK", reconciliation.ACK);
+            var pAck = cmd.Parameters.Add("@ACK", OleDbType.Boolean);
+            pAck.Value = reconciliation.ACK;
             cmd.Parameters.AddWithValue("@SwiftCode", reconciliation.SwiftCode ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@PaymentReference", reconciliation.PaymentReference ?? (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("@KPI", reconciliation.KPI ?? (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("@IncidentType", reconciliation.IncidentType ?? (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("@RiskyItem", reconciliation.RiskyItem ?? (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("@ReasonNonRisky", reconciliation.ReasonNonRisky ?? (object)DBNull.Value);
+            var pKpi = cmd.Parameters.Add("@KPI", OleDbType.Integer);
+            pKpi.Value = reconciliation.KPI.HasValue ? (object)reconciliation.KPI.Value : DBNull.Value;
+            var pInc = cmd.Parameters.Add("@IncidentType", OleDbType.Integer);
+            pInc.Value = reconciliation.IncidentType.HasValue ? (object)reconciliation.IncidentType.Value : DBNull.Value;
+            var pRisky = cmd.Parameters.Add("@RiskyItem", OleDbType.Boolean);
+            pRisky.Value = reconciliation.RiskyItem.HasValue ? (object)reconciliation.RiskyItem.Value : DBNull.Value;
+            var pReason = cmd.Parameters.Add("@ReasonNonRisky", OleDbType.Integer);
+            pReason.Value = reconciliation.ReasonNonRisky.HasValue ? (object)reconciliation.ReasonNonRisky.Value : DBNull.Value;
 
             if (isInsert)
             {
@@ -759,6 +1041,377 @@ namespace RecoTool.Services
 
             if (!isInsert)
                 cmd.Parameters.AddWithValue("@ID", reconciliation.ID);
+        }
+
+        /// <summary>
+        /// Récupère la liste des utilisateurs (référentiel T_User)
+        /// </summary>
+        public async Task<List<(string Id, string Name)>> GetUsersAsync()
+        {
+            var list = new List<(string, string)>();
+            using (var connection = new OleDbConnection(GetReferentialConnectionString()))
+            {
+                await connection.OpenAsync();
+
+                // Ensure current user exists in T_User (USR_ID, USR_Name)
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(_currentUser))
+                    {
+                        var checkCmd = new OleDbCommand("SELECT COUNT(*) FROM T_User WHERE USR_ID = ?", connection);
+                        checkCmd.Parameters.AddWithValue("@p1", _currentUser);
+                        var obj = await checkCmd.ExecuteScalarAsync().ConfigureAwait(false);
+                        var exists = obj != null && int.TryParse(obj.ToString(), out var n) && n > 0;
+                        if (!exists)
+                        {
+                            var insertCmd = new OleDbCommand("INSERT INTO T_User (USR_ID, USR_Name) VALUES (?, ?)", connection);
+                            insertCmd.Parameters.AddWithValue("@p1", _currentUser);
+                            insertCmd.Parameters.AddWithValue("@p2", _currentUser);
+                            await insertCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                        }
+                    }
+                }
+                catch { /* best effort; not critical */ }
+
+                var cmd = new OleDbCommand("SELECT USR_ID, USR_Name FROM T_User ORDER BY USR_Name", connection);
+                using (var rdr = await cmd.ExecuteReaderAsync())
+                {
+                    while (await rdr.ReadAsync())
+                    {
+                        var id = rdr.IsDBNull(0) ? null : rdr.GetValue(0)?.ToString();
+                        var name = rdr.IsDBNull(1) ? null : rdr.GetValue(1)?.ToString();
+                        if (!string.IsNullOrWhiteSpace(id))
+                            list.Add((id, name ?? id));
+                    }
+                }
+            }
+            return list;
+        }
+
+        #endregion
+
+        #region KPI Daily Snapshots
+
+        private class KpiDailySnapshotDto
+        {
+            public DateTime SnapshotDate { get; set; }
+            public string CountryId { get; set; }
+
+            public long MissingInvoices { get; set; }
+            public long PaidNotReconciled { get; set; }
+            public long UnderInvestigation { get; set; }
+
+            public long ReceivableCount { get; set; }
+            public decimal ReceivableAmount { get; set; }
+            public long PivotCount { get; set; }
+            public decimal PivotAmount { get; set; }
+
+            public long NewCount { get; set; }
+            public long DeletedCount { get; set; }
+
+            public string DeletionDelayBucketsJson { get; set; }
+            public string ReceivablePivotByActionJson { get; set; }
+            public string KpiDistributionJson { get; set; }
+            public string KpiRiskMatrixJson { get; set; }
+            public string CurrencyDistributionJson { get; set; }
+            public string ActionDistributionJson { get; set; }
+
+            public DateTime CreatedAtUtc { get; set; }
+            public string SourceVersion { get; set; }
+        }
+
+        /// <summary>
+        /// Compute and save a daily snapshot of HomePage KPIs for the given country and date (insert-only).
+        /// </summary>
+        public async Task<bool> SaveDailyKpiSnapshotAsync(DateTime date, string countryId, string sourceVersion = null, CancellationToken cancellationToken = default)
+        {
+            var dto = await BuildKpiDailySnapshotAsync(date.Date, countryId, sourceVersion, cancellationToken);
+            return await InsertDailyKpiSnapshotAsync(dto, cancellationToken);
+        }
+
+        private async Task<KpiDailySnapshotDto> BuildKpiDailySnapshotAsync(DateTime date, string countryId, string sourceVersion, CancellationToken ct)
+        {
+            // Load the same data used by HomePage
+            var list = await GetReconciliationViewAsync(countryId);
+
+            var currentCountry = _offlineFirstService?.CurrentCountry;
+            string receivableId = currentCountry?.CNT_AmbreReceivable;
+            string pivotId = currentCountry?.CNT_AmbrePivot;
+
+            var dto = new KpiDailySnapshotDto
+            {
+                SnapshotDate = date.Date,
+                CountryId = countryId,
+                CreatedAtUtc = DateTime.UtcNow,
+                SourceVersion = sourceVersion
+            };
+
+            // KPI counts
+            dto.PaidNotReconciled   = list.LongCount(r => r.KPI == (int)KPIType.PaidButNotReconciled);
+            dto.UnderInvestigation  = list.LongCount(r => r.KPI == (int)KPIType.UnderInvestigation);
+            dto.MissingInvoices     = list.LongCount(r => r.KPI == (int)KPIType.NotClaimed);
+
+            // Receivable vs Pivot totals
+            var receivableData = string.IsNullOrEmpty(receivableId) ? new List<ReconciliationViewData>() : list.Where(r => r.Account_ID == receivableId).ToList();
+            var pivotData = string.IsNullOrEmpty(pivotId) ? new List<ReconciliationViewData>() : list.Where(r => r.Account_ID == pivotId).ToList();
+            dto.ReceivableAmount = receivableData.Sum(r => r.SignedAmount);
+            dto.ReceivableCount  = receivableData.LongCount();
+            dto.PivotAmount      = pivotData.Sum(r => r.SignedAmount);
+            dto.PivotCount       = pivotData.LongCount();
+
+            // New vs Deleted for that day
+            dto.NewCount     = list.LongCount(r => r.CreationDate.HasValue && r.CreationDate.Value.Date == date.Date);
+            dto.DeletedCount = list.LongCount(r => r.DeleteDate.HasValue && r.DeleteDate.Value.Date == date.Date);
+
+            // Deletion delay buckets (average days)
+            var durations = list
+                .Where(r => r.CreationDate.HasValue && r.DeleteDate.HasValue)
+                .Select(r => (int)(r.DeleteDate.Value.Date - r.CreationDate.Value.Date).TotalDays)
+                .Where(d => d >= 0)
+                .ToList();
+
+            var buckets = new[]
+            {
+                new { Key = "0-14d", Min = 0,  Max = 14 },
+                new { Key = "15-30d", Min = 15, Max = 30 },
+                new { Key = "1-3m",  Min = 31, Max = 92 },
+                new { Key = ">3m",   Min = 93, Max = int.MaxValue }
+            };
+            var delayBucketObjs = buckets.Select(b =>
+            {
+                var inB = durations.Where(d => d >= b.Min && d <= b.Max).ToList();
+                return new { bucket = b.Key, avgDays = inB.Any() ? inB.Average() : 0.0, count = inB.Count };
+            }).ToList();
+            dto.DeletionDelayBucketsJson = JsonSerializer.Serialize(delayBucketObjs);
+
+            // Receivable vs Pivot by Action
+            var actionGroups = list.Where(r => r.Action.HasValue).GroupBy(r => r.Action.Value).OrderBy(g => g.Key).ToList();
+            var labels = actionGroups.Select(g => GetActionName(g.Key)).ToList();
+            var recvVals = actionGroups.Select(g => g.Count(x => x.Account_ID == receivableId)).ToList();
+            var pivVals  = actionGroups.Select(g => g.Count(x => x.Account_ID == pivotId)).ToList();
+            dto.ReceivablePivotByActionJson = JsonSerializer.Serialize(new { labels, receivable = recvVals, pivot = pivVals });
+
+            // KPI Distribution
+            var kpiDist = list.Where(r => r.KPI.HasValue)
+                              .GroupBy(r => r.KPI.Value)
+                              .Select(g => new { kpi = GetKPIName(g.Key), count = g.Count() })
+                              .OrderByDescending(x => x.count)
+                              .ToList();
+            dto.KpiDistributionJson = JsonSerializer.Serialize(kpiDist);
+
+            // KPI × RiskyItem (Risky vs Non-Risky counts per KPI)
+            var kpiRisk = list.Where(r => r.KPI.HasValue)
+                              .GroupBy(r => r.KPI.Value)
+                              .OrderBy(g => g.Key)
+                              .ToList();
+            var kpiLabels = kpiRisk.Select(g => GetKPIName(g.Key)).ToList();
+            var risky = kpiRisk.Select(g => g.Count(x => x.RiskyItem == true)).ToList();
+            var nonRisky = kpiRisk.Select(g => g.Count(x => x.RiskyItem != true)).ToList();
+            dto.KpiRiskMatrixJson = JsonSerializer.Serialize(new { kpiLabels, series = new[] { "Risky", "Non-Risky" }, values = new[] { risky, nonRisky } });
+
+            // Currency Distribution (top 10 by amount)
+            var ccy = list.Where(r => !string.IsNullOrEmpty(r.CCY) && r.SignedAmount != 0)
+                          .GroupBy(r => r.CCY)
+                          .Select(g => new { currency = g.Key, amount = Math.Abs(g.Sum(x => x.SignedAmount)), count = g.Count() })
+                          .OrderByDescending(x => x.amount)
+                          .Take(10)
+                          .ToList();
+            dto.CurrencyDistributionJson = JsonSerializer.Serialize(ccy);
+
+            // Action Distribution (counts per action)
+            var act = list.Where(r => r.Action.HasValue)
+                          .GroupBy(r => r.Action.Value)
+                          .Select(g => new { action = GetActionName(g.Key), count = g.Count() })
+                          .OrderByDescending(x => x.count)
+                          .ToList();
+            dto.ActionDistributionJson = JsonSerializer.Serialize(act);
+
+            return dto;
+        }
+
+        private async Task<bool> InsertDailyKpiSnapshotAsync(KpiDailySnapshotDto dto, CancellationToken cancellationToken)
+        {
+            using (var connection = new OleDbConnection(GetControlConnectionString()))
+            {
+                await connection.OpenAsync(cancellationToken);
+
+                await EnsureKpiDailySnapshotTableAsync(connection, cancellationToken);
+
+                // Discover existing columns and their data types in KpiDailySnapshot to avoid mismatches and type errors
+                var schema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Columns, new object[] { null, null, "KpiDailySnapshot", null });
+                var existing = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                foreach (System.Data.DataRow row in schema.Rows)
+                {
+                    var name = Convert.ToString(row["COLUMN_NAME"]);
+                    if (string.IsNullOrEmpty(name)) continue;
+                    var dataTypeCode = Convert.ToInt32(row["DATA_TYPE"]); // OLE DB data type code
+                    existing[name] = dataTypeCode;
+                }
+
+                // Helper factories to map values to column type
+                (OleDbType Type, object Value) MapValue(string col, object val)
+                {
+                    if (!existing.TryGetValue(col, out var code))
+                    {
+                        // Fallback guesses
+                        switch (col)
+                        {
+                            case "SnapshotDate":
+                            case "CreatedAtUtc":
+                                return (OleDbType.Date, (object)val ?? DBNull.Value);
+                            case "CountryId":
+                                return (OleDbType.VarWChar, (object)(val ?? string.Empty));
+                            default:
+                                return (OleDbType.VarWChar, (object)(val ?? DBNull.Value));
+                        }
+                    }
+
+                    // OLE DB type codes of interest for Access:
+                    // 3=Integer, 4=Single, 5=Double, 6=Currency, 7=Date, 130=VarWChar, 202=VarWChar, 203=LongVarWChar, 131=Decimal, 20=BigInt
+                    switch (code)
+                    {
+                        case 7: // Date/Time
+                            return (OleDbType.Date, (object)val ?? DBNull.Value);
+                        case 5: // Double
+                            if (val is DateTime dtD) return (OleDbType.Double, dtD.ToOADate());
+                            return (OleDbType.Double, val ?? DBNull.Value);
+                        case 6: // Currency
+                            return (OleDbType.Currency, val ?? DBNull.Value);
+                        case 3: // Integer (Long Integer)
+                            // Convert to int32 where needed
+                            return (OleDbType.Integer, val == null ? DBNull.Value : (object)Convert.ToInt32(val));
+                        case 20: // BigInt
+                            return (OleDbType.BigInt, val ?? DBNull.Value);
+                        case 131: // Decimal
+                            return (OleDbType.Decimal, val ?? DBNull.Value);
+                        case 203: // Long Text (Memo)
+                            return (OleDbType.LongVarWChar, val ?? DBNull.Value);
+                        case 202: // Text (VarWChar)
+                        case 130: // WChar
+                            return (OleDbType.VarWChar, (object)(val ?? string.Empty));
+                        default:
+                            // Safe default to VarWChar as text
+                            return (OleDbType.VarWChar, (object)(val ?? string.Empty));
+                    }
+                }
+
+                // Prepare the set of potential values
+                var raw = new List<(string Name, object Val)>
+                {
+                    ("SnapshotDate", dto.SnapshotDate),
+                    ("CountryId", dto.CountryId ?? string.Empty),
+                    ("MissingInvoices", dto.MissingInvoices),
+                    ("PaidNotReconciled", dto.PaidNotReconciled),
+                    ("UnderInvestigation", dto.UnderInvestigation),
+                    ("ReceivableCount", dto.ReceivableCount),
+                    ("ReceivableAmount", dto.ReceivableAmount),
+                    ("PivotCount", dto.PivotCount),
+                    ("PivotAmount", dto.PivotAmount),
+                    ("NewCount", dto.NewCount),
+                    ("DeletedCount", dto.DeletedCount),
+                    ("DeletionDelayBucketsJson", (object)dto.DeletionDelayBucketsJson ?? DBNull.Value),
+                    ("ReceivablePivotByActionJson", (object)dto.ReceivablePivotByActionJson ?? DBNull.Value),
+                    ("KpiDistributionJson", (object)dto.KpiDistributionJson ?? DBNull.Value),
+                    ("KpiRiskMatrixJson", (object)dto.KpiRiskMatrixJson ?? DBNull.Value),
+                    ("CurrencyDistributionJson", (object)dto.CurrencyDistributionJson ?? DBNull.Value),
+                    ("ActionDistributionJson", (object)dto.ActionDistributionJson ?? DBNull.Value),
+                    ("CreatedAtUtc", dto.CreatedAtUtc),
+                    ("SourceVersion", (object)dto.SourceVersion ?? DBNull.Value)
+                };
+
+                var used = new List<(string Name, OleDbType Type, object Value)>();
+                foreach (var r in raw)
+                {
+                    if (!existing.ContainsKey(r.Name)) continue;
+                    var mapped = MapValue(r.Name, r.Val);
+                    used.Add((r.Name, mapped.Type, mapped.Value));
+                }
+                if (used.Count == 0)
+                    throw new InvalidOperationException("La table KpiDailySnapshot ne contient aucune des colonnes attendues.");
+
+                var colList = string.Join(", ", used.Select(u => $"[{u.Name}]"));
+                var placeholders = string.Join(", ", used.Select(_ => "?"));
+                var sql = $"INSERT INTO KpiDailySnapshot ({colList}) VALUES ({placeholders})";
+                using (var insert = new OleDbCommand(sql, connection))
+                {
+                    foreach (var u in used)
+                    {
+                        insert.Parameters.Add(new OleDbParameter { OleDbType = u.Type, Value = u.Value ?? DBNull.Value });
+                    }
+                    await insert.ExecuteNonQueryAsync(cancellationToken);
+                }
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Mark the latest non-frozen snapshot for a country as frozen by setting FrozenAt.
+        /// </summary>
+        public async Task<bool> FreezeLatestSnapshotAsync(string countryId, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) return false;
+            using (var connection = new OleDbConnection(GetControlConnectionString()))
+            {
+                await connection.OpenAsync(cancellationToken);
+                await EnsureKpiDailySnapshotTableAsync(connection, cancellationToken);
+                // Find latest non-frozen snapshot (CreatedAtUtc DESC)
+                var findCmd = new OleDbCommand(
+                    "SELECT TOP 1 Id FROM KpiDailySnapshot WHERE CountryId = ? AND FrozenAt IS NULL ORDER BY CreatedAtUtc DESC", connection);
+                findCmd.Parameters.AddWithValue("@p1", countryId);
+                var obj = await findCmd.ExecuteScalarAsync(cancellationToken);
+                if (obj == null || obj == DBNull.Value) return false;
+                int id;
+                if (!int.TryParse(Convert.ToString(obj), out id)) return false;
+
+                var upd = new OleDbCommand("UPDATE KpiDailySnapshot SET FrozenAt = ? WHERE Id = ?", connection);
+                upd.Parameters.AddWithValue("@p1", DateTime.UtcNow.ToOADate());
+                upd.Parameters.AddWithValue("@p2", id);
+                var n = await upd.ExecuteNonQueryAsync(cancellationToken);
+                return n > 0;
+            }
+        }
+
+        /// <summary>
+        /// Get one snapshot by date and country. Returns JSON strings as stored.
+        /// </summary>
+        public async Task<DataTable> GetKpiSnapshotAsync(DateTime date, string countryId, CancellationToken cancellationToken = default)
+        {
+            using (var connection = new OleDbConnection(GetControlConnectionString()))
+            {
+                await connection.OpenAsync(cancellationToken);
+                await EnsureKpiDailySnapshotTableAsync(connection, cancellationToken);
+                var cmd = new OleDbCommand("SELECT TOP 1 * FROM KpiDailySnapshot WHERE SnapshotDate = ? AND CountryId = ? ORDER BY CreatedAtUtc DESC", connection);
+                cmd.Parameters.AddWithValue("@p1", date.Date);
+                cmd.Parameters.AddWithValue("@p2", countryId ?? string.Empty);
+                using (var adapter = new OleDbDataAdapter(cmd))
+                {
+                    var table = new DataTable();
+                    adapter.Fill(table);
+                    return table;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Get snapshots in a date range for a country (inclusive).
+        /// </summary>
+        public async Task<DataTable> GetKpiSnapshotsAsync(DateTime from, DateTime to, string countryId, CancellationToken cancellationToken = default)
+        {
+            using (var connection = new OleDbConnection(GetControlConnectionString()))
+            {
+                await connection.OpenAsync(cancellationToken);
+                await EnsureKpiDailySnapshotTableAsync(connection, cancellationToken);
+                var cmd = new OleDbCommand("SELECT * FROM KpiDailySnapshot WHERE CountryId = ? AND SnapshotDate BETWEEN ? AND ? ORDER BY SnapshotDate", connection);
+                cmd.Parameters.AddWithValue("@p1", countryId ?? string.Empty);
+                cmd.Parameters.AddWithValue("@p2", from.Date);
+                cmd.Parameters.AddWithValue("@p3", to.Date);
+                using (var adapter = new OleDbDataAdapter(cmd))
+                {
+                    var table = new DataTable();
+                    adapter.Fill(table);
+                    return table;
+                }
+            }
         }
 
         #endregion

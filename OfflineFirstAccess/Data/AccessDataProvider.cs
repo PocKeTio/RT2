@@ -21,25 +21,47 @@ namespace OfflineFirstAccess.Data
             _config = config;
         }
 
-        // Normalize values to what Access via OleDb expects
-        private static object PrepareValueForDatabase(object value)
+        // Create explicitly-typed parameters to avoid Access type guessing problems
+        private static OleDbParameter CreateParameter(string name, object value)
         {
-            if (value == null)
-                return DBNull.Value;
+            if (value == null || value is DBNull)
+            {
+                var p = new OleDbParameter(name, OleDbType.Variant);
+                p.Value = DBNull.Value;
+                return p;
+            }
 
-            // Unwrap DBNull
-            if (value is DBNull)
-                return value;
+            switch (value)
+            {
+                case DateTime dt:
+                    {
+                        var p = new OleDbParameter(name, OleDbType.DBTimeStamp);
+                        p.Value = dt;
+                        return p;
+                    }
+                case bool b:
+                    {
+                        var p = new OleDbParameter(name, OleDbType.Boolean);
+                        p.Value = b;
+                        return p;
+                    }
+                case string s:
+                    {
+                        var p = new OleDbParameter(name, OleDbType.VarWChar);
+                        p.Value = s;
+                        return p;
+                    }
+                case byte[] bytes:
+                    {
+                        var p = new OleDbParameter(name, OleDbType.Binary);
+                        p.Value = bytes;
+                        return p;
+                    }
+            }
 
-            // Handle DateTime (and boxed nullable DateTime)
-            if (value is DateTime dt)
-                return dt.ToOADate();
-
-            //// If value came already as DateTime? boxed as Nullable<DateTime>
-            //if (value is DateTime? ndt)
-            //    return ndt.HasValue ? ndt.Value.ToOADate() : (object)DBNull.Value;
-
-            return value;
+            // Numerics and others: let OleDb infer, but avoid OADate conversions
+            var def = new OleDbParameter(name, value);
+            return def;
         }
 
         // On crée une "fabrique" publique et asynchrone
@@ -60,9 +82,8 @@ namespace OfflineFirstAccess.Data
                 await connection.OpenAsync();
                 using (var command = new OleDbCommand(query, connection))
                 {
-                    // Access expects dates as OLE Automation Date (double)
-                    var lastSyncValue = since.HasValue ? since.Value.ToOADate() : DateTime.MinValue.ToOADate();
-                    command.Parameters.AddWithValue("@lastSync", lastSyncValue);
+                    var lastSyncValue = since.HasValue ? since.Value : DateTime.MinValue;
+                    command.Parameters.Add(CreateParameter("@lastSync", lastSyncValue.ToOADate()));
                     using (var reader = await command.ExecuteReaderAsync())
                     {
                         while (await reader.ReadAsync())
@@ -104,7 +125,7 @@ namespace OfflineFirstAccess.Data
                                 var deleteSql = $"DELETE FROM [{tableName}] WHERE [{_config.PrimaryKeyColumn}] = @id";
                                 using (var command = new OleDbCommand(deleteSql, connection, transaction))
                                 {
-                                    command.Parameters.AddWithValue("@id", id);
+                                    command.Parameters.Add(CreateParameter("@id", id));
                                     await command.ExecuteNonQueryAsync();
                                 }
                             }
@@ -119,9 +140,9 @@ namespace OfflineFirstAccess.Data
                                 {
                                     foreach (var key in record.Keys.Where(k => k != _config.PrimaryKeyColumn))
                                     {
-                                        updateCommand.Parameters.AddWithValue($"@{key}", PrepareValueForDatabase(record[key]));
+                                        updateCommand.Parameters.Add(CreateParameter($"@{key}", record[key]));
                                     }
-                                    updateCommand.Parameters.AddWithValue("@id", id);
+                                    updateCommand.Parameters.Add(CreateParameter("@id", id));
                                     rowsAffected = await updateCommand.ExecuteNonQueryAsync();
                                 }
 
@@ -135,7 +156,7 @@ namespace OfflineFirstAccess.Data
                                     {
                                         foreach (var key in record.Keys)
                                         {
-                                            insertCommand.Parameters.AddWithValue($"@{key}", PrepareValueForDatabase(record[key]));
+                                            insertCommand.Parameters.Add(CreateParameter($"@{key}", record[key]));
                                         }
                                         await insertCommand.ExecuteNonQueryAsync();
                                     }
@@ -196,7 +217,7 @@ namespace OfflineFirstAccess.Data
                 {
                     for (int i = 0; i < idList.Count; i++)
                     {
-                        command.Parameters.AddWithValue($"@p{i}", idList[i]);
+                        command.Parameters.Add(CreateParameter($"@p{i}", idList[i]));
                     }
 
                     using (var reader = await command.ExecuteReaderAsync())

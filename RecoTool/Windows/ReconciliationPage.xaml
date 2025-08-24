@@ -88,16 +88,6 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Cancel button for long-running operations -->
-                <Button Grid.Column="5" Style="{StaticResource StandardButtonStyle}" Margin="15,0,15,0" Height="36" Padding="15,5"
-                        Background="#F44336" Foreground="White" BorderBrush="#D32F2F" BorderThickness="1"
-                        Click="CancelPageOps_Click" ToolTip="Cancel current operation" IsEnabled="{Binding IsLoading}">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                        <TextBlock Text="Cancel" FontSize="14" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </Button>
-
                 <!-- Lock Status Indicator -->
                 <Border Grid.Column="6" Background="#FFF9E6" BorderBrush="#E6C200" BorderThickness="1" CornerRadius="4" Padding="10,5" Visibility="{Binding IsGlobalLockActive, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <StackPanel Orientation="Horizontal">

@@ -31,6 +31,7 @@ namespace RecoTool.Windows
         private string _previousCountryId;
         private UserControl _currentPage;
         private bool _isChangingCountrySelection;
+        private bool _isCountryInitializing;
 
         // La DI va appeler ce constructeur en lui fournissant IConfiguration et votre service
         public MainWindow(
@@ -48,6 +49,8 @@ namespace RecoTool.Windows
 
             InitializeServices();
             SetupEventHandlers();
+            SetupSyncMonitor();
+            this.Closed += (s, e) => { try { SyncMonitorService.Instance.Stop(); } catch { } };
         }
 
         // Allow dragging the window by holding mouse on the header area
@@ -163,10 +166,9 @@ namespace RecoTool.Windows
                     IsOffline = true;
                 }
 
-                // 1) S'assurer que la base DW locale est prête (copie depuis le réseau si nécessaire)
-                await CopyDwingsDatabaseWithProgressAsync();
+                // Ne pas copier DW au démarrage: cela sera géré après sélection de pays via OfflineFirstService.SetCurrentCountryAsync
 
-                // 2) Ne pas créer les services métiers tant que le pays n'est pas déterminé
+                // Ne pas créer les services métiers tant que le pays n'est pas déterminé
                 _ambreImportService = null;
                 _reconciliationService = null;
 
@@ -279,6 +281,38 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
+        /// Configure and start SyncMonitorService to opportunistically push reconciliation changes.
+        /// </summary>
+        private void SetupSyncMonitor()
+        {
+            try
+            {
+                var monitor = SyncMonitorService.Instance;
+                monitor.Initialize(() => _offlineFirstService);
+                monitor.NetworkBecameAvailable += () => TryBackgroundPush();
+                monitor.LockReleased += () => TryBackgroundPush();
+                monitor.SyncSuggested += (_) => TryBackgroundPush();
+                monitor.Start();
+            }
+            catch { }
+        }
+
+        private void TryBackgroundPush()
+        {
+            try
+            {
+                var cid = _currentCountryId;
+                if (string.IsNullOrWhiteSpace(cid)) return;
+                if (_isCountryInitializing) return;
+                _ = Task.Run(async () =>
+                {
+                    try { await _offlineFirstService.PushReconciliationIfPendingAsync(cid); } catch { }
+                });
+            }
+            catch { }
+        }
+
+        /// <summary>
         /// Met à jour l'UI selon l'état de connectivité (online/offline)
         /// </summary>
         private void UpdateUiForConnectivity()
@@ -323,38 +357,48 @@ namespace RecoTool.Windows
                 if (newCountryId == _currentCountryId) return;
 
                 _previousCountryId = _currentCountryId;
-                var ok = await UpdateServicesForCountry(newCountryId);
-                if (!ok)
+                _isChangingCountrySelection = true;
+                Mouse.OverrideCursor = Cursors.Wait;
+                try
                 {
-                    // Echec d'initialisation (base manquante/verrouillée). Revenir à la sélection précédente ou vider.
-                    ShowError("Base pays indisponible", "La base locale/réseau pour ce pays est introuvable ou verrouillée. Veuillez sélectionner un autre pays.");
-                    _isChangingCountrySelection = true;
-                    try
+                    var ok = await UpdateServicesForCountry(newCountryId);
+                    if (!ok)
                     {
-                        if (!string.IsNullOrEmpty(_previousCountryId) && _countries?.Any(c => c.CNT_Id == _previousCountryId) == true)
+                        // Echec d'initialisation (base manquante/verrouillée). Revenir à la sélection précédente ou vider.
+                        ShowError("Base pays indisponible", "La base locale/réseau pour ce pays est introuvable ou verrouillée. Veuillez sélectionner un autre pays.");
+                        _isChangingCountrySelection = true;
+                        try
                         {
-                            CountryComboBox.SelectedValue = _previousCountryId;
+                            if (!string.IsNullOrEmpty(_previousCountryId) && _countries?.Any(c => c.CNT_Id == _previousCountryId) == true)
+                            {
+                                CountryComboBox.SelectedValue = _previousCountryId;
+                            }
+                            else
+                            {
+                                CountryComboBox.SelectedIndex = -1;
+                            }
                         }
-                        else
+                        finally
                         {
-                            CountryComboBox.SelectedIndex = -1;
+                            _isChangingCountrySelection = false;
                         }
+                        IsOffline = true;
+                        OperationalDataStatus = "OFFLINE";
+                        SetInitializationState("Erreur pays", Brushes.Crimson);
+                        SetReferentialState("Erreur", Brushes.Crimson, false);
+                        return;
                     }
-                    finally
-                    {
-                        _isChangingCountrySelection = false;
-                    }
-                    IsOffline = true;
-                    OperationalDataStatus = "OFFLINE";
-                    SetInitializationState("Erreur pays", Brushes.Crimson);
-                    SetReferentialState("Erreur", Brushes.Crimson, false);
-                    return;
+                    _currentCountryId = newCountryId;
+                    await NotifyCurrentPageOfCountryChange();
+                    SetInitializationState($"Pays sélectionné: {selected.CNT_Name}", Brushes.DarkGreen);
+                    OperationalDataStatus = "ONLINE";
+                    SetReferentialState("OK", Brushes.DarkGreen, true);
                 }
-                _currentCountryId = newCountryId;
-                await NotifyCurrentPageOfCountryChange();
-                SetInitializationState($"Pays sélectionné: {selected.CNT_Name}", Brushes.DarkGreen);
-                OperationalDataStatus = "ONLINE";
-                SetReferentialState("OK", Brushes.DarkGreen, true);
+                finally
+                {
+                    Mouse.OverrideCursor = null; // restore default cursor
+                    _isChangingCountrySelection = false;
+                }
             }
             catch (Exception ex)
             {
@@ -375,6 +419,9 @@ namespace RecoTool.Windows
             {
                 if (string.IsNullOrEmpty(countryId)) { IsOffline = true; return false; }
 
+                // Guard: we are initializing a new country; prevent page refresh until done
+                _isCountryInitializing = true;
+
                 // Mettre à jour OfflineFirstService avec le nouveau pays
                 var setOk = await _offlineFirstService.SetCurrentCountryAsync(countryId);
                 if (!setOk)
@@ -384,6 +431,12 @@ namespace RecoTool.Windows
                     OperationalDataStatus = "OFFLINE";
                     return false;
                 }
+
+                // 1) S'assurer que les instantanés locaux AMBRE et DW sont à jour
+                try { await _offlineFirstService.EnsureLocalSnapshotsUpToDateAsync(countryId); } catch { }
+
+                // 2) Pousser en arrière-plan les changements RECON locaux s'il y en a et si possible
+                try { await _offlineFirstService.PushReconciliationIfPendingAsync(countryId); } catch { }
 
                 // Récupérer la nouvelle chaîne de connexion
                 var connectionString = _offlineFirstService.GetCountryConnectionString(countryId);
@@ -405,6 +458,10 @@ namespace RecoTool.Windows
                 SetReferentialState("Erreur", Brushes.Crimson, false);
                 return false;
             }
+            finally
+            {
+                _isCountryInitializing = false;
+            }
         }
 
         /// <summary>
@@ -414,6 +471,13 @@ namespace RecoTool.Windows
         {
             try
             {
+                // Si l'initialisation du pays est encore en cours, ne pas rafraîchir maintenant
+                if (_isCountryInitializing)
+                {
+                    System.Diagnostics.Debug.WriteLine("NotifyCurrentPageOfCountryChange: skipped refresh (country initialization in progress)");
+                    return;
+                }
+
                 // Mettre à jour les références de services si la page est HomePage
                 if (_currentPage is HomePage home)
                 {

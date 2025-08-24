@@ -53,34 +53,6 @@ namespace RecoTool.Windows
         private CancellationTokenSource _pageCts; // Cancellation for page-level long operations
 
         /// <summary>
-        /// Résout l'ID de compte réel à partir d'un libellé d'affichage (ex: "Pivot (ID)")
-        /// </summary>
-        private string ResolveSelectedAccountIdForFilter(string display)
-        {
-            // Si format "Label (ID)", extraire l'ID entre parenthèses
-            var open = display.LastIndexOf('(');
-            var close = display.LastIndexOf(')');
-            if (open >= 0 && close > open)
-            {
-                var inner = display.Substring(open + 1, close - open - 1).Trim();
-                if (!string.IsNullOrWhiteSpace(inner)) return inner;
-            }
-
-            // Fallback: si le texte est exactement Pivot/Receivable sans ID, renvoyer l'ID depuis le référentiel
-            var country = _offlineFirstService?.CurrentCountry;
-            if (country != null)
-            {
-                if (string.Equals(display, "Pivot", StringComparison.OrdinalIgnoreCase))
-                    return country.CNT_AmbrePivot;
-                if (string.Equals(display, "Receivable", StringComparison.OrdinalIgnoreCase))
-                    return country.CNT_AmbreReceivable;
-            }
-
-            // Sinon, on considère que l'utilisateur a choisi un ID brut
-            return display;
-        }
-
-        /// <summary>
         /// Effectue une réconciliation après une publication d'import (fin de verrou global):
         /// synchronise si possible puis recharge les données et KPI.
         /// </summary>
@@ -243,18 +215,6 @@ namespace RecoTool.Windows
         // Propriétés et événements IRefreshable définis dans la section dédiée plus bas
 
         #endregion
-
-        /// <summary>
-        /// Cancel button for page long-running operations
-        /// </summary>
-        private void CancelPageOps_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                _pageCts?.Cancel();
-            }
-            catch { }
-        }
 
         #region Constructor
 

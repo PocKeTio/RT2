@@ -63,6 +63,10 @@ namespace OfflineFirstAccess.Synchronization
                     onProgress?.Invoke(30, $"Marked {ids.Count} local change(s) as synced for {tableName}");
                 }
 
+                // After PUSH, the previously fetched local change list is now synced.
+                // Clear it to avoid misclassifying remote rows just pushed as potential conflicts.
+                allLocalChanges = Enumerable.Empty<ChangeLogEntry>();
+
                 // --- PHASE 2: PULL (Server -> Client) ---
                 onProgress?.Invoke(50, "Pulling remote changes...");
                 var lastSyncTimestamp = await GetLastSyncTimestampAsync();
@@ -116,11 +120,14 @@ namespace OfflineFirstAccess.Synchronization
                         }
                     }
                     
-                    // After processing each table, update the timestamp to mark progress.
-                    // This makes the sync process more resilient to interruptions.
-                    await SetLastSyncTimestampAsync(syncStartTime);
-                    onProgress?.Invoke(90, $"Anchor updated to: {syncStartTime.ToString("o", CultureInfo.InvariantCulture)} after table {tableName}");
+                    // Removed per-table anchor update. We'll set a single consolidated anchor at the end.
                 }
+
+                // Set the anchor once at the end to the current time, ensuring we do not re-pull
+                // records modified during this run (including those created by the PUSH phase).
+                var newAnchor = DateTime.UtcNow;
+                await SetLastSyncTimestampAsync(newAnchor);
+                onProgress?.Invoke(95, $"Anchor updated to: {newAnchor.ToString("o", CultureInfo.InvariantCulture)}");
 
                 onProgress?.Invoke(100, "Synchronization finished.");
 

@@ -335,7 +335,9 @@
                                             <TextBox x:Name="RiskyItemTextBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}"/>
 
                                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Reason (Non-Risky):" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <TextBox x:Name="ReasonNonRiskyTextBox" Grid.Row="1" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="60" Margin="0,10,0,0"/>
+                                            <ComboBox x:Name="ReasonNonRiskyComboBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}" Margin="0,10,0,0"
+                                                      ItemsSource="{Binding ReasonOptions}" DisplayMemberPath="Content" SelectedValuePath="Id"
+                                                      SelectedValue="{Binding SelectedReasonId, Mode=TwoWay}"/>
                                         </Grid>
                                     </GroupBox>
                                 </StackPanel>

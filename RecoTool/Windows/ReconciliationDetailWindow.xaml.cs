@@ -54,6 +54,13 @@ namespace RecoTool.UI.Views.Windows
             set { _incidentTypeOptions = value; OnPropertyChanged(nameof(IncidentTypeOptions)); }
         }
 
+        private ObservableCollection<OptionItem> _reasonOptions = new ObservableCollection<OptionItem>();
+        public ObservableCollection<OptionItem> ReasonOptions
+        {
+            get => _reasonOptions;
+            set { _reasonOptions = value; OnPropertyChanged(nameof(ReasonOptions)); }
+        }
+
         private int? _selectedKPIId;
         public int? SelectedKPIId
         {
@@ -73,6 +80,13 @@ namespace RecoTool.UI.Views.Windows
         {
             get => _selectedIncidentTypeId;
             set { _selectedIncidentTypeId = value; OnPropertyChanged(nameof(SelectedIncidentTypeId)); }
+        }
+
+        private int? _selectedReasonId;
+        public int? SelectedReasonId
+        {
+            get => _selectedReasonId;
+            set { _selectedReasonId = value; OnPropertyChanged(nameof(SelectedReasonId)); }
         }
 
         public class MatchingItem
@@ -196,6 +210,7 @@ namespace RecoTool.UI.Views.Windows
                 var kpiItems = new List<OptionItem>();
                 var actionItems = new List<OptionItem>();
                 var incidentItems = new List<OptionItem>();
+                var reasonItems = new List<OptionItem>();
                 var userFields = _offlineFirstService?.UserFields;
                 if (userFields != null)
                 {
@@ -214,10 +229,16 @@ namespace RecoTool.UI.Views.Windows
                         var label = !string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : uf.USR_FieldName;
                         incidentItems.Add(new OptionItem { Id = uf.USR_ID, Content = label });
                     }
+                    foreach (var uf in userFields.Where(f => string.Equals(f.USR_Category, "RISKY", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var label = !string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : uf.USR_FieldName;
+                        reasonItems.Add(new OptionItem { Id = uf.USR_ID, Content = label });
+                    }
                 }
                 ActionOptions = new ObservableCollection<OptionItem>(actionItems.OrderBy(i => i.Content));
                 KPIOptions = new ObservableCollection<OptionItem>(kpiItems.OrderBy(i => i.Content));
                 IncidentTypeOptions = new ObservableCollection<OptionItem>(incidentItems.OrderBy(i => i.Content));
+                ReasonOptions = new ObservableCollection<OptionItem>(reasonItems.OrderBy(i => i.Content));
 
                 // Preselect from _item if present (before async load)
                 if (_item?.KPI != null)
@@ -226,6 +247,8 @@ namespace RecoTool.UI.Views.Windows
                     SelectedActionId = _item.Action;
                 if (_item?.IncidentType != null)
                     SelectedIncidentTypeId = _item.IncidentType;
+                if (_item?.ReasonNonRisky != null)
+                    SelectedReasonId = _item.ReasonNonRisky;
             }
             catch { /* ignore */ }
         }
@@ -264,8 +287,8 @@ namespace RecoTool.UI.Views.Windows
                 if (RiskyItemTextBox != null)
                     RiskyItemTextBox.Text = (_reconciliation?.RiskyItem ?? _item?.RiskyItem)?.ToString() ?? string.Empty;
 
-                if (ReasonNonRiskyTextBox != null)
-                    ReasonNonRiskyTextBox.Text = _reconciliation?.ReasonNonRisky ?? _item?.ReasonNonRisky ?? string.Empty;
+                // Preselect reason
+                SelectedReasonId = _reconciliation?.ReasonNonRisky ?? SelectedReasonId;
 
                 // Initialize KPI selection from persisted reconciliation
                 if (_reconciliation != null)
@@ -273,6 +296,7 @@ namespace RecoTool.UI.Views.Windows
                     SelectedKPIId = _reconciliation.KPI ?? SelectedKPIId;
                     SelectedActionId = _reconciliation.Action ?? SelectedActionId;
                     SelectedIncidentTypeId = _reconciliation.IncidentType ?? SelectedIncidentTypeId;
+                    SelectedReasonId = _reconciliation.ReasonNonRisky ?? SelectedReasonId;
                 }
             }
             catch
@@ -453,14 +477,29 @@ namespace RecoTool.UI.Views.Windows
 
                 if (RiskyItemTextBox != null)
                 {
-                    if (int.TryParse(RiskyItemTextBox.Text?.Trim(), out var risky))
-                        reco.RiskyItem = risky;
-                    else
+                    var txt = RiskyItemTextBox.Text?.Trim();
+                    if (string.IsNullOrWhiteSpace(txt))
+                    {
                         reco.RiskyItem = null;
+                    }
+                    else
+                    {
+                        // Accept true/false, yes/no, 1/0
+                        if (bool.TryParse(txt, out var b))
+                            reco.RiskyItem = b;
+                        else if (int.TryParse(txt, out var n))
+                            reco.RiskyItem = n != 0;
+                        else if (string.Equals(txt, "yes", StringComparison.OrdinalIgnoreCase) || string.Equals(txt, "y", StringComparison.OrdinalIgnoreCase))
+                            reco.RiskyItem = true;
+                        else if (string.Equals(txt, "no", StringComparison.OrdinalIgnoreCase) || string.Equals(txt, "n", StringComparison.OrdinalIgnoreCase))
+                            reco.RiskyItem = false;
+                        else
+                            reco.RiskyItem = null;
+                    }
                 }
 
-                if (ReasonNonRiskyTextBox != null)
-                    reco.ReasonNonRisky = ReasonNonRiskyTextBox.Text?.Trim();
+                // Persist selected reason (nullable)
+                reco.ReasonNonRisky = SelectedReasonId;
 
                 // Persist
                 await _reconciliationService.SaveReconciliationAsync(reco);

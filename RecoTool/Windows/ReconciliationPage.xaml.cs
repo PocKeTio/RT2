@@ -42,7 +42,7 @@ namespace RecoTool.Windows
         private ObservableCollection<string> _statuses;
         private string _selectedStatus;
         private bool _isGlobalLockActive;
-        private bool _isAutoSyncRunning;
+        private int _autoSyncRunningFlag; // 0 = idle, 1 = running (atomic)
         private bool _prevNetworkAvailable;
         private DateTime _lastAutoSyncUtc = DateTime.MinValue;
         private static readonly TimeSpan AutoSyncCooldown = TimeSpan.FromSeconds(15);
@@ -51,6 +51,7 @@ namespace RecoTool.Windows
         private bool _isLoadingViews; // Guard for SavedViews repopulation
         private bool _skipReloadSavedLists; // Prevent reloading saved filters/views during data refresh
         private CancellationTokenSource _pageCts; // Cancellation for page-level long operations
+        private int _syncInFlightFlag; // 0 = idle, 1 = syncing
 
         /// <summary>
         /// Effectue une réconciliation après une publication d'import (fin de verrou global):
@@ -302,7 +303,7 @@ namespace RecoTool.Windows
             SelectedViewType = ViewTypes.FirstOrDefault();
             Accounts = new ObservableCollection<string>();
             Statuses = new ObservableCollection<string>(new[] { "All", "Live", "Archived" });
-            SelectedStatus = Statuses.FirstOrDefault();
+            SelectedStatus = "Live";
             
             
         }
@@ -393,24 +394,36 @@ namespace RecoTool.Windows
                 _isLoadingFilters = true;
                 try
                 {
-                    SavedFilters.Clear();
-                    foreach (var f in filters.OrderBy(x => x.UFI_Name))
+                    var ordered = filters.OrderBy(x => x.UFI_Name).ToList();
+                    // Marshal mutations to UI thread
+                    if (Dispatcher != null && !Dispatcher.CheckAccess())
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        SavedFilters.Add(f);
-                    }
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            SavedFilters.Clear();
+                            foreach (var f in ordered)
+                                SavedFilters.Add(f);
 
-                    // Ajout d'un filtre par défaut "Tous"
-                    if (!SavedFilters.Any(sf => string.IsNullOrWhiteSpace(sf.UFI_SQL)))
-                    {
-                        SavedFilters.Insert(0, new UserFilter { UFI_Name = "Tous", UFI_SQL = string.Empty });
-                    }
+                            if (!SavedFilters.Any(sf => string.IsNullOrWhiteSpace(sf.UFI_SQL)))
+                                SavedFilters.Insert(0, new UserFilter { UFI_Name = "Tous", UFI_SQL = string.Empty });
 
-                    // Sélection automatique uniquement si rien n'est sélectionné (évite de forcer et de boucler)
-                    var combo = FindName("SavedFiltersComboBox") as ComboBox;
-                    if (combo != null && SavedFilters.Any() && combo.SelectedIndex < 0)
+                            var combo = FindName("SavedFiltersComboBox") as ComboBox;
+                            if (combo != null && SavedFilters.Any() && combo.SelectedIndex < 0)
+                                combo.SelectedIndex = 0; // ignoré via _isLoadingFilters
+                        });
+                    }
+                    else
                     {
-                        combo.SelectedIndex = 0; // ignoré via _isLoadingFilters
+                        SavedFilters.Clear();
+                        foreach (var f in ordered)
+                            SavedFilters.Add(f);
+
+                        if (!SavedFilters.Any(sf => string.IsNullOrWhiteSpace(sf.UFI_SQL)))
+                            SavedFilters.Insert(0, new UserFilter { UFI_Name = "Tous", UFI_SQL = string.Empty });
+
+                        var combo = FindName("SavedFiltersComboBox") as ComboBox;
+                        if (combo != null && SavedFilters.Any() && combo.SelectedIndex < 0)
+                            combo.SelectedIndex = 0; // ignoré via _isLoadingFilters
                     }
                 }
                 finally
@@ -469,6 +482,12 @@ namespace RecoTool.Windows
 
         private void UpdateTopFiltersFromData()
         {
+            // Ensure UI thread for ObservableCollection and UI element access
+            if (Dispatcher != null && !Dispatcher.CheckAccess())
+            {
+                try { Dispatcher.Invoke(UpdateTopFiltersFromData); } catch { }
+                return;
+            }
             var previous = SelectedAccount; // conserver la sélection affichée
 
             // Référentiel pays (source de vérité pour Pivot/Receivable)
@@ -537,37 +556,56 @@ namespace RecoTool.Windows
                 {
                     var previousName = SelectedSavedView?.Name;
 
-                    SavedViews.Clear();
-
                     if (_reconciliationService == null)
                         return;
 
                     cancellationToken.ThrowIfCancellationRequested();
                     var prefs = await _reconciliationService.GetUserFieldsPreferencesAsync();
-                    foreach (var p in prefs.OrderBy(x => x.UPF_Name))
+                    var ordered = prefs.OrderBy(x => x.UPF_Name).ToList();
+
+                    // Marshal mutations to UI thread
+                    if (Dispatcher != null && !Dispatcher.CheckAccess())
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        SavedViews.Add(new UserViewPreset
+                        await Dispatcher.InvokeAsync(() =>
                         {
-                            Name = p.UPF_Name,
-                            WhereClause = p.UPF_SQL
+                            SavedViews.Clear();
+                            foreach (var p in ordered)
+                            {
+                                SavedViews.Add(new UserViewPreset
+                                {
+                                    Name = p.UPF_Name,
+                                    WhereClause = p.UPF_SQL
+                                });
+                            }
+
+                            if (!SavedViews.Any() || SavedViews.First().Name != "None")
+                                SavedViews.Insert(0, new UserViewPreset { Name = "None", WhereClause = null });
+
+                            if (!string.IsNullOrWhiteSpace(previousName))
+                                SelectedSavedView = SavedViews.FirstOrDefault(v => v.Name == previousName) ?? SavedViews.FirstOrDefault();
+                            else
+                                SelectedSavedView = SavedViews.FirstOrDefault();
                         });
-                    }
-
-                    // Insert a clear option at top
-                    if (!SavedViews.Any() || SavedViews.First().Name != "None")
-                    {
-                        SavedViews.Insert(0, new UserViewPreset { Name = "None", WhereClause = null });
-                    }
-
-                    // Restore previous selection if possible
-                    if (!string.IsNullOrWhiteSpace(previousName))
-                    {
-                        SelectedSavedView = SavedViews.FirstOrDefault(v => v.Name == previousName) ?? SavedViews.FirstOrDefault();
                     }
                     else
                     {
-                        SelectedSavedView = SavedViews.FirstOrDefault();
+                        SavedViews.Clear();
+                        foreach (var p in ordered)
+                        {
+                            SavedViews.Add(new UserViewPreset
+                            {
+                                Name = p.UPF_Name,
+                                WhereClause = p.UPF_SQL
+                            });
+                        }
+
+                        if (!SavedViews.Any() || SavedViews.First().Name != "None")
+                            SavedViews.Insert(0, new UserViewPreset { Name = "None", WhereClause = null });
+
+                        if (!string.IsNullOrWhiteSpace(previousName))
+                            SelectedSavedView = SavedViews.FirstOrDefault(v => v.Name == previousName) ?? SavedViews.FirstOrDefault();
+                        else
+                            SelectedSavedView = SavedViews.FirstOrDefault();
                     }
                 }
                 finally
@@ -612,6 +650,8 @@ namespace RecoTool.Windows
                     {
                         _currentCountryId = svcCountryId;
                     }
+                    // Pousser en best-effort les changements locaux en attente au démarrage
+                    try { await _offlineFirstService.RunStartupPushAsync().ConfigureAwait(false); } catch { }
                 }
                 // Démarrer le polling d'état du verrou
                 StartLockPolling();
@@ -889,16 +929,16 @@ namespace RecoTool.Windows
                 _onSyncSuggested = async (reason) =>
                 {
                     // Gate and pre-checks on background thread
-                    if (_isAutoSyncRunning) return;
                     if (DateTime.UtcNow - _lastAutoSyncUtc <= AutoSyncCooldown) return;
                     if (_offlineFirstService == null || string.IsNullOrEmpty(_offlineFirstService.CurrentCountryId)) return;
                     if (IsGlobalLockActive) return;
 
-                    _isAutoSyncRunning = true;
+                    if (System.Threading.Interlocked.CompareExchange(ref _autoSyncRunningFlag, 1, 0) != 0)
+                        return;
                     try
                     {
-                        // Ensure UI-affecting ops are dispatched
-                        await Dispatcher.InvokeAsync(async () =>
+                        // Ensure UI-affecting ops are dispatched and fully awaited
+                        await (await Dispatcher.InvokeAsync(async () =>
                         {
                             if (string.Equals(reason, "LockReleased", StringComparison.OrdinalIgnoreCase))
                             {
@@ -915,7 +955,7 @@ namespace RecoTool.Windows
                                 _lastAutoSyncUtc = DateTime.UtcNow;
                                 try { ShowInfo("Synchronisation terminée (réseau rétabli)"); } catch { }
                             }
-                        });
+                        })).ConfigureAwait(false);
                     }
                     catch
                     {
@@ -928,7 +968,7 @@ namespace RecoTool.Windows
                         }
                         catch { }
                     }
-                    finally { _isAutoSyncRunning = false; }
+                    finally { System.Threading.Interlocked.Exchange(ref _autoSyncRunningFlag, 0); }
                 };
 
                 monitor.LockStateChanged += _onLockStateChanged;
@@ -979,8 +1019,12 @@ namespace RecoTool.Windows
                 // Cooldown gate (avoid frequent sync)
                 if (DateTime.UtcNow - _lastAutoSyncUtc <= AutoSyncCooldown) return;
 
+                // UI in-flight gate: prevent overlapping sync triggers
+                if (System.Threading.Interlocked.CompareExchange(ref _syncInFlightFlag, 1, 0) != 0)
+                    return;
+
                 // Perform sync
-                IsLoading = true;
+                try { if (Dispatcher != null) await Dispatcher.InvokeAsync(() => IsLoading = true); else IsLoading = true; } catch { IsLoading = true; }
                 cancellationToken.ThrowIfCancellationRequested();
                 await _offlineFirstService.SynchronizeAsync(_currentCountryId, cancellationToken);
                 _lastAutoSyncUtc = DateTime.UtcNow;
@@ -992,7 +1036,8 @@ namespace RecoTool.Windows
             }
             finally
             {
-                IsLoading = false;
+                try { if (Dispatcher != null) await Dispatcher.InvokeAsync(() => IsLoading = false); else IsLoading = false; } catch { IsLoading = false; }
+                System.Threading.Interlocked.Exchange(ref _syncInFlightFlag, 0);
             }
         }
 
@@ -1049,7 +1094,7 @@ namespace RecoTool.Windows
         /// </summary>
         private void ShowInfo(string message)
         {
-            MessageBox.Show(message, "Information", MessageBoxButton.OK, MessageBoxImage.Information);
+            Console.WriteLine(message);
         }
 
         #endregion

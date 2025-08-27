@@ -27,6 +27,14 @@ namespace RecoTool.Services
         private readonly TransformationService _transformationService;
         private readonly string _currentUser;
 
+        // Heuristic constants (centralized)
+        private const decimal TransitoryEurThreshold = 350m;
+        private const string KeywordTopaze = "TOPAZE";
+        private const string KeywordPricing = "PRICING";
+        private const string KeywordOutgoing = "OUTGOING";
+        private const string KeywordPayment = "PAYMENT";
+        private const string KeywordTrigger = "TRIGGER";
+
         /// <summary>
         /// Constructeur avec OfflineFirstService
         /// </summary>
@@ -76,7 +84,7 @@ namespace RecoTool.Services
         /// </summary>
         private async Task<ImportResult> ImportAmbreCoreAsync(string[] filePaths, string countryId, bool isMultiFile, Action<string, int> progressCallback)
         {
-            var result = new ImportResult { CountryId = countryId, StartTime = DateTime.Now };
+            var result = new ImportResult { CountryId = countryId, StartTime = DateTime.UtcNow };
             try
             {
                 progressCallback?.Invoke(isMultiFile ? "Validating files..." : "Validating file...", 0);
@@ -112,134 +120,146 @@ namespace RecoTool.Services
                     return result;
                 }
 
-                // 3) Préparation (lock + pré-sync selon stratégie)
-                progressCallback?.Invoke("Preparing environment (lock and pre-sync)...", 15);
+                // 3) Préparation + Import sous UN SEUL verrou global (préflight -> lecture -> apply/publish)
+                progressCallback?.Invoke("Preparing environment (single global lock: pre-sync, import, publish)...", 15);
                 try
                 {
-                    var switched = await _offlineFirstService.SetCurrentCountryAsync(countryId);
+                    var switched = await _offlineFirstService.SetCurrentCountryAsync(countryId, suppressPush: true);
                     if (!switched)
                     {
                         result.Errors.Add($"Unable to initialize local database for {countryId}");
                         return result;
                     }
 
-                    var preflightTimeout = TimeSpan.FromMinutes(2);
-                    using (var preflightLock = await _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImportPreflight", preflightTimeout))
+                    // Verrou global unique pour tout le processus d'import
+                    var lockWaitStart = DateTime.UtcNow;
+                    var lockTimeout = TimeSpan.FromMinutes(2);
+                    LogManager.Info($"Attempting to acquire global lock for {countryId} (full import) with {lockTimeout.TotalSeconds} sec wait...");
+
+                    var acquireTask = _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", TimeSpan.FromMinutes(30));
+                    var completed = await Task.WhenAny(acquireTask, Task.Delay(lockTimeout)) == acquireTask;
+                    if (!completed)
                     {
-                        if (preflightLock == null)
+                        var waited = DateTime.UtcNow - lockWaitStart;
+                        var msg = $"Unable to obtain global lock for {countryId} within the allotted time ({lockTimeout.TotalSeconds} sec). Please try again.";
+                        LogManager.Error($"Timeout ({waited.TotalSeconds:F0}s) while waiting for global lock for {countryId}. Operation canceled.", null);
+                        result.Errors.Add(msg);
+                        return result;
+                    }
+
+                    using (var globalLock = await acquireTask)
+                    {
+                        if (globalLock == null)
                         {
-                            result.Errors.Add($"Unable to acquire global lock (pre-import) for {countryId}");
+                            result.Errors.Add($"Unable to acquire global lock for {countryId}");
                             return result;
                         }
 
+                        var waited = DateTime.UtcNow - lockWaitStart;
+                        LogManager.Info($"Global lock acquired for {countryId} after {waited.TotalSeconds:F0}s (full import)");
+
+                        // Préflight: pousser les changements locaux + refresh RECON local depuis réseau
                         var unsyncedCount = await _offlineFirstService.GetUnsyncedChangeCountAsync(countryId);
-                        if (isMultiFile)
+                        if (unsyncedCount > 0)
                         {
-                            // Multi: pousser les changements de réconciliation si présents, puis refresh RECON
-                            if (unsyncedCount > 0)
+                            LogManager.Info($"{unsyncedCount} unsynced change(s) found. Pushing to network under global lock (reconciliation only)...");
+                            try { await _offlineFirstService.SetSyncStatusAsync("PreSync"); } catch { }
+                            try
                             {
-                                LogManager.Info($"{unsyncedCount} unsynced change(s) found. Pushing to network under global lock...");
-                                try { await _offlineFirstService.SetSyncStatusAsync("PreSync"); } catch { }
-                                var syncRes = await _offlineFirstService.SynchronizeAsync(countryId, null, null);
-                                if (syncRes == null || !syncRes.Success)
-                                {
-                                    result.Errors.Add("Unable to push local reconciliation changes before import.");
-                                    return result;
-                                }
+                                var pushed = await _offlineFirstService.PushPendingChangesToNetworkAsync(countryId, assumeLockHeld: true);
+                                LogManager.Info($"Pushed {pushed} local change(s) to network.");
                             }
-                            try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
-                            await _offlineFirstService.CopyNetworkToLocalReconciliationAsync(countryId);
-                        }
-                        else
-                        {
-                            // Mono: interdire tout changement local et refresh AMBRE
-                            if (unsyncedCount > 0)
+                            catch (Exception pushEx)
                             {
-                                result.Errors.Add($"{unsyncedCount} unsynced local change(s) detected. Please publish or discard local changes before importing.");
+                                LogManager.Error("Error while pushing local reconciliation changes before import", pushEx);
+                                result.Errors.Add("Unable to push local reconciliation changes before import.");
                                 return result;
                             }
-                            try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
-                            await _offlineFirstService.CopyNetworkToLocalAmbreAsync(countryId);
                         }
+
+                        try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
+                        await _offlineFirstService.CopyNetworkToLocalReconciliationAsync(countryId);
+
+                        // Lecture
+                        try { await _offlineFirstService.SetSyncStatusAsync("Importing"); } catch { }
+                        progressCallback?.Invoke(isMultiFile ? "Reading Excel files..." : "Reading Excel file...", 20);
+                        var allRaw = new List<Dictionary<string, object>>();
+                        for (int i = 0; i < files.Length; i++)
+                        {
+                            var fp = files[i];
+                            var baseStart = isMultiFile ? 20 + (i * 10) : 20;
+                            var raw = await ReadExcelFile(fp, importFields, p =>
+                            {
+                                int mapped = baseStart + (p * (isMultiFile ? 10 : 20) / 100);
+                                if (mapped > 40) mapped = 40;
+                                var label = isMultiFile ? $"Reading: {Path.GetFileName(fp)} ({p}%)" : $"Reading Excel file... ({p}%)";
+                                progressCallback?.Invoke(label, mapped);
+                            });
+                            allRaw.AddRange(raw);
+                        }
+                        progressCallback?.Invoke(isMultiFile ? "Excel files read complete" : "Excel file read complete", 40);
+                        if (!allRaw.Any())
+                        {
+                            result.Errors.Add(isMultiFile ? "No data found in the Excel files." : "No data found in the Excel file.");
+                            return result;
+                        }
+
+                        // Filtrer/comptes requis
+                        var filtered = FilterRowsByCountryAccounts(allRaw, country);
+                        if (!filtered.Any())
+                        {
+                            var pivot = country?.CNT_AmbrePivot; var recv = country?.CNT_AmbreReceivable;
+                            result.Errors.Add($"No rows match the country's AMBRE accounts ({country?.CNT_Id}): Pivot={pivot}, Receivable={recv}.");
+                            return result;
+                        }
+                        var accounts = filtered
+                            .Select(r => r.ContainsKey("Account_ID") ? r["Account_ID"]?.ToString() : null)
+                            .Where(s => !string.IsNullOrWhiteSpace(s))
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+                        bool hasPivot = !string.IsNullOrWhiteSpace(country?.CNT_AmbrePivot) && accounts.Any(a => string.Equals(a, country.CNT_AmbrePivot, StringComparison.OrdinalIgnoreCase));
+                        bool hasReceivable = !string.IsNullOrWhiteSpace(country?.CNT_AmbreReceivable) && accounts.Any(a => string.Equals(a, country.CNT_AmbreReceivable, StringComparison.OrdinalIgnoreCase));
+                        if (!(hasPivot && hasReceivable))
+                        {
+                            var missing = new List<string>();
+                            if (!hasPivot) missing.Add($"Pivot={country?.CNT_AmbrePivot}");
+                            if (!hasReceivable) missing.Add($"Receivable={country?.CNT_AmbreReceivable}");
+                            result.Errors.Add($"Import aborted: both AMBRE accounts are required. Missing: {string.Join(", ", missing)}.");
+                            return result;
+                        }
+
+                        // Transform + validate
+                        progressCallback?.Invoke("Transforming data...", 40);
+                        var transformed = await TransformData(filtered, transforms, country);
+                        progressCallback?.Invoke("Validating data...", 60);
+                        var val = ValidateTransformedData(transformed, country);
+                        result.ValidationErrors.AddRange(val.errors);
+                        var valid = val.validData;
+                        if (!valid.Any())
+                        {
+                            result.Errors.Add("No valid data after transformation and validation.");
+                            return result;
+                        }
+
+                        // Sync DB (sous verrou déjà détenu)
+                        progressCallback?.Invoke("Synchronizing with database...", 80);
+                        var syncResult = await SynchronizeWithDatabase(valid, countryId, performNetworkSync: true, assumeGlobalLockHeld: true);
+                        result.NewRecords = syncResult.newCount;
+                        result.UpdatedRecords = syncResult.updatedCount;
+                        result.DeletedRecords = syncResult.deletedCount;
+
+                        // Compter le nombre de lignes traitées
+                        result.ProcessedRecords = valid.Count;
                     }
                 }
                 catch (Exception preCheckEx)
                 {
-                    LogManager.Error("Error during pre-import preparation (lock/pre-sync)", preCheckEx);
-                    result.Errors.Add($"Error during pre-import preparation: {preCheckEx.Message}");
+                    LogManager.Error("Error during full-lock import flow (pre-sync/import/publish)", preCheckEx);
+                    result.Errors.Add($"Error during full-lock import: {preCheckEx.Message}");
                     return result;
                 }
 
-                // 4) Lecture
-                try { await _offlineFirstService.SetSyncStatusAsync("Importing"); } catch { }
-                progressCallback?.Invoke(isMultiFile ? "Reading Excel files..." : "Reading Excel file...", 20);
-                var allRaw = new List<Dictionary<string, object>>();
-                for (int i = 0; i < files.Length; i++)
-                {
-                    var fp = files[i];
-                    // Répartir la progression 20->40
-                    var baseStart = isMultiFile ? 20 + (i * 10) : 20;
-                    var raw = await ReadExcelFile(fp, importFields, p =>
-                    {
-                        int mapped = baseStart + (p * (isMultiFile ? 10 : 20) / 100);
-                        if (mapped > 40) mapped = 40;
-                        var label = isMultiFile ? $"Reading: {Path.GetFileName(fp)} ({p}%)" : $"Reading Excel file... ({p}%)";
-                        progressCallback?.Invoke(label, mapped);
-                    });
-                    allRaw.AddRange(raw);
-                }
-                progressCallback?.Invoke(isMultiFile ? "Excel files read complete" : "Excel file read complete", 40);
-                if (!allRaw.Any())
-                {
-                    result.Errors.Add(isMultiFile ? "No data found in the Excel files." : "No data found in the Excel file.");
-                    return result;
-                }
-
-                // 5) Filtrer/comptes requis
-                var filtered = FilterRowsByCountryAccounts(allRaw, country);
-                if (!filtered.Any())
-                {
-                    var pivot = country?.CNT_AmbrePivot; var recv = country?.CNT_AmbreReceivable;
-                    result.Errors.Add($"No rows match the country's AMBRE accounts ({country?.CNT_Id}): Pivot={pivot}, Receivable={recv}.");
-                    return result;
-                }
-                var accounts = filtered
-                    .Select(r => r.ContainsKey("Account_ID") ? r["Account_ID"]?.ToString() : null)
-                    .Where(s => !string.IsNullOrWhiteSpace(s))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-                bool hasPivot = !string.IsNullOrWhiteSpace(country?.CNT_AmbrePivot) && accounts.Any(a => string.Equals(a, country.CNT_AmbrePivot, StringComparison.OrdinalIgnoreCase));
-                bool hasReceivable = !string.IsNullOrWhiteSpace(country?.CNT_AmbreReceivable) && accounts.Any(a => string.Equals(a, country.CNT_AmbreReceivable, StringComparison.OrdinalIgnoreCase));
-                if (!(hasPivot && hasReceivable))
-                {
-                    var missing = new List<string>();
-                    if (!hasPivot) missing.Add($"Pivot={country?.CNT_AmbrePivot}");
-                    if (!hasReceivable) missing.Add($"Receivable={country?.CNT_AmbreReceivable}");
-                    result.Errors.Add($"Import aborted: both AMBRE accounts are required. Missing: {string.Join(", ", missing)}.");
-                    return result;
-                }
-
-                // 6) Transform + validate
-                progressCallback?.Invoke("Transforming data...", 40);
-                var transformed = await TransformData(filtered, transforms, country);
-                progressCallback?.Invoke("Validating data...", 60);
-                var val = ValidateTransformedData(transformed, country);
-                result.ValidationErrors.AddRange(val.errors);
-                var valid = val.validData;
-                if (!valid.Any())
-                {
-                    result.Errors.Add("No valid data after transformation and validation.");
-                    return result;
-                }
-
-                // 7) Sync DB
-                progressCallback?.Invoke("Synchronizing with database...", 80);
-                var syncResult = await SynchronizeWithDatabase(valid, countryId, performNetworkSync: true);
-                result.NewRecords = syncResult.newCount;
-                result.UpdatedRecords = syncResult.updatedCount;
-                result.DeletedRecords = syncResult.deletedCount;
-
-                // 8) Refresh config + anchors
+                // 8) Refresh config + anchors (hors verrou pour réduire la contention)
                 progressCallback?.Invoke("Refreshing local configuration...", 90);
                 try
                 {
@@ -251,22 +271,21 @@ namespace RecoTool.Services
                 {
                     LogManager.Error("Error while refreshing configuration after import", refreshEx);
                     result.Errors.Add($"Error while refreshing local configuration: {refreshEx.Message}");
-                    result.EndTime = DateTime.Now;
+                    result.EndTime = DateTime.UtcNow;
                     return result;
                 }
 
                 // 9) Final
                 progressCallback?.Invoke("Finalizing...", 100);
                 result.IsSuccess = true;
-                result.EndTime = DateTime.Now;
-                result.ProcessedRecords = valid.Count;
+                result.EndTime = DateTime.UtcNow;
                 return result;
             }
             catch (Exception ex)
             {
                 result.Errors.Add($"Error during import: {ex.Message}");
                 try { await _offlineFirstService.SetSyncStatusAsync("Error"); } catch { }
-                result.EndTime = DateTime.Now;
+                result.EndTime = DateTime.UtcNow;
                 return result;
             }
         }
@@ -458,7 +477,7 @@ namespace RecoTool.Services
         /// <summary>
         /// Synchronise les données transformées avec la base (offline-first avec verrous globaux)
         /// </summary>
-        private async Task<(int newCount, int updatedCount, int deletedCount)> SynchronizeWithDatabase(List<DataAmbre> newData, string countryId, bool performNetworkSync)
+        private async Task<(int newCount, int updatedCount, int deletedCount)> SynchronizeWithDatabase(List<DataAmbre> newData, string countryId, bool performNetworkSync, bool assumeGlobalLockHeld = false)
         {
             ImportChanges changes;
             try
@@ -469,34 +488,9 @@ namespace RecoTool.Services
                 LogManager.Info($"Calculated changes for {countryId} - New: {changes.ToAdd.Count}, Updated: {changes.ToUpdate.Count}, Deleted: {changes.ToArchive.Count}");
 
                 // 2) Protéger uniquement la phase d'écriture (apply + reconciliation)
-                // Plus de synchronisation réseau concurrente: on acquiert directement le verrou global
-
-                var lockWaitStart = DateTime.Now;
-                var lockTimeout = TimeSpan.FromMinutes(2); // Timeout explicite pour éviter l'attente infinie
-                LogManager.Info($"Attempting to acquire global lock for {countryId} (timeout {lockTimeout.TotalSeconds} sec)...");
-
-                var acquireTask = _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", TimeSpan.FromMinutes(30));
-                var completed = await Task.WhenAny(acquireTask, Task.Delay(lockTimeout));
-                if (completed != acquireTask)
+                // Définir la séquence d'application/publication/finalisation
+                async Task ExecuteApplyPublishFinalizeAsync()
                 {
-                    var waited = DateTime.Now - lockWaitStart;
-                    var msg = $"Unable to obtain global lock for {countryId} within the allotted time ({lockTimeout.TotalSeconds} sec). Please try again.";
-                    var timeoutEx = new TimeoutException(msg);
-                    LogManager.Error($"Timeout ({waited.TotalSeconds:F0}s) while waiting for global lock for {countryId}. Operation canceled.", timeoutEx);
-                    throw timeoutEx;
-                }
-
-                var globalLockHandle = await acquireTask;
-                using (var globalLock = globalLockHandle)
-                {
-                    if (globalLock == null)
-                    {
-                        throw new InvalidOperationException($"Unable to acquire global lock for {countryId}. Import canceled.");
-                    }
-
-                    var waited = DateTime.Now - lockWaitStart;
-                    LogManager.Info($"Global lock acquired for {countryId} after {waited.TotalSeconds:F0}s wait");
-
                     try
                     {
                         // Sauvegarde locale RECON avant modifications (non bloquant si erreur)
@@ -545,6 +539,20 @@ namespace RecoTool.Services
                         try { await _offlineFirstService.SetSyncStatusAsync("Finalizing"); } catch { }
                         await _offlineFirstService.MarkAllLocalChangesAsSyncedAsync(countryId);
                         
+                        // Cleanup: purge synchronized ChangeLog entries and compact the control/lock DB under the global lock
+                        try
+                        {
+                            await _offlineFirstService.CleanupChangeLogAndCompactAsync(countryId);
+                        }
+                        catch (Exception cleanupEx)
+                        {
+                            LogManager.Warning($"Cleanup of ChangeLog/compaction failed (non-blocking): {cleanupEx.Message}");
+                        }
+
+                        // Refresh the local databases from network atomically (under the same global lock)
+                        try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
+                        await _offlineFirstService.CopyNetworkToLocalAsync(countryId);
+                        
                         // Completed
                         try { await _offlineFirstService.SetSyncStatusAsync("Completed"); } catch { }
                     }
@@ -554,10 +562,48 @@ namespace RecoTool.Services
                         try { await _offlineFirstService.SetSyncStatusAsync("Error"); } catch { }
                         throw new InvalidOperationException($"Error while synchronizing with the database: {ex.Message}", ex);
                     }
-                    // The global lock is automatically released by Dispose() at the end of the using
                 }
 
-                if (performNetworkSync)
+                if (assumeGlobalLockHeld)
+                {
+                    // Le verrou global est déjà détenu par l'appelant (ImportAmbreCoreAsync)
+                    await ExecuteApplyPublishFinalizeAsync();
+                }
+                else
+                {
+                    // Acquérir le verrou ici (comportement précédent)
+                    var lockWaitStart = DateTime.UtcNow;
+                    var lockTimeout = TimeSpan.FromMinutes(2); // Timeout explicite pour éviter l'attente infinie
+                    LogManager.Info($"Attempting to acquire global lock for {countryId} (timeout {lockTimeout.TotalSeconds} sec)...");
+
+                    var acquireTask = _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", TimeSpan.FromMinutes(30));
+                    var completed = await Task.WhenAny(acquireTask, Task.Delay(lockTimeout));
+                    if (completed != acquireTask)
+                    {
+                        var waited = DateTime.UtcNow - lockWaitStart;
+                        var msg = $"Unable to obtain global lock for {countryId} within the allotted time ({lockTimeout.TotalSeconds} sec). Please try again.";
+                        var timeoutEx = new TimeoutException(msg);
+                        LogManager.Error($"Timeout ({waited.TotalSeconds:F0}s) while waiting for global lock for {countryId}. Operation canceled.", timeoutEx);
+                        throw timeoutEx;
+                    }
+
+                    var globalLockHandle = await acquireTask;
+                    using (var globalLock = globalLockHandle)
+                    {
+                        if (globalLock == null)
+                        {
+                            throw new InvalidOperationException($"Unable to acquire global lock for {countryId}. Import canceled.");
+                        }
+
+                        var waited = DateTime.UtcNow - lockWaitStart;
+                        LogManager.Info($"Global lock acquired for {countryId} after {waited.TotalSeconds:F0}s wait");
+
+                        await ExecuteApplyPublishFinalizeAsync();
+                        // Le verrou sera relâché en sortie de using
+                    }
+                }
+
+                if (performNetworkSync && !assumeGlobalLockHeld)
                 {
                     try
                     {
@@ -670,7 +716,7 @@ namespace RecoTool.Services
                             newItem.ID = existingItem.ID;
                             newItem.Version = existingItem.Version + 1; // Incrémenter la version
                             newItem.CreationDate = existingItem.CreationDate; // Conserver la date de création
-                            newItem.LastModified = DateTime.Now;
+                            newItem.LastModified = DateTime.UtcNow;
                             newItem.ModifiedBy = _currentUser;
                             
                             changes.ToUpdate.Add(newItem);
@@ -682,8 +728,8 @@ namespace RecoTool.Services
                         // Nouvel enregistrement
                         newItem.ID = newItem.GetUniqueKey();
                         newItem.Version = 1;
-                        newItem.CreationDate = DateTime.Now;
-                        newItem.LastModified = DateTime.Now;
+                        newItem.CreationDate = DateTime.UtcNow;
+                        newItem.LastModified = DateTime.UtcNow;
                         newItem.ModifiedBy = _currentUser;
                         
                         changes.ToAdd.Add(newItem);
@@ -698,8 +744,8 @@ namespace RecoTool.Services
                     if (!newByKey.ContainsKey(key))
                     {
                         // Enregistrement à supprimer (archivage logique)
-                        existingItem.DeleteDate = DateTime.Now;
-                        existingItem.LastModified = DateTime.Now;
+                        existingItem.DeleteDate = DateTime.UtcNow;
+                        existingItem.LastModified = DateTime.UtcNow;
                         existingItem.ModifiedBy = _currentUser;
                         existingItem.Version += 1;
                         
@@ -876,12 +922,13 @@ namespace RecoTool.Services
                 LogManager.Info($"[Direct] Insertion uniquement dans T_Reconciliation pour {countryId} - Candidats à l'insertion (issus de 'nouveaux'): {newRecords?.Count ?? 0}. Aucun UPDATE/DELETE ne sera effectué.");
 
                 // Préparer uniquement les lignes à insérer (pas de mise à jour)
-                var now = DateTime.Now;
+                var now = DateTime.UtcNow;
                 var toInsert = new List<Reconciliation>();
+                var country = await LoadCountryConfiguration(countryId);
 
                 foreach (var dataAmbre in newRecords ?? new List<DataAmbre>())
                 {
-                    var rec = CreateReconciliationFromDataAmbre(dataAmbre);
+                    var rec = CreateReconciliationFromDataAmbre(dataAmbre, country);
                     rec.CreationDate = now;
                     rec.LastModified = now;
                     rec.ModifiedBy = _currentUser;
@@ -1001,8 +1048,8 @@ namespace RecoTool.Services
             {
                 // Vérifier si un enregistrement existe déjà via l'API native
                 var existingEntity = await _offlineFirstService.GetEntityByIdAsync(countryId, "T_Reconciliation", "ID", dataAmbre.ID);
-                
-                var reconciliation = CreateReconciliationFromDataAmbre(dataAmbre);
+                var country = await LoadCountryConfiguration(countryId);
+                var reconciliation = CreateReconciliationFromDataAmbre(dataAmbre, country);
                 var reconciliationEntity = ConvertReconciliationToEntity(reconciliation);
                 
                 if (existingEntity != null)
@@ -1023,7 +1070,7 @@ namespace RecoTool.Services
                         reconciliationEntity.Properties["CreationDate"] = existingEntity.Properties["CreationDate"];
                     }
 
-                    reconciliationEntity.Properties["LastModified"] = DateTime.Now.ToOADate();
+                    reconciliationEntity.Properties["LastModified"] = DateTime.UtcNow.ToOADate();
                     reconciliationEntity.Properties["ModifiedBy"] = _currentUser;
                     
                     var success = changeLogSession != null
@@ -1038,8 +1085,8 @@ namespace RecoTool.Services
                 {
                     // Création - initialiser les champs de versionnage
                     reconciliationEntity.Properties["Version"] = 1;
-                    reconciliationEntity.Properties["CreationDate"] = DateTime.Now.ToOADate();
-                    reconciliationEntity.Properties["LastModified"] = DateTime.Now.ToOADate();
+                    reconciliationEntity.Properties["CreationDate"] = DateTime.UtcNow.ToOADate();
+                    reconciliationEntity.Properties["LastModified"] = DateTime.UtcNow.ToOADate();
                     reconciliationEntity.Properties["ModifiedBy"] = _currentUser;
                     
                     var success = changeLogSession != null
@@ -1105,8 +1152,8 @@ namespace RecoTool.Services
                 if (existingEntity != null)
                 {
                     // Archivage logique - définir DeleteDate
-                    existingEntity.Properties["DeleteDate"] = DateTime.Now;
-                    existingEntity.Properties["LastModified"] = DateTime.Now;
+                    existingEntity.Properties["DeleteDate"] = DateTime.UtcNow;
+                    existingEntity.Properties["LastModified"] = DateTime.UtcNow;
                     existingEntity.Properties["ModifiedBy"] = _currentUser;
                     
                     // Incrémenter la version
@@ -1144,19 +1191,19 @@ namespace RecoTool.Services
         /// <summary>
         /// Crée un objet Reconciliation à partir d'un DataAmbre avec les règles métiers appliquées
         /// </summary>
-        private Reconciliation CreateReconciliationFromDataAmbre(DataAmbre dataAmbre)
+        private Reconciliation CreateReconciliationFromDataAmbre(DataAmbre dataAmbre, Country country)
         {
             var reconciliation = new Reconciliation
             {
                 ID = dataAmbre.ID,
-                CreationDate = DateTime.Now,
+                CreationDate = DateTime.UtcNow,
                 ModifiedBy = _currentUser ?? "System",
-                LastModified = DateTime.Now,
+                LastModified = DateTime.UtcNow,
                 Version = 1
             };
 
             // Appliquer les règles métiers selon le type de compte
-            ApplyBusinessRulesForReconciliation(reconciliation, dataAmbre);
+            ApplyBusinessRulesForReconciliation(reconciliation, dataAmbre, country);
 
             return reconciliation;
         }
@@ -1164,15 +1211,31 @@ namespace RecoTool.Services
         /// <summary>
         /// Applique les règles métiers pour déterminer les valeurs Action et KPI
         /// </summary>
-        private void ApplyBusinessRulesForReconciliation(Reconciliation reconciliation, DataAmbre dataAmbre)
+        private void ApplyBusinessRulesForReconciliation(Reconciliation reconciliation, DataAmbre dataAmbre, Country country)
         {
-            var accountType = DetermineAccountType(dataAmbre);
+            if (country == null) throw new ArgumentNullException(nameof(country));
 
-            if (accountType == "Pivot")
+            bool isPivot = dataAmbre.IsPivotAccount(country.CNT_AmbrePivot);
+            bool isReceivable = dataAmbre.IsReceivableAccount(country.CNT_AmbreReceivable);
+
+            var transactionType = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot);
+            var creditDebit = _transformationService.DetermineCreditDebit(dataAmbre.SignedAmount);
+            string guaranteeType = !isPivot ? ExtractGuaranteeType(dataAmbre.RawLabel) : null;
+
+            var (action, kpi) = _transformationService.ApplyAutomaticCategorization(
+                transactionType, creditDebit, isPivot, guaranteeType);
+
+            reconciliation.Action = (int)action;
+            reconciliation.KPI = (int)kpi;
+
+            try { LogManager.Debug($"[Heuristics] ID={dataAmbre.ID} isPivot={isPivot} trx={transactionType} cd={creditDebit} action={(int)action} kpi={(int)kpi}"); } catch { }
+
+            // Apply flags based on account specifics (keep existing heuristics)
+            if (isPivot)
             {
                 ApplyPivotAccountRules(reconciliation, dataAmbre);
             }
-            else if (accountType == "Receivable")
+            else if (isReceivable)
             {
                 ApplyReceivableAccountRules(reconciliation, dataAmbre);
             }
@@ -1183,27 +1246,36 @@ namespace RecoTool.Services
         /// </summary>
         private void ApplyPivotAccountRules(Reconciliation reconciliation, DataAmbre dataAmbre)
         {
-            var transactionType = dataAmbre.Pivot_TransactionCodesFromLabel?.ToUpper();
             bool isCredit = dataAmbre.SignedAmount > 0;
+            var raw = dataAmbre.RawLabel?.ToUpperInvariant() ?? string.Empty;
 
-            switch (transactionType)
+            // Heuristics for Pivot debits/credits classification
+            // Pending pricing: outgoing payments without clear pricing indication
+            if (!isCredit && (raw.Contains(KeywordPayment) || raw.Contains(KeywordOutgoing)))
             {
-                case "COLLECTION":
-                    reconciliation.Action = isCredit ? 1 : 2; // 1 = Collection reçue, 2 = Collection envoyée
-                    reconciliation.KPI = 1; // KPI positif pour collections
-                    break;
-                case "REFUND":
-                    reconciliation.Action = isCredit ? 3 : 4; // 3 = Remboursement reçu, 4 = Remboursement envoyé
-                    reconciliation.KPI = 2; // KPI neutre pour remboursements
-                    break;
-                case "COMMISSION":
-                    reconciliation.Action = 5; // Commission
-                    reconciliation.KPI = 1; // KPI positif pour commissions
-                    break;
-                default:
-                    reconciliation.Action = 0; // Action non déterminée
-                    reconciliation.KPI = 0; // KPI neutre par défaut
-                    break;
+                reconciliation.PendingPricing = true;
+                try { LogManager.Debug($"[Heuristics] PendingPricing=true (Pivot, debit, raw~{dataAmbre.RawLabel})"); } catch { }
+            }
+
+            // Pending to match: credits that are likely pricings triggered from receivables
+            if (isCredit && (raw.Contains(KeywordPricing) || raw.Contains(KeywordTrigger)))
+            {
+                reconciliation.PendingToMatch = true;
+                try { LogManager.Debug($"[Heuristics] PendingToMatch=true (Pivot, credit, raw~{dataAmbre.RawLabel})"); } catch { }
+            }
+
+            // Identify Topaze cases
+            if (raw.Contains(KeywordTopaze))
+            {
+                reconciliation.Action = (int)ActionType.Topaze;
+                try { LogManager.Debug($"[Heuristics] Action override -> TOPAZE (Pivot)"); } catch { }
+            }
+
+            // Sprint 1: transitory threshold for small EUR amounts
+            if (string.Equals(dataAmbre.CCY, "EUR", StringComparison.OrdinalIgnoreCase) && Math.Abs(dataAmbre.SignedAmount) < TransitoryEurThreshold)
+            {
+                reconciliation.IsTransitory = true;
+                try { LogManager.Debug($"[Heuristics] IsTransitory=true (Pivot, EUR < {TransitoryEurThreshold})"); } catch { }
             }
         }
 
@@ -1215,16 +1287,49 @@ namespace RecoTool.Services
             bool isCredit = dataAmbre.SignedAmount > 0;
             bool hasInvoiceReference = !string.IsNullOrEmpty(dataAmbre.Receivable_InvoiceFromAmbre);
             bool hasDWReference = !string.IsNullOrEmpty(dataAmbre.Receivable_DWRefFromAmbre);
+            var raw = dataAmbre.RawLabel?.ToUpperInvariant() ?? string.Empty;
 
             if (isCredit)
             {
-                reconciliation.Action = 6; // Paiement reçu
-                reconciliation.KPI = 1; // KPI positif
+                // Credits could be pricing of outgoing payments or corrections
+                if (raw.Contains(KeywordPricing) || raw.Contains(KeywordOutgoing))
+                {
+                    reconciliation.IsManualOutgoing = true;
+                    reconciliation.PendingToMatch = true; // to be matched against pivot movement
+                    try { LogManager.Debug($"[Heuristics] IsManualOutgoing=true, PendingToMatch=true (Receivable, credit)"); } catch { }
+                }
             }
             else
             {
-                reconciliation.Action = 7; // Charge/Provision
-                reconciliation.KPI = 3; // KPI négatif
+                // Sprint 1: mark pending trigger for receivable debits
+                reconciliation.PendingTrigger = true;
+                reconciliation.TriggerStatus = TriggerStatus.Pending;
+                try { LogManager.Debug($"[Heuristics] PendingTrigger=true (Receivable, debit)"); } catch { }
+
+                // Manual outgoing following pricing event in DWINGS after an outgoing payment
+                if (raw.Contains("MANUAL OUTGOING") || raw.Contains("OUTGOING PAYMENT") || raw.Contains(KeywordPricing))
+                {
+                    reconciliation.IsManualOutgoing = true;
+                    try { LogManager.Debug($"[Heuristics] IsManualOutgoing=true (Receivable, debit)"); } catch { }
+                }
+
+                // Adjustments
+                if (raw.Contains("ADJUSTMENT") || raw.Contains("ADJUST"))
+                {
+                    reconciliation.IsAdjustment = true;
+                    try { LogManager.Debug($"[Heuristics] IsAdjustment=true (Receivable, debit)"); } catch { }
+                }
+
+                // Reissuances – DEBITS
+                if (raw.Contains("REISSUANCE") || raw.Contains("REISSUE"))
+                {
+                    reconciliation.ReissuanceCount = (reconciliation.ReissuanceCount ?? 0) + 1;
+                    if (!reconciliation.FirstClaimDate.HasValue)
+                    {
+                        reconciliation.FirstClaimDate = dataAmbre.Operation_Date ?? DateTime.Today;
+                    }
+                    try { LogManager.Debug($"[Heuristics] ReissuanceCount++ (Receivable, debit)"); } catch { }
+                }
             }
 
             // Enrichir avec les références DWINGS si disponibles
@@ -1237,27 +1342,17 @@ namespace RecoTool.Services
             {
                 reconciliation.DWINGS_GuaranteeID = dataAmbre.Receivable_DWRefFromAmbre;
             }
+
+            // Sprint 1: transitory threshold for small EUR amounts
+            if (string.Equals(dataAmbre.CCY, "EUR", StringComparison.OrdinalIgnoreCase) && Math.Abs(dataAmbre.SignedAmount) < TransitoryEurThreshold)
+            {
+                reconciliation.IsTransitory = true;
+            }
         }
 
-        /// <summary>
-        /// Détermine le type de compte (Pivot ou Receivable) basé sur l'Account_ID
-        /// </summary>
-        private string DetermineAccountType(DataAmbre dataAmbre)
-        {
-            var accountId = dataAmbre.Account_ID?.ToUpper();
-
-            if (string.IsNullOrEmpty(accountId))
-                return "Unknown";
-
-            // Règles métier pour déterminer le type de compte
-            if (accountId.Contains("PIVOT") || accountId.StartsWith("PIV"))
-                return "Pivot";
-
-            if (accountId.Contains("RECEIV") || accountId.StartsWith("REC") || accountId.Contains("SUSP"))
-                return "Receivable";
-
-            return "Unknown";
-        }
+        // Note: DetermineAccountType removed.
+        // Use authoritative country-based checks: dataAmbre.IsPivotAccount(country.CNT_AmbrePivot)
+        // and dataAmbre.IsReceivableAccount(country.CNT_AmbreReceivable).
 
         /// <summary>
         /// Filtre les lignes brutes pour ne conserver que celles dont Account_ID correspond

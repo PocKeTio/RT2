@@ -41,6 +41,14 @@ namespace RecoTool.Windows
         private bool _canRefresh = true;
         private bool _initialLoaded;
         private DispatcherTimer _filterDebounceTimer;
+        private DispatcherTimer _pushDebounceTimer; // coalesces multiple push triggers
+        private const int PushDebounceMs = 400;
+        // Transient highlight clear timer
+        private DispatcherTimer _highlightClearTimer;
+        private bool _isSyncRefreshInProgress;
+        private const int HighlightDurationMs = 4000;
+        private bool _syncEventsHooked;
+        private bool _hasLoadedOnce; // set after first RefreshCompleted to avoid double-load on startup
 
         // Collections pour l'affichage (vue combinée)
         private ObservableCollection<ReconciliationViewData> _viewData;
@@ -607,7 +615,11 @@ namespace RecoTool.Windows
                 await _reconciliationService.SaveReconciliationsAsync(updates);
 
                 // Background sync best effort
-                try { if (_offlineFirstService?.IsInitialized == true && _offlineFirstService.IsNetworkSyncAvailable) _ = Task.Run(async () => { try { await _offlineFirstService.SynchronizeData(); } catch { } }); } catch { }
+                try
+                {
+                    SchedulePushDebounced();
+                }
+                catch { }
             }
             catch (Exception ex)
             {
@@ -677,7 +689,11 @@ namespace RecoTool.Windows
                 await _reconciliationService.SaveReconciliationsAsync(updates);
 
                 // Background sync best effort
-                try { if (_offlineFirstService?.IsInitialized == true && _offlineFirstService.IsNetworkSyncAvailable) _ = Task.Run(async () => { try { await _offlineFirstService.SynchronizeData(); } catch { } }); } catch { }
+                try
+                {
+                    SchedulePushDebounced();
+                }
+                catch { }
             }
             catch (Exception ex)
             {
@@ -733,12 +749,227 @@ namespace RecoTool.Windows
             };
         }
 
+        private void SubscribeToSyncEvents()
+        {
+            try
+            {
+                if (_syncEventsHooked) return;
+                var svc = SyncMonitorService.Instance;
+                if (svc != null)
+                {
+                    svc.SyncStateChanged += OnSyncStateChanged;
+                    _syncEventsHooked = true;
+                }
+            }
+            catch { }
+        }
+
+        private void ReconciliationView_Unloaded(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_syncEventsHooked)
+                {
+                    var svc = SyncMonitorService.Instance;
+                    if (svc != null)
+                    {
+                        svc.SyncStateChanged -= OnSyncStateChanged;
+                    }
+                    _syncEventsHooked = false;
+                }
+                if (_highlightClearTimer != null)
+                {
+                    _highlightClearTimer.Stop();
+                    _highlightClearTimer.Tick -= HighlightClearTimer_Tick;
+                    _highlightClearTimer = null;
+                }
+            }
+            catch { }
+        }
+
+        private void OnSyncStateChanged(OfflineFirstService.SyncStateChangedEventArgs e)
+        {
+            // Fire-and-forget async handling
+            _ = HandleSyncStateChangedAsync(e);
+        }
+
+        private async Task HandleSyncStateChangedAsync(OfflineFirstService.SyncStateChangedEventArgs e)
+        {
+            try
+            {
+                if (e == null) return;
+                if (e.State != OfflineFirstService.SyncStateKind.UpToDate) return;
+                // Only react for current view's country
+                if (string.IsNullOrWhiteSpace(_currentCountryId)) return;
+                if (!string.Equals(e.CountryId, _currentCountryId, StringComparison.OrdinalIgnoreCase)) return;
+                if (!_hasLoadedOnce) return; // defer handling until first explicit load done
+
+                // Ensure we are on the UI thread before touching UI-bound state
+                if (!Dispatcher.CheckAccess())
+                {
+                    await Dispatcher.InvokeAsync(() => _ = HandleSyncStateChangedAsync(e));
+                    return;
+                }
+
+                if (_isSyncRefreshInProgress) return; // coalesce on UI thread
+                _isSyncRefreshInProgress = true;
+
+                // Snapshot old data keys for diff
+                var oldSnapshot = (_allViewData ?? new List<ReconciliationViewData>()).ToList();
+                var oldMap = new Dictionary<string, ReconciliationViewData>(StringComparer.OrdinalIgnoreCase);
+                foreach (var r in oldSnapshot)
+                {
+                    try { oldMap[r?.GetUniqueKey() ?? string.Empty] = r; } catch { }
+                }
+
+                // Refresh data (async)
+                await RefreshAsync();
+
+                // Compute differences on freshly loaded _allViewData
+                var newSnapshot = (_allViewData ?? new List<ReconciliationViewData>()).ToList();
+                var newlyAdded = new List<ReconciliationViewData>();
+                var updated = new List<ReconciliationViewData>();
+
+                foreach (var n in newSnapshot)
+                {
+                    string key = null;
+                    try { key = n?.GetUniqueKey(); } catch { key = null; }
+                    if (string.IsNullOrWhiteSpace(key)) continue;
+
+                    if (!oldMap.TryGetValue(key, out var o) || o == null)
+                    {
+                        newlyAdded.Add(n);
+                        continue;
+                    }
+
+                    if (HasMeaningfulUpdate(o, n))
+                    {
+                        updated.Add(n);
+                    }
+                }
+
+                // Apply highlight flags on UI objects
+                foreach (var r in newlyAdded)
+                {
+                    try { r.IsNewlyAdded = true; r.IsHighlighted = true; } catch { }
+                }
+                foreach (var r in updated)
+                {
+                    try { r.IsUpdated = true; r.IsHighlighted = true; } catch { }
+                }
+
+                if (newlyAdded.Count > 0 || updated.Count > 0)
+                {
+                    StartHighlightClearTimer();
+                }
+            }
+            catch { }
+            finally
+            {
+                _isSyncRefreshInProgress = false;
+            }
+        }
+
+        private static bool HasMeaningfulUpdate(ReconciliationViewData oldRow, ReconciliationViewData newRow)
+        {
+            try
+            {
+                if (oldRow == null || newRow == null) return false;
+                // Compare fields that can change due to reconciliation edits or merge
+                if (!NullableEquals(oldRow.Action, newRow.Action)) return true;
+                if (!NullableEquals(oldRow.KPI, newRow.KPI)) return true;
+                if (!NullableEquals(oldRow.IncidentType, newRow.IncidentType)) return true;
+                if (!StringEquals(oldRow.Assignee, newRow.Assignee)) return true;
+                if (!StringEquals(oldRow.Comments, newRow.Comments)) return true;
+                if (oldRow.ToRemind != newRow.ToRemind) return true;
+                if (!NullableEquals(oldRow.ToRemindDate, newRow.ToRemindDate)) return true;
+                if (oldRow.ACK != newRow.ACK) return true;
+                if (!StringEquals(oldRow.Reco_ModifiedBy, newRow.Reco_ModifiedBy)) return true;
+                // Add other domain fields as needed
+                return false;
+            }
+            catch { return false; }
+        }
+
+        private static bool StringEquals(string a, string b) => string.Equals(a ?? string.Empty, b ?? string.Empty, StringComparison.Ordinal);
+        private static bool NullableEquals<T>(T? a, T? b) where T : struct => Nullable.Equals(a, b);
+
+        private void StartHighlightClearTimer()
+        {
+            try
+            {
+                if (_highlightClearTimer == null)
+                {
+                    _highlightClearTimer = new DispatcherTimer();
+                    _highlightClearTimer.Interval = TimeSpan.FromMilliseconds(HighlightDurationMs);
+                    _highlightClearTimer.Tick += HighlightClearTimer_Tick;
+                }
+                else
+                {
+                    _highlightClearTimer.Stop();
+                }
+                _highlightClearTimer.Interval = TimeSpan.FromMilliseconds(HighlightDurationMs);
+                _highlightClearTimer.Start();
+            }
+            catch { }
+        }
+
+        private void HighlightClearTimer_Tick(object sender, EventArgs e)
+        {
+            try
+            {
+                _highlightClearTimer?.Stop();
+                // Clear flags on all rows
+                foreach (var r in _allViewData ?? Enumerable.Empty<ReconciliationViewData>())
+                {
+                    try
+                    {
+                        if (r.IsNewlyAdded) r.IsNewlyAdded = false;
+                        if (r.IsUpdated) r.IsUpdated = false;
+                        if (r.IsHighlighted) r.IsHighlighted = false;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
         private void ScheduleApplyFiltersDebounced()
         {
             try
             {
                 _filterDebounceTimer.Stop();
                 _filterDebounceTimer.Start();
+            }
+            catch { }
+        }
+
+        private void InitializePushDebounce()
+        {
+            _pushDebounceTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(PushDebounceMs)
+            };
+            _pushDebounceTimer.Tick += (s, e) =>
+            {
+                _pushDebounceTimer.Stop();
+                try
+                {
+                    if (_offlineFirstService?.IsInitialized == true)
+                    {
+                        _ = _offlineFirstService.PushReconciliationIfPendingAsync(_currentCountryId);
+                    }
+                }
+                catch { }
+            };
+        }
+
+        private void SchedulePushDebounced()
+        {
+            try
+            {
+                _pushDebounceTimer?.Stop();
+                _pushDebounceTimer?.Start();
             }
             catch { }
         }
@@ -905,7 +1136,11 @@ namespace RecoTool.Windows
             InitializeData();
             DataContext = this;
             Loaded += ReconciliationView_Loaded;
+            Unloaded += ReconciliationView_Unloaded;
             InitializeFilterDebounce();
+            InitializePushDebounce();
+            SubscribeToSyncEvents();
+            RefreshCompleted += (s, e) => _hasLoadedOnce = true;
         }
 
         /// <summary>
@@ -990,6 +1225,8 @@ namespace RecoTool.Windows
 
         private void ReconciliationView_Loaded(object sender, RoutedEventArgs e)
         {
+            // Make sure we are subscribed (handles re-loads)
+            SubscribeToSyncEvents();
             if (_initialLoaded) return;
             if (!string.IsNullOrEmpty(_currentCountryId))
             {
@@ -1238,10 +1475,7 @@ namespace RecoTool.Windows
                 // background sync
                 try
                 {
-                    if (_offlineFirstService != null && _offlineFirstService.IsInitialized && _offlineFirstService.IsNetworkSyncAvailable)
-                    {
-                        _ = Task.Run(async () => { try { await _offlineFirstService.SynchronizeData(); } catch { } });
-                    }
+                    SchedulePushDebounced();
                 }
                 catch { }
             }
@@ -1868,14 +2102,7 @@ namespace RecoTool.Windows
                 // Fire-and-forget background sync to network DB to reduce sync debt
                 try
                 {
-                    if (_offlineFirstService != null && _offlineFirstService.IsInitialized && _offlineFirstService.IsNetworkSyncAvailable)
-                    {
-                        _ = Task.Run(async () =>
-                        {
-                            try { await _offlineFirstService.SynchronizeData(); }
-                            catch { /* best-effort: ignore background sync errors */ }
-                        });
-                    }
+                    SchedulePushDebounced();
                 }
                 catch { /* ignore any scheduling errors */ }
             }
@@ -1981,14 +2208,7 @@ namespace RecoTool.Windows
             // Best-effort background sync
             try
             {
-                if (_offlineFirstService != null && _offlineFirstService.IsInitialized && _offlineFirstService.IsNetworkSyncAvailable)
-                {
-                    _ = Task.Run(async () =>
-                    {
-                        try { await _offlineFirstService.SynchronizeData(); }
-                        catch { }
-                    });
-                }
+                SchedulePushDebounced();
             }
             catch { }
         }
@@ -2338,6 +2558,12 @@ namespace RecoTool.Windows
                     if (result == true)
                     {
                         await RefreshAsync();
+                        // After successful detail save, push pending changes best-effort
+                        try
+                        {
+                            SchedulePushDebounced();
+                        }
+                        catch { }
                     }
                 }
             }

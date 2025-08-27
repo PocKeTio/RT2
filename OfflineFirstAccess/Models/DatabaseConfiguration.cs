@@ -104,8 +104,8 @@ namespace OfflineFirstAccess.Models
                 LocalStoragePath = localStoragePath
             };
             
-            // CORRECTION : ChangeLog supprimé de la config locale car maintenant dans la base Lock
-            // ChangeLog est géré automatiquement par EnsureChangeLogTableExistsAsync dans GenericAccessService.Lock.cs
+            // ChangeLog stocké localement pour assurer la durabilité hors-ligne
+            // et permettre la publication fiable des changements après reconnexion
             
             // Ajouter la table des verrous (SyncLocks)
             var syncLocksTable = new TableConfiguration
@@ -156,7 +156,31 @@ namespace OfflineFirstAccess.Models
             sessionsTable.Columns.Add(new ColumnDefinition("StartTime", typeof(DateTime), "DATETIME", false));
             sessionsTable.Columns.Add(new ColumnDefinition("LastActivity", typeof(DateTime), "DATETIME", false));
             sessionsTable.Columns.Add(new ColumnDefinition("IsActive", typeof(bool), "BIT", false));
-            
+
+            // Ajouter la table ChangeLog locale
+            var changeLogTable = new TableConfiguration
+            {
+                Name = "ChangeLog",
+                PrimaryKeyColumn = "ChangeID",
+                PrimaryKeyType = typeof(long),
+                LastModifiedColumn = null,
+                CreateTableSql = @"CREATE TABLE ChangeLog (
+                    ChangeID COUNTER PRIMARY KEY,
+                    TableName TEXT(255),
+                    RecordID TEXT(255),
+                    Operation TEXT(50),
+                    [Timestamp] DATETIME,
+                    Synchronized BIT
+                )"
+            };
+
+            changeLogTable.Columns.Add(new ColumnDefinition("ChangeID", typeof(long), "LONG", false, true, true));
+            changeLogTable.Columns.Add(new ColumnDefinition("TableName", typeof(string), "TEXT(255)", true));
+            changeLogTable.Columns.Add(new ColumnDefinition("RecordID", typeof(string), "TEXT(255)", true));
+            changeLogTable.Columns.Add(new ColumnDefinition("Operation", typeof(string), "TEXT(50)", true));
+            changeLogTable.Columns.Add(new ColumnDefinition("Timestamp", typeof(DateTime), "DATETIME", true));
+            changeLogTable.Columns.Add(new ColumnDefinition("Synchronized", typeof(bool), "BIT", true));
+
             // Ajouter la table des paramètres de configuration (T_ConfigParameters)
             var configParamsTable = new TableConfiguration
             {
@@ -321,9 +345,10 @@ namespace OfflineFirstAccess.Models
             reconciliationTable.Columns.Add(new ColumnDefinition("Version", typeof(long), "LONG", false));
 
 
-            // CORRECTION : ChangeLog supprimé - maintenant dans la base Lock
+            // Tables système et données locales
             config.Tables.Add(syncLocksTable);
             config.Tables.Add(sessionsTable);
+            config.Tables.Add(changeLogTable);
             config.Tables.Add(configParamsTable);
             config.Tables.Add(dataAmbreTable);
             config.Tables.Add(reconciliationTable);

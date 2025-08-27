@@ -68,6 +68,9 @@ namespace RecoTool.Models
         public string CREDITOR_PARTY_NAME { get; set; }
         public string CREDITOR_ACCOUNT_NUMBER { get; set; }
 
+        // New: PAYMENT_METHOD (TEXT(255) in DB)
+        public string PAYMENT_METHOD { get; set; }
+
         /// <summary>
         /// Détermine si cette donnée DWINGS correspond à une invoice ID spécifique
         /// </summary>

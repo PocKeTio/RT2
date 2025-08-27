@@ -199,6 +199,11 @@ namespace OfflineFirstAccess.Helpers
             _isInitialized = false;
         }
 
+        public static void Warn(string v)
+        {
+            throw new NotImplementedException();
+        }
+
         /// <summary>
         /// Niveau de log
         /// </summary>

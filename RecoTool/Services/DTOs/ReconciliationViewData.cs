@@ -122,7 +122,51 @@ namespace RecoTool.Services
         public decimal? GUARANTEE_AMOUNT { get; set; }
         public string GUARANTEE_CURRENCY { get; set; }
         public string GUARANTEE_STATUS { get; set; }
+
+        // Transient UI highlight flags (not persisted). Used by DataGrid RowStyle triggers
+        private bool _isNewlyAdded;
+        public bool IsNewlyAdded
+        {
+            get => _isNewlyAdded;
+            set
+            {
+                if (_isNewlyAdded != value)
+                {
+                    _isNewlyAdded = value;
+                    OnPropertyChanged(nameof(IsNewlyAdded));
+                }
+            }
+        }
+
+        private bool _isUpdated;
+        public bool IsUpdated
+        {
+            get => _isUpdated;
+            set
+            {
+                if (_isUpdated != value)
+                {
+                    _isUpdated = value;
+                    OnPropertyChanged(nameof(IsUpdated));
+                }
+            }
+        }
+
+        private bool _isHighlighted;
+        public bool IsHighlighted
+        {
+            get => _isHighlighted;
+            set
+            {
+                if (_isHighlighted != value)
+                {
+                    _isHighlighted = value;
+                    OnPropertyChanged(nameof(IsHighlighted));
+                }
+            }
+        }
     }
 
     #endregion
 }
+

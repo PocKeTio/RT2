@@ -1,0 +1,34 @@
+<Window x:Class="RecoTool.Windows.DwingsButtonsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DWINGS Buttons" Height="600" Width="900" WindowStartupLocation="CenterOwner">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" Margin="10">
+            <TextBlock Text="Reconciliations with Action = TRIGGER (IsDeleted = false)" FontWeight="Bold" FontSize="14"/>
+        </DockPanel>
+
+        <DataGrid x:Name="GridReconciliations" Grid.Row="1" Margin="10" AutoGenerateColumns="False"
+                  IsReadOnly="True" SelectionMode="Extended">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="ID" Binding="{Binding ID}" Width="*" MinWidth="120"/>
+                <DataGridTextColumn Header="DWINGS_GuaranteeID" Binding="{Binding DWINGS_GuaranteeID}" Width="*" MinWidth="120"/>
+                <DataGridTextColumn Header="DWINGS_InvoiceID" Binding="{Binding DWINGS_InvoiceID}" Width="*" MinWidth="120"/>
+                <DataGridTextColumn Header="DWINGS_CommissionID" Binding="{Binding DWINGS_CommissionID}" Width="*" MinWidth="120"/>
+                <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="100"/>
+                <DataGridTextColumn Header="Assignee" Binding="{Binding Assignee}" Width="120"/>
+                <DataGridTextColumn Header="Comments" Binding="{Binding Comments}" Width="200"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="10" HorizontalAlignment="Right">
+            <ProgressBar x:Name="Progress" Width="250" Height="18" Margin="0,0,10,0"/>
+            <Button x:Name="BulkButton" Content="Bulk Red Buttons" Width="160" Height="28" Click="BulkButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

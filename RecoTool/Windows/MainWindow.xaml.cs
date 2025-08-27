@@ -50,7 +50,87 @@ namespace RecoTool.Windows
             InitializeServices();
             SetupEventHandlers();
             SetupSyncMonitor();
-            this.Closed += (s, e) => { try { SyncMonitorService.Instance.Stop(); } catch { } };
+            this.Closed += (s, e) =>
+            {
+                try
+                {
+                    // Best-effort final push on app exit
+                    var cid = _currentCountryId;
+                    if (!string.IsNullOrWhiteSpace(cid))
+                    {
+                        try { _ = _offlineFirstService?.PushReconciliationIfPendingAsync(cid); } catch { }
+                    }
+                }
+                catch { }
+                finally
+                {
+                    try { SyncMonitorService.Instance.Stop(); } catch { }
+                }
+            };
+        }
+
+        /// <summary>
+        /// Attend (au plus timeout) que la page courante signale RefreshCompleted si elle l'expose.
+        /// Supporte HomePage et ReconciliationPage; sinon, no-op.
+        /// </summary>
+        private async Task WaitForCurrentPageRefreshAsync(TimeSpan timeout)
+        {
+            try
+            {
+                var tcs = new TaskCompletionSource<bool>();
+                EventHandler handler = null;
+
+                // Abonnement selon le type connu
+                if (_currentPage is HomePage home)
+                {
+                    // Si déjà non-chargement, sortir tout de suite
+                    if (!home.IsLoading) return;
+                    handler = (_, __) => { try { home.RefreshCompleted -= handler; } catch { } tcs.TrySetResult(true); };
+                    home.RefreshCompleted += handler;
+                }
+                else if (_currentPage is ReconciliationPage rec)
+                {
+                    if (!rec.IsLoading) return;
+                    handler = (_, __) => { try { rec.RefreshCompleted -= handler; } catch { } tcs.TrySetResult(true); };
+                    rec.RefreshCompleted += handler;
+                }
+                else
+                {
+                    // Page ne supporte pas l'événement: petite pause visuelle
+                    await Task.Delay(200);
+                    return;
+                }
+
+                // Fail-safe: attendre soit l'événement, soit que IsLoading devienne false, soit le timeout
+                using var cts = new System.Threading.CancellationTokenSource(timeout);
+                var token = cts.Token;
+
+                var pollTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        while (!token.IsCancellationRequested)
+                        {
+                            if (_currentPage is HomePage h)
+                            {
+                                if (!h.IsLoading) { tcs.TrySetResult(true); break; }
+                            }
+                            else if (_currentPage is ReconciliationPage r)
+                            {
+                                if (!r.IsLoading) { tcs.TrySetResult(true); break; }
+                            }
+                            await Task.Delay(100, token);
+                        }
+                    }
+                    catch { tcs.TrySetResult(true); }
+                }, token);
+
+                using (token.Register(() => tcs.TrySetResult(true)))
+                {
+                    await tcs.Task.ConfigureAwait(true); // revenir au contexte UI
+                }
+            }
+            catch { }
         }
 
         // Allow dragging the window by holding mouse on the header area
@@ -96,6 +176,36 @@ namespace RecoTool.Windows
         {
             get => _operationalDataStatus;
             set { _operationalDataStatus = value; OnPropertyChanged(nameof(OperationalDataStatus)); }
+        }
+
+        // Header ribbon network badge
+        private string _networkStatusText = "OFFLINE";
+        public string NetworkStatusText
+        {
+            get => _networkStatusText;
+            set { _networkStatusText = value; OnPropertyChanged(nameof(NetworkStatusText)); }
+        }
+
+        private Brush _networkStatusBrush = Brushes.OrangeRed;
+        public Brush NetworkStatusBrush
+        {
+            get => _networkStatusBrush;
+            set { _networkStatusBrush = value; OnPropertyChanged(nameof(NetworkStatusBrush)); }
+        }
+
+        // Sync status indicator (status bar)
+        private string _syncStatusText = "";
+        public string SyncStatusText
+        {
+            get => _syncStatusText;
+            set { _syncStatusText = value; OnPropertyChanged(nameof(SyncStatusText)); }
+        }
+
+        private Brush _syncStatusBrush = Brushes.Gray;
+        public Brush SyncStatusBrush
+        {
+            get => _syncStatusBrush;
+            set { _syncStatusBrush = value; OnPropertyChanged(nameof(SyncStatusBrush)); }
         }
 
         private bool _isInitializing;
@@ -292,6 +402,53 @@ namespace RecoTool.Windows
                 monitor.NetworkBecameAvailable += () => TryBackgroundPush();
                 monitor.LockReleased += () => TryBackgroundPush();
                 monitor.SyncSuggested += (_) => TryBackgroundPush();
+                monitor.SyncStateChanged += (e) =>
+                {
+                    try
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            switch (e.State)
+                            {
+                                case OfflineFirstService.SyncStateKind.SyncInProgress:
+                                    SyncStatusText = e.PendingCount > 0 ? $"🔄 Syncing... ({e.PendingCount})" : "🔄 Syncing...";
+                                    SyncStatusBrush = Brushes.DarkOrange;
+                                    break;
+                                case OfflineFirstService.SyncStateKind.UpToDate:
+                                    SyncStatusText = "✅ Up to date";
+                                    SyncStatusBrush = Brushes.DarkGreen;
+                                    break;
+                                case OfflineFirstService.SyncStateKind.OfflinePending:
+                                    SyncStatusText = e.PendingCount > 0 ? $"⚠️ Offline ({e.PendingCount} pending)" : "⚠️ Offline";
+                                    SyncStatusBrush = Brushes.Goldenrod;
+                                    break;
+                                case OfflineFirstService.SyncStateKind.Error:
+                                    var msg = e.LastError?.Message;
+                                    SyncStatusText = string.IsNullOrWhiteSpace(msg) ? "⚠️ Error" : $"⚠️ Error: {msg}";
+                                    SyncStatusBrush = Brushes.Crimson;
+                                    break;
+                            }
+                        });
+                    }
+                    catch { }
+                };
+                monitor.NetworkAvailabilityChanged += (online) =>
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        IsOffline = !online;
+                        if (online)
+                        {
+                            NetworkStatusText = "ONLINE";
+                            NetworkStatusBrush = Brushes.MediumSeaGreen;
+                        }
+                        else
+                        {
+                            NetworkStatusText = "OFFLINE";
+                            NetworkStatusBrush = Brushes.OrangeRed;
+                        }
+                    });
+                };
                 monitor.Start();
             }
             catch { }
@@ -304,12 +461,35 @@ namespace RecoTool.Windows
                 var cid = _currentCountryId;
                 if (string.IsNullOrWhiteSpace(cid)) return;
                 if (_isCountryInitializing) return;
-                _ = Task.Run(async () =>
-                {
-                    try { await _offlineFirstService.PushReconciliationIfPendingAsync(cid); } catch { }
-                });
+                _ = _offlineFirstService.PushReconciliationIfPendingAsync(cid);
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Open the DWINGS Buttons window to manage TRIGGER actions in bulk
+        /// </summary>
+        private void DwingsButtonsButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_currentCountryId))
+                {
+                    ShowWarning("Sélection requise", "Veuillez sélectionner un pays avant d'ouvrir DWINGS BUTTONS.");
+                    return;
+                }
+
+                var win = new DwingsButtonsWindow(_offlineFirstService, _reconciliationService, _currentCountryId)
+                {
+                    Owner = this,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner
+                };
+                win.Show();
+            }
+            catch (Exception ex)
+            {
+                ShowError("Erreur", $"Impossible d'ouvrir DWINGS BUTTONS: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -359,11 +539,20 @@ namespace RecoTool.Windows
                 _previousCountryId = _currentCountryId;
                 _isChangingCountrySelection = true;
                 Mouse.OverrideCursor = Cursors.Wait;
+                ProgressWindow progressWindow = null;
                 try
                 {
+                    // Afficher une ProgressWindow pendant tout le traitement (copie, synchro, etc.)
+                    progressWindow = new ProgressWindow("Initialisation du pays en cours...");
+                    progressWindow.Owner = this;
+                    progressWindow.Show();
+                    progressWindow.UpdateProgress("Préparation...", 5);
+
                     var ok = await UpdateServicesForCountry(newCountryId);
                     if (!ok)
                     {
+                        // Fermer la fenêtre avant retour à l'état précédent
+                        try { progressWindow?.Close(); } catch { }
                         // Echec d'initialisation (base manquante/verrouillée). Revenir à la sélection précédente ou vider.
                         ShowError("Base pays indisponible", "La base locale/réseau pour ce pays est introuvable ou verrouillée. Veuillez sélectionner un autre pays.");
                         _isChangingCountrySelection = true;
@@ -388,20 +577,35 @@ namespace RecoTool.Windows
                         SetReferentialState("Erreur", Brushes.Crimson, false);
                         return;
                     }
+                    progressWindow.UpdateProgress("Finalisation...", 95);
                     _currentCountryId = newCountryId;
                     await NotifyCurrentPageOfCountryChange();
+
+                    // Attendre la fin du premier rafraîchissement de la page courante (si exposé)
+                    progressWindow.UpdateProgress("Chargement des données...", 98);
+                    await WaitForCurrentPageRefreshAsync(TimeSpan.FromSeconds(15));
                     SetInitializationState($"Pays sélectionné: {selected.CNT_Name}", Brushes.DarkGreen);
                     OperationalDataStatus = "ONLINE";
                     SetReferentialState("OK", Brushes.DarkGreen, true);
                 }
                 finally
                 {
+                    try { progressWindow?.Close(); } catch { }
                     Mouse.OverrideCursor = null; // restore default cursor
                     _isChangingCountrySelection = false;
                 }
             }
             catch (Exception ex)
             {
+                // S'assurer que toute fenêtre de progression résiduelle est fermée
+                try
+                {
+                    foreach (Window w in Application.Current.Windows)
+                    {
+                        if (w is ProgressWindow pw && pw.Owner == this) { pw.Close(); }
+                    }
+                }
+                catch { }
                 ShowError("Erreur", $"Impossible d'initialiser le pays sélectionné: {ex.Message}");
                 IsOffline = true;
                 OperationalDataStatus = "OFFLINE";
@@ -435,8 +639,8 @@ namespace RecoTool.Windows
                 // 1) S'assurer que les instantanés locaux AMBRE et DW sont à jour
                 try { await _offlineFirstService.EnsureLocalSnapshotsUpToDateAsync(countryId); } catch { }
 
-                // 2) Pousser en arrière-plan les changements RECON locaux s'il y en a et si possible
-                try { await _offlineFirstService.PushReconciliationIfPendingAsync(countryId); } catch { }
+                // 2) Déclencher un push granulair en arrière-plan (ne bloque pas l'UI)
+                try { _ = _offlineFirstService.PushReconciliationIfPendingAsync(countryId); } catch { }
 
                 // Récupérer la nouvelle chaîne de connexion
                 var connectionString = _offlineFirstService.GetCountryConnectionString(countryId);
@@ -570,9 +774,19 @@ namespace RecoTool.Windows
 /// <summary>
 /// Navigation vers la page d'accueil
 /// </summary>
-private void HomeButton_Click(object sender, RoutedEventArgs e)
+private async void HomeButton_Click(object sender, RoutedEventArgs e)
 {
-    NavigateToHomePage();
+    try
+    {
+        Mouse.OverrideCursor = Cursors.Wait;
+        NavigateToHomePage();
+        // Attendre que la Home termine son rafraîchissement initial si applicable
+        await WaitForCurrentPageRefreshAsync(TimeSpan.FromSeconds(10));
+    }
+    finally
+    {
+        Mouse.OverrideCursor = null;
+    }
 }
 
 /// <summary>

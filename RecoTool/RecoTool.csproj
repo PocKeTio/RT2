@@ -91,17 +91,22 @@
     <Compile Include="App.xaml.cs">
       <DependentUpon>App.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Services\DatabaseRecreationService.cs" />
+    <Compile Include="Services\Enums\IncidentType.cs" />
+    <Compile Include="Services\Enums\RiskReason.cs" />
+    <Compile Include="Services\Enums\TriggerStatus.cs" />
+    <Compile Include="Services\Helpers\EnumHelper.cs" />
     <Compile Include="Services\ExportService.cs" />
     <Compile Include="Helpers\ExcelHelper.cs" />
     <Compile Include="Helpers\ValidationHelper.cs" />
     <Compile Include="Models\ImportChanges.cs" />
     <Compile Include="Models\UserFieldsPreference.cs" />
-    <Compile Include="Services\Enums\ConflictResolution.cs" />
-    <Compile Include="Services\Enums\ConflictResolutionStrategy.cs" />
-    <Compile Include="Services\Enums\ExportFormat.cs" />
     <Compile Include="Services\DTOs\ImportResult.cs" />
     <Compile Include="Services\ParameterService.cs" />
     <Compile Include="Services\SyncMonitorService.cs" />
+    <Compile Include="Windows\DwingsButtonsWindow.xaml.cs">
+      <DependentUpon>DwingsButtonsWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Windows\MainWindow.xaml.cs">
       <DependentUpon>MainWindow.xaml</DependentUpon>
     </Compile>
@@ -149,6 +154,10 @@
     <Page Include="App.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Windows\DwingsButtonsWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
     </Page>
     <Page Include="Windows\MainWindow.xaml">
       <Generator>MSBuild:Compile</Generator>

@@ -14,6 +14,7 @@ using RecoTool.Services;
 using System.Reflection;
 using System.Windows.Media;
 using System.Text.Json;
+using System.Text;
 
 namespace RecoTool.Windows
 {
@@ -364,16 +365,16 @@ namespace RecoTool.Windows
                     .OrderBy(a =>
                     {
                         if (actionFieldMap.TryGetValue(a, out var uf) && uf != null)
-                            return string.IsNullOrWhiteSpace(uf.USR_FieldName) ? (uf.USR_FieldDescription ?? GetActionName(a)) : uf.USR_FieldName;
-                        return GetActionName(a);
+                            return string.IsNullOrWhiteSpace(uf.USR_FieldName) ? (uf.USR_FieldDescription ?? EnumHelper.GetActionName(a, _offlineFirstService?.UserFields)) : uf.USR_FieldName;
+                        return EnumHelper.GetActionName(a, _offlineFirstService?.UserFields);
                     })
                     .ToList();
 
                 var labels = actions.Select(a =>
                 {
                     if (actionFieldMap.TryGetValue(a, out var uf) && uf != null)
-                        return !string.IsNullOrWhiteSpace(uf.USR_FieldName) ? uf.USR_FieldName : (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : GetActionName(a));
-                    return GetActionName(a);
+                        return !string.IsNullOrWhiteSpace(uf.USR_FieldName) ? uf.USR_FieldName : (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : EnumHelper.GetActionName(a, _offlineFirstService?.UserFields));
+                    return EnumHelper.GetActionName(a, _offlineFirstService?.UserFields);
                 }).ToList();
 
                 var receivableValues = new ChartValues<int>();
@@ -432,7 +433,7 @@ namespace RecoTool.Windows
 
                 foreach (var g in grouped)
                 {
-                    labels.Add(GetKPIName(g.Key));
+                    labels.Add(EnumHelper.GetKPIName(g.Key, _offlineFirstService?.UserFields));
                     riskyValues.Add(g.Count(x => x.RiskyItem == true));
                     // null is treated as false
                     nonRiskyValues.Add(g.Count(x => x.RiskyItem != true));
@@ -1012,6 +1013,97 @@ namespace RecoTool.Windows
             {
                 ShowError($"Export failed: {ex.Message}");
             }
+        }
+
+        private void ReportMissingInvoices_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_reconciliationViewData == null || _reconciliationViewData.Count == 0)
+                {
+                    ShowError("No reconciliation data loaded yet.");
+                    return;
+                }
+
+                var rows = _reconciliationViewData
+                    .Where(r => r.KPI == (int)KPIType.NotClaimed)
+                    .Select(r => new
+                    {
+                        Ref = !string.IsNullOrWhiteSpace(r.DWINGS_GuaranteeID) ? r.DWINGS_GuaranteeID : r.GUARANTEE_ID,
+                        Inv = !string.IsNullOrWhiteSpace(r.DWINGS_InvoiceID) ? r.DWINGS_InvoiceID : r.INVOICE_ID
+                    })
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Ref) || !string.IsNullOrWhiteSpace(x.Inv))
+                    .ToList();
+
+                if (rows.Count == 0)
+                {
+                    ShowError("There are no missing invoices to report.");
+                    return;
+                }
+
+                string subject = $"Missing invoices report - {CurrentCountryName ?? "Unknown Country"} - {DateTime.Today:yyyy-MM-dd}";
+
+                var sb = new StringBuilder();
+                sb.Append("<html><body>");
+                sb.Append("<p>Dear Correspondent,<br/><br/>");
+                sb.Append("Please find below the list of invoices that remain missing in our records. Could you kindly review and provide the missing items or advise on their status?<br/><br/>");
+                sb.Append("Thank you in advance.<br/><br/></p>");
+                sb.Append("<table style='border-collapse:collapse;font-family:Segoe UI, Arial, sans-serif;font-size:12px'>");
+                sb.Append("<thead><tr>");
+                sb.Append("<th style='border:1px solid #ccc;padding:6px 8px;background:#f5f5f5;text-align:left'>DWINGS REFERENCE</th>");
+                sb.Append("<th style='border:1px solid #ccc;padding:6px 8px;background:#f5f5f5;text-align:left'>INVOICE_ID</th>");
+                sb.Append("</tr></thead><tbody>");
+                foreach (var x in rows)
+                {
+                    sb.Append("<tr>");
+                    sb.AppendFormat("<td style='border:1px solid #ccc;padding:6px 8px'>{0}</td>", HtmlEncode(x.Ref));
+                    sb.AppendFormat("<td style='border:1px solid #ccc;padding:6px 8px'>{0}</td>", HtmlEncode(x.Inv));
+                    sb.Append("</tr>");
+                }
+                sb.Append("</tbody></table>");
+                sb.Append("<p><br/>Best regards,</p>");
+                sb.Append("</body></html>");
+                string bodyHtml = sb.ToString();
+
+                // Create Outlook email via late binding to avoid COM reference requirement
+                var outlookType = Type.GetTypeFromProgID("Outlook.Application");
+                if (outlookType == null)
+                {
+                    ShowError("Microsoft Outlook is not installed or not available on this machine.");
+                    return;
+                }
+
+                dynamic outlookApp = Activator.CreateInstance(outlookType);
+                if (outlookApp == null)
+                {
+                    ShowError("Failed to start Microsoft Outlook.");
+                    return;
+                }
+
+                dynamic mail = outlookApp.CreateItem(0); // 0 = olMailItem
+                mail.Subject = subject;
+
+                // Display first to allow default signature to load, then prepend our content
+                mail.Display(false);
+                string signature = string.Empty;
+                try { signature = mail.HTMLBody as string ?? string.Empty; } catch { signature = string.Empty; }
+                mail.HTMLBody = bodyHtml + signature;
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Unable to compose Outlook email: {ex.Message}");
+            }
+        }
+
+        private static string HtmlEncode(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+            return s
+                .Replace("&", "&amp;")
+                .Replace("<", "&lt;")
+                .Replace(">", "&gt;")
+                .Replace("\"", "&quot;")
+                .Replace("'", "&#39;");
         }
 
         private List<string> BuildFlattenedHeaders(DataTable table)
@@ -1603,7 +1695,7 @@ namespace RecoTool.Windows
 
                 foreach (var item in kpiData)
                 {
-                    var kpiName = GetKPIName(item.KPI);
+                    var kpiName = EnumHelper.GetKPIName(item.KPI, _offlineFirstService?.UserFields);
                     seriesCollection.Add(new PieSeries
                     {
                         Title = $"{kpiName} ({item.Count})",
@@ -1724,11 +1816,11 @@ namespace RecoTool.Windows
                     {
                         actionName = !string.IsNullOrWhiteSpace(uf.USR_FieldName)
                             ? uf.USR_FieldName
-                            : (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : GetActionName(item.Action));
+                            : (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : EnumHelper.GetActionName(item.Action, _offlineFirstService?.UserFields));
                     }
                     else
                     {
-                        actionName = GetActionName(item.Action);
+                        actionName = EnumHelper.GetActionName(item.Action, _offlineFirstService?.UserFields);
                     }
                     labels.Add(actionName);
                 }
@@ -2016,58 +2108,7 @@ namespace RecoTool.Windows
             }
         }
 
-        /// <summary>
-        /// Obtient le nom d'un KPI
-        /// </summary>
-        private string GetKPIName(int kpiId)
-        {
-            try
-            {
-                var fields = _offlineFirstService?.UserFields;
-                if (fields != null)
-                {
-                    var uf = fields.FirstOrDefault(u => u.USR_ID == kpiId && string.Equals(u.USR_Category, "KPI", StringComparison.OrdinalIgnoreCase));
-                    if (uf != null)
-                    {
-                        return !string.IsNullOrWhiteSpace(uf.USR_FieldName)
-                            ? uf.USR_FieldName
-                            : (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription) ? uf.USR_FieldDescription : $"KPI {kpiId}");
-                    }
-                }
-            }
-            catch { }
-            return Enum.GetName(typeof(KPIType), kpiId) ?? $"KPI {kpiId}";
-        }
-
-        /// <summary>
-        /// Obtient le nom d'une action
-        /// </summary>
-        private string GetActionName(int actionId)
-        {
-            return GetEnumDescription<ActionType>(actionId);
-        }
-
-        /// <summary>
-        /// Récupère la DescriptionAttribute d'un enum si présente, sinon renvoie le nom ou un fallback
-        /// </summary>
-        private string GetEnumDescription<TEnum>(int value) where TEnum : struct, Enum
-        {
-            var type = typeof(TEnum);
-            var name = Enum.GetName(type, value);
-            if (string.IsNullOrEmpty(name))
-            {
-                // Fallback générique
-                return type == typeof(ActionType) ? $"Action {value}" : value.ToString();
-            }
-
-            var field = type.GetField(name, BindingFlags.Public | BindingFlags.Static);
-            if (field == null) return name;
-
-            var attr = field.GetCustomAttributes(typeof(DescriptionAttribute), inherit: false)
-                            .OfType<DescriptionAttribute>()
-                            .FirstOrDefault();
-            return attr?.Description ?? name;
-        }
+        
 
         /// <summary>
         /// Affiche un message d'erreur

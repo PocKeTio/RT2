@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Data.OleDb;
+using System.Data.Common;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using OfflineFirstAccess.Data;
 using OfflineFirstAccess.Models;
@@ -20,21 +23,47 @@ namespace OfflineFirstAccess.ChangeTracking
 
         public async Task RecordChangeAsync(string tableName, string recordId, string operationType)
         {
-            var query = $"INSERT INTO [{ChangeLogTableName}] (TableName, RecordID, Operation, [Timestamp], Synchronized) VALUES (@TableName, @RecordID, @Operation, @Timestamp, @Synchronized)";
+            var query = $"INSERT INTO [{ChangeLogTableName}] ([TableName], [RecordID], [Operation], [Timestamp], [Synchronized]) VALUES (@TableName, @RecordID, @Operation, @Timestamp, @Synchronized)";
 
             using (var connection = new OleDbConnection(_localConnectionString))
             {
-                await connection.OpenAsync();
+                await OpenWithTimeoutAsync(connection, TimeSpan.FromSeconds(20));
                 using (var command = new OleDbCommand(query, connection))
                 {
-                    command.Parameters.AddWithValue("@TableName", tableName);
-                    command.Parameters.AddWithValue("@RecordID", recordId);
-                    command.Parameters.AddWithValue("@Operation", operationType);
-                    command.Parameters.AddWithValue("@Timestamp", DateTime.UtcNow.ToOADate());
-                    command.Parameters.AddWithValue("@Synchronized", false);
+                    command.CommandTimeout = 20;
+                    var pTable = command.Parameters.Add("@TableName", System.Data.OleDb.OleDbType.VarWChar);
+                    var pRecord = command.Parameters.Add("@RecordID", System.Data.OleDb.OleDbType.VarWChar);
+                    var pOp = command.Parameters.Add("@Operation", System.Data.OleDb.OleDbType.VarWChar);
+                    var pTs = command.Parameters.Add("@Timestamp", System.Data.OleDb.OleDbType.Date);
+                    var pSync = command.Parameters.Add("@Synchronized", System.Data.OleDb.OleDbType.Boolean);
+
+                    pTable.Value = tableName ?? (object)DBNull.Value;
+                    pRecord.Value = recordId ?? (object)DBNull.Value;
+                    pOp.Value = operationType ?? (object)DBNull.Value;
+                    pTs.Value = DateTime.UtcNow;
+                    pSync.Value = false;
+
                     await command.ExecuteNonQueryAsync();
                 }
             }
+        }
+
+        // Enforce hard timeouts for commands since OleDb may ignore CommandTimeout under some circumstances
+        private static async Task<DbDataReader> ExecuteReaderWithTimeoutAsync(OleDbCommand command, TimeSpan timeout)
+        {
+            if (command == null) throw new ArgumentNullException(nameof(command));
+            var conn = command.Connection;
+            if (conn == null) throw new InvalidOperationException("Command has no connection");
+            var op = command.ExecuteReaderAsync();
+            var completed = await Task.WhenAny(op, Task.Delay(timeout)) == op;
+            if (!completed)
+            {
+                Debug.WriteLine($"[ChangeTracker] Timeout reading after {timeout.TotalSeconds}s. Disposing connection.");
+                try { conn.Close(); } catch { }
+                try { conn.Dispose(); } catch { }
+                throw new TimeoutException($"Timeout reading from database after {timeout.TotalSeconds}s");
+            }
+            return await op; // propagate exceptions
         }
 
         /// <summary>
@@ -50,22 +79,23 @@ namespace OfflineFirstAccess.ChangeTracking
             if (list.Count == 0)
                 return;
 
-            var insertSql = $"INSERT INTO [{ChangeLogTableName}] (TableName, RecordID, Operation, [Timestamp], Synchronized) VALUES (@TableName, @RecordID, @Operation, @Timestamp, @Synchronized)";
+            var insertSql = $"INSERT INTO [{ChangeLogTableName}] ([TableName], [RecordID], [Operation], [Timestamp], [Synchronized]) VALUES (@TableName, @RecordID, @Operation, @Timestamp, @Synchronized)";
 
             using (var connection = new OleDbConnection(_localConnectionString))
             {
-                await connection.OpenAsync();
+                await OpenWithTimeoutAsync(connection, TimeSpan.FromSeconds(20));
                 using (var tx = connection.BeginTransaction())
                 {
                     try
                     {
                         using (var cmd = new OleDbCommand(insertSql, connection, tx))
                         {
+                            cmd.CommandTimeout = 20;
                             // Prepare parameters once and reuse
                             var pTable = cmd.Parameters.Add("@TableName", System.Data.OleDb.OleDbType.VarWChar);
                             var pRecord = cmd.Parameters.Add("@RecordID", System.Data.OleDb.OleDbType.VarWChar);
                             var pOp = cmd.Parameters.Add("@Operation", System.Data.OleDb.OleDbType.VarWChar);
-                            var pTs = cmd.Parameters.Add("@Timestamp", System.Data.OleDb.OleDbType.Double);
+                            var pTs = cmd.Parameters.Add("@Timestamp", System.Data.OleDb.OleDbType.Date);
                             var pSync = cmd.Parameters.Add("@Synchronized", System.Data.OleDb.OleDbType.Boolean);
 
                             foreach (var (table, recordId, op) in list)
@@ -73,7 +103,7 @@ namespace OfflineFirstAccess.ChangeTracking
                                 pTable.Value = table ?? (object)DBNull.Value;
                                 pRecord.Value = recordId ?? (object)DBNull.Value;
                                 pOp.Value = op ?? (object)DBNull.Value;
-                                pTs.Value = DateTime.UtcNow.ToOADate();
+                                pTs.Value = DateTime.UtcNow;
                                 pSync.Value = false;
                                 await cmd.ExecuteNonQueryAsync();
                             }
@@ -95,15 +125,16 @@ namespace OfflineFirstAccess.ChangeTracking
         public async Task<IChangeLogSession> BeginSessionAsync()
         {
             var connection = new OleDbConnection(_localConnectionString);
-            await connection.OpenAsync();
+            await OpenWithTimeoutAsync(connection, TimeSpan.FromSeconds(20));
             var tx = connection.BeginTransaction();
 
-            var insertSql = $"INSERT INTO [{ChangeLogTableName}] (TableName, RecordID, Operation, [Timestamp], Synchronized) VALUES (@TableName, @RecordID, @Operation, @Timestamp, @Synchronized)";
+            var insertSql = $"INSERT INTO [{ChangeLogTableName}] ([TableName], [RecordID], [Operation], [Timestamp], [Synchronized]) VALUES (@TableName, @RecordID, @Operation, @Timestamp, @Synchronized)";
             var cmd = new OleDbCommand(insertSql, connection, tx);
+            cmd.CommandTimeout = 20;
             var pTable = cmd.Parameters.Add("@TableName", System.Data.OleDb.OleDbType.VarWChar);
             var pRecord = cmd.Parameters.Add("@RecordID", System.Data.OleDb.OleDbType.VarWChar);
             var pOp = cmd.Parameters.Add("@Operation", System.Data.OleDb.OleDbType.VarWChar);
-            var pTs = cmd.Parameters.Add("@Timestamp", System.Data.OleDb.OleDbType.Double);
+            var pTs = cmd.Parameters.Add("@Timestamp", System.Data.OleDb.OleDbType.Date);
             var pSync = cmd.Parameters.Add("@Synchronized", System.Data.OleDb.OleDbType.Boolean);
 
             return new ChangeLogSession(connection, tx, cmd, pTable, pRecord, pOp, pTs, pSync);
@@ -139,7 +170,7 @@ namespace OfflineFirstAccess.ChangeTracking
                 _pTable.Value = tableName ?? (object)DBNull.Value;
                 _pRecord.Value = recordId ?? (object)DBNull.Value;
                 _pOp.Value = operationType ?? (object)DBNull.Value;
-                _pTs.Value = DateTime.UtcNow.ToOADate();
+                _pTs.Value = DateTime.UtcNow;
                 _pSync.Value = false;
                 await _cmd.ExecuteNonQueryAsync();
             }
@@ -178,11 +209,17 @@ namespace OfflineFirstAccess.ChangeTracking
 
             using (var connection = new OleDbConnection(_localConnectionString))
             {
-                await connection.OpenAsync();
+                Debug.WriteLine("[ChangeTracker] GetUnsyncedChangesAsync: opening connection...");
+                await OpenWithTimeoutAsync(connection, TimeSpan.FromSeconds(20));
+                Debug.WriteLine("[ChangeTracker] GetUnsyncedChangesAsync: connection opened.");
                 using (var command = new OleDbCommand(query, connection))
                 {
-                    using (var reader = await command.ExecuteReaderAsync())
+                    command.CommandTimeout = 20;
+                    Debug.WriteLine("[ChangeTracker] GetUnsyncedChangesAsync: executing reader...");
+                    using (var reader = await ExecuteReaderWithTimeoutAsync(command, TimeSpan.FromSeconds(15)))
                     {
+                        Debug.WriteLine("[ChangeTracker] GetUnsyncedChangesAsync: reader acquired, iterating...");
+                        int cnt = 0;
                         while (await reader.ReadAsync())
                         {
                             entries.Add(new ChangeLogEntry
@@ -191,12 +228,18 @@ namespace OfflineFirstAccess.ChangeTracking
                                 TableName = reader["TableName"].ToString(),
                                 RecordId = reader["RecordId"].ToString(),
                                 OperationType = reader["OperationType"].ToString(),
-                                TimestampUTC = Convert.ToDateTime(reader["TimestampUTC"])
+                                TimestampUTC = reader["TimestampUTC"] is double d
+                                    ? DateTime.FromOADate(d)
+                                    : Convert.ToDateTime(reader["TimestampUTC"]).ToUniversalTime()
                             });
+                            cnt++;
+                            if (cnt % 50 == 0) Debug.WriteLine($"[ChangeTracker] GetUnsyncedChangesAsync: {cnt} rows read...");
                         }
+                        Debug.WriteLine($"[ChangeTracker] GetUnsyncedChangesAsync: completed, {cnt} rows read.");
                     }
                 }
             }
+
             return entries;
         }
 
@@ -214,7 +257,7 @@ namespace OfflineFirstAccess.ChangeTracking
 
             using (var connection = new OleDbConnection(_localConnectionString))
             {
-                await connection.OpenAsync();
+                await OpenWithTimeoutAsync(connection, TimeSpan.FromSeconds(20));
 
                 for (int offset = 0; offset < ids.Count; offset += batchSize)
                 {
@@ -224,6 +267,7 @@ namespace OfflineFirstAccess.ChangeTracking
 
                     using (var command = new OleDbCommand(query, connection))
                     {
+                        command.CommandTimeout = 20;
                         for (int i = 0; i < batch.Count; i++)
                         {
                             var p = command.Parameters.Add($"@p{i}", System.Data.OleDb.OleDbType.Integer);
@@ -234,6 +278,22 @@ namespace OfflineFirstAccess.ChangeTracking
                     }
                 }
             }
+        }
+
+        // Helper: open with timeout to avoid hangs when the file is locked or share unavailable
+        private static async Task OpenWithTimeoutAsync(OleDbConnection connection, TimeSpan timeout)
+        {
+            if (connection == null) throw new ArgumentNullException(nameof(connection));
+            var openTask = connection.OpenAsync();
+            var completed = await Task.WhenAny(openTask, Task.Delay(timeout, CancellationToken.None)) == openTask;
+            if (!completed)
+            {
+                Debug.WriteLine($"[ChangeTracker] Timeout opening DB after {timeout.TotalSeconds}s");
+                try { connection.Close(); } catch { }
+                try { connection.Dispose(); } catch { }
+                throw new TimeoutException($"Timeout opening database connection after {timeout.TotalSeconds}s");
+            }
+            await openTask; // propagate exceptions if any
         }
     }
 }

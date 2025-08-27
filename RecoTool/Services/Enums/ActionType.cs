@@ -10,25 +10,33 @@ namespace RecoTool.Services
     public enum ActionType
     {
         [Description("Not Applicable")]
-        NA = 0,
+        NA = 1,
+        [Description("Remind")]
+        Remind = 3,
+        [Description("Refund")]
+        Refund = 9,
+        [Description("Topaze")]
+        Topaze = 8,
         [Description("Match")]
-        Match = 1,
+        Match = 6,
         [Description("Investigate")]
-        Investigate = 2,
+        Investigate = 7,
         [Description("Do Pricing")]
-        DoPricing = 3,
+        DoPricing = 13,
         [Description("To Claim")]
-        ToClaim = 4,
+        ToClaim = 11,
         [Description("Adjust")]
-        Adjust = 5,
+        Adjust = 12,
         [Description("Request")]
-        Request = 6,
+        Request = 2,
         [Description("Trigger")]
-        Trigger = 7,
+        Trigger = 4,
         [Description("Execute")]
-        Execute = 8,
+        Execute = 5,
         [Description("To Do SDD")]
-        ToDoSDD = 9
+        ToDoSDD = 10,
+        [Description("Triggered")]
+        Triggered = 34
     }
 
     #endregion

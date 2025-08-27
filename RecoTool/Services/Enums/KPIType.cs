@@ -7,13 +7,14 @@
     /// </summary>
     public enum KPIType
     {
-        ITIssues = 0,
-        PaidButNotReconciled = 1,
-        CorrespondentChargesToBeInvoiced = 2,
-        UnderInvestigation = 3,
-        NotClaimed = 4,
-        ClaimedButNotPaid = 5,
-        CorrespondentChargesPendingTrigger = 6
+        ITIssues = 19,
+        PaidButNotReconciled = 18,
+        CorrespondentChargesToBeInvoiced = 21,
+        UnderInvestigation = 22,
+        NotClaimed = 17,
+        ClaimedButNotPaid = 16,
+        CorrespondentChargesPendingTrigger = 15,
+        NotTFSC = 23
     }
 
     #endregion

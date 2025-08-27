@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using RecoTool.Models;
 using OfflineFirstAccess.Models;
 using OfflineFirstAccess.Synchronization;
+using OfflineFirstAccess.Helpers;
 using System.Threading;
 using System.Collections.Concurrent;
 using System.Data;
@@ -42,12 +43,248 @@ namespace RecoTool.Services
 
         #endregion
 
+        #region Sync State Notifications
+
+        public enum SyncStateKind
+        {
+            UpToDate,
+            SyncInProgress,
+            OfflinePending,
+            Error
+        }
+
+        /// <summary>
+        /// Effectue un File.Replace avec quelques tentatives et backoff exponentiel pour absorber les violations de partage temporaires.
+        /// Ne réessaie que sur IOException likely partage/locking. Autres exceptions sont relancées immédiatement.
+        /// </summary>
+        private async Task FileReplaceWithRetriesAsync(string sourceFileName, string destinationFileName, string destinationBackupFileName, int maxAttempts, int initialDelayMs)
+        {
+            if (maxAttempts < 1) maxAttempts = 1;
+            int attempt = 0;
+            int delay = Math.Max(50, initialDelayMs);
+            for (;;)
+            {
+                try
+                {
+                    File.Replace(sourceFileName, destinationFileName, destinationBackupFileName);
+                    return;
+                }
+                catch (IOException ioex)
+                {
+                    attempt++;
+                    // Heuristic: treat as share/lock if message hints a sharing violation or file in use
+                    var msg = ioex.Message?.ToLowerInvariant() ?? string.Empty;
+                    bool isSharing = msg.Contains("being used") || msg.Contains("process cannot access the file") || msg.Contains("sharing violation") || msg.Contains("used by another process");
+                    if (!isSharing || attempt >= maxAttempts)
+                        throw;
+                    try
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[Replace][Retry] Attempt {attempt}/{maxAttempts} failed with sharing violation. Retrying in {delay}ms...");
+                        await Task.Delay(delay);
+                    }
+                    catch { }
+                    delay = Math.Min(delay * 2, 5000);
+                }
+            }
+        }
+
+        public sealed class SyncStateChangedEventArgs : EventArgs
+        {
+            public string CountryId { get; set; }
+            public SyncStateKind State { get; set; }
+            public int PendingCount { get; set; }
+            public Exception LastError { get; set; }
+            public DateTime TimestampUtc { get; set; } = DateTime.UtcNow;
+        }
+
+        public event EventHandler<SyncStateChangedEventArgs> SyncStateChanged;
+
+        private async Task RaiseSyncStateAsync(string countryId, SyncStateKind state, int? pendingOverride = null, Exception error = null)
+        {
+            try
+            {
+                int pending = 0;
+                if (pendingOverride.HasValue)
+                {
+                    pending = pendingOverride.Value;
+                }
+                else if (!string.IsNullOrWhiteSpace(countryId))
+                {
+                    try { pending = await GetUnsyncedChangeCountAsync(countryId); } catch { pending = 0; }
+                }
+
+                var args = new SyncStateChangedEventArgs
+                {
+                    CountryId = countryId,
+                    State = state,
+                    PendingCount = pending,
+                    LastError = error,
+                    TimestampUtc = DateTime.UtcNow
+                };
+                SyncStateChanged?.Invoke(this, args);
+            }
+            catch { /* never throw from event raise */ }
+        }
+
+        #endregion
+
         #region Background Push Control
 
         // Prevent overlapping background pushes and storm of triggers
         private static readonly ConcurrentDictionary<string, SemaphoreSlim> _pushSemaphores = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<string, DateTime> _lastPushTimesUtc = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         private static readonly TimeSpan _pushCooldown = TimeSpan.FromSeconds(5);
+        // Diagnostic: track current stage per country push
+        private static readonly ConcurrentDictionary<string, string> _pushStages = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // Diagnostic: per-run identifier to avoid stale watchdog logs
+        private static readonly ConcurrentDictionary<string, Guid> _pushRunIds = new ConcurrentDictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+
+        #endregion
+
+        #region Local ChangeLog Feature Flag
+
+        // When true, ChangeLog is stored in the LOCAL database instead of the Control/Lock DB on the network.
+        // This guarantees durable pending-changes metadata when offline.
+        private readonly bool _useLocalChangeLog = true;
+
+        private string GetChangeLogConnectionString(string countryId)
+        {
+            // Always use a dedicated LOCAL ChangeLog database per country for durability
+            var path = GetLocalChangeLogDbPath(countryId);
+            return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={path};";
+        }
+
+        /// <summary>
+        /// Returns the full path to the dedicated local ChangeLog database for a country.
+        /// Example: DataDirectory\\ChangeLog_{countryId}.accdb
+        /// </summary>
+        private string GetLocalChangeLogDbPath(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId))
+                throw new ArgumentException("countryId is required", nameof(countryId));
+            string dataDirectory = GetParameter("DataDirectory");
+            if (string.IsNullOrWhiteSpace(dataDirectory))
+                throw new InvalidOperationException("Paramètre DataDirectory manquant (T_Param)");
+            string fileName = $"ChangeLog_{countryId}.accdb";
+            return Path.Combine(dataDirectory, fileName);
+        }
+
+        // Returns true if the local ChangeLog contains unsynchronized entries
+        private async Task<bool> HasUnsyncedLocalChangesAsync(string countryId)
+        {
+            if (!_useLocalChangeLog) return false;
+            if (string.IsNullOrWhiteSpace(countryId)) return false;
+            try
+            {
+                var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(countryId));
+                var list = await tracker.GetUnsyncedChangesAsync();
+                return list != null && list.Any();
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Exécute une poussée initiale des changements locaux en attente pour tous les pays connus
+        /// (ou au minimum le pays courant) si le réseau est disponible. Best-effort, parallelisé légèrement.
+        /// À appeler au démarrage de l'application, avant toute synchronisation.
+        /// </summary>
+        public async Task RunStartupPushAsync(CancellationToken token = default)
+        {
+            try
+            {
+                if (!_useLocalChangeLog) return; // uniquement pertinent si ChangeLog est local
+                if (!IsNetworkSyncAvailable) return;
+
+                // Ne pas itérer sur tous les pays: ne traiter que le pays courant
+                var cid = _currentCountryId;
+                if (string.IsNullOrWhiteSpace(cid)) return;
+                if (token.IsCancellationRequested) return;
+                try
+                {
+                    await PushReconciliationIfPendingAsync(cid);
+                }
+                catch { /* best-effort */ }
+            }
+            catch { /* best-effort */ }
+        }
+
+        #endregion
+
+        #region Per-country Sync Gate
+
+        // Serialize SynchronizeAsync per country to avoid overlapping syncs
+        private static readonly ConcurrentDictionary<string, SemaphoreSlim> _syncSemaphores = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
+        // Coalesce concurrent SynchronizeAsync calls: if one is already running, return the same Task
+        private static readonly ConcurrentDictionary<string, Task<SyncResult>> _activeSyncs = new ConcurrentDictionary<string, Task<SyncResult>>(StringComparer.OrdinalIgnoreCase);
+        // Debounce background sync requests per country
+        private static readonly ConcurrentDictionary<string, DateTime> _lastBgSyncRequestUtc = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+
+        #endregion
+
+        #region Per-country Push Gate
+
+        // Reuse _pushSemaphores declared in Background Push Control region
+        // Coalesce concurrent PushPendingChangesToNetworkAsync calls: if one is already running, return the same Task<int>
+        private static readonly ConcurrentDictionary<string, Task<int>> _activePushes = new ConcurrentDictionary<string, Task<int>>(StringComparer.OrdinalIgnoreCase);
+
+        #endregion
+
+        #region Background Sync Scheduler
+
+        /// <summary>
+        /// Schedule a background synchronization if conditions are met.
+        /// - Optional debounce via minInterval
+        /// - Optionally only if there are pending local changes
+        /// Uses the coalesced SynchronizeAsync internally, so multiple concurrent calls will share the same work.
+        /// </summary>
+        public async Task ScheduleSyncIfNeededAsync(string countryId, TimeSpan? minInterval = null, bool onlyIfPending = true, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) return;
+            if (!IsInitialized) return;
+            if (!IsNetworkSyncAvailable) return;
+
+            // Debounce
+            var now = DateTime.UtcNow;
+            var cooldown = minInterval ?? TimeSpan.FromMilliseconds(500);
+            var last = _lastBgSyncRequestUtc.GetOrAdd(countryId, DateTime.MinValue);
+            if (now - last < cooldown)
+            {
+                return; // too soon
+            }
+
+            // Check pending only if requested
+            if (onlyIfPending)
+            {
+                try
+                {
+                    var pending = await GetUnsyncedChangeCountAsync(countryId);
+                    if (pending <= 0)
+                    {
+                        return; // nothing to do
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Don't block scheduling on a transient count error; log and continue
+                    try { LogManager.Warn($"[BG-SYNC] Unable to query pending count for {countryId}: {ex.Message}"); } catch { }
+                }
+            }
+
+            _lastBgSyncRequestUtc[countryId] = now;
+
+            // Fire-and-forget, but work is coalesced by _activeSyncs inside SynchronizeAsync
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await SynchronizeAsync(countryId, cancellationToken, null);
+                }
+                catch (Exception ex)
+                {
+                    try { LogManager.Error($"[BG-SYNC] Background synchronization failed for {countryId}: {ex}", ex); } catch { }
+                }
+            });
+        }
 
         #endregion
 
@@ -67,12 +304,32 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Returns the absolute path to the remote lock/control database for the given country.
+        /// Mirrors <see cref="GetRemoteLockConnectionString"/> logic but returns a file path instead of a connection string.
+        /// </summary>
+        private string GetRemoteLockDbPath(string countryId)
+        {
+            var perCountryControl = GetControlDbPath(countryId);
+            if (!string.IsNullOrWhiteSpace(perCountryControl))
+                return perCountryControl;
+
+            string remoteDir = GetParameter("CountryDatabaseDirectory");
+            string countryDatabasePrefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            return Path.Combine(remoteDir, $"{countryDatabasePrefix}{countryId}_lock.accdb");
+        }
+
+        /// <summary>
         /// S'assure que les instantanés locaux AMBRE et DW sont à jour versus le réseau.
         /// Copie réseau -> local si différence détectée. Lecture seule; sans lock global.
         /// </summary>
         public async Task EnsureLocalSnapshotsUpToDateAsync(string countryId)
         {
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId requis", nameof(countryId));
+            // Safety: only operate on the currently selected country to avoid cross-country copies
+            if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
 
             // Helper local pour comparer et copier si besoin
             async Task CopyIfDifferentAsync(string networkPath, string localPath)
@@ -92,7 +349,7 @@ namespace RecoTool.Services
                         string tmp = localPath + ".tmp_copy";
                         File.Copy(networkPath, tmp, true);
                         // Remplace en conservant ACL; File.Replace nécessite un backup, sinon fallback move
-                        try { File.Replace(tmp, localPath, localPath + ".bak", true); }
+                        try { await FileReplaceWithRetriesAsync(tmp, localPath, localPath + ".bak", maxAttempts: 5, initialDelayMs: 200); }
                         catch
                         {
                             try { if (File.Exists(localPath)) File.Delete(localPath); } catch { }
@@ -136,61 +393,142 @@ namespace RecoTool.Services
                 // Basculer si besoin
                 if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
                 {
-                    var ok = await SetCurrentCountryAsync(countryId);
+                    var ok = await SetCurrentCountryAsync(countryId, suppressPush: true);
                     if (!ok) return false;
                 }
 
                 var cid = _currentCountryId;
+                var diag = IsDiagSyncEnabled();
 
                 // Debounce: skip if a push just happened very recently
                 var last = _lastPushTimesUtc.TryGetValue(cid, out var t) ? t : DateTime.MinValue;
                 if (DateTime.UtcNow - last < _pushCooldown)
-                    return false;
-
-                var sem = _pushSemaphores.GetOrAdd(cid, _ => new SemaphoreSlim(1, 1));
-                if (!await sem.WaitAsync(0))
                 {
-                    // Already pushing for this country
+                    if (diag)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Skipped due to cooldown. SinceLast={(DateTime.UtcNow - last).TotalSeconds:F1}s, Cooldown={_pushCooldown.TotalSeconds}s");
+                        try { LogManager.Info($"[PUSH][{cid}] Skipped due to cooldown"); } catch { }
+                    }
                     return false;
                 }
-                try
+
+                if (diag)
                 {
-                    // Re-check debounce after acquiring
-                    last = _lastPushTimesUtc.TryGetValue(cid, out t) ? t : DateTime.MinValue;
-                    if (DateTime.UtcNow - last < _pushCooldown)
-                        return false;
+                    var lastDbg = _lastPushTimesUtc.TryGetValue(cid, out var tdbg) ? tdbg : DateTime.MinValue;
+                    System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Enter PushReconciliationIfPendingAsync. NowUtc={DateTime.UtcNow:o}, LastPushUtc={lastDbg:o}");
+                    try { LogManager.Info($"[PUSH][{cid}] Enter PushReconciliationIfPendingAsync"); } catch { }
+                }
+                // Re-check debounce quickly
+                last = _lastPushTimesUtc.TryGetValue(cid, out t) ? t : DateTime.MinValue;
+                if (DateTime.UtcNow - last < _pushCooldown)
+                {
+                    if (diag)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Skipped after debounce. SinceLast={(DateTime.UtcNow - last).TotalSeconds:F1}s");
+                        try { LogManager.Info($"[PUSH][{cid}] Skipped after debounce"); } catch { }
+                    }
+                    return false;
+                }
 
                     // Vérifier réseau et lock
-                    if (!IsNetworkSyncAvailable) return false;
+                    if (!IsNetworkSyncAvailable)
+                    {
+                        // offline: report pending status if any
+                        try { await RaiseSyncStateAsync(cid, SyncStateKind.OfflinePending); } catch { }
+                        if (diag)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Skipped: network unavailable");
+                            try { LogManager.Info($"[PUSH][{cid}] Skipped: network unavailable"); } catch { }
+                        }
+                        return false;
+                    }
                     bool lockActive = false; try { lockActive = await IsGlobalLockActiveAsync(); } catch { lockActive = false; }
-                    if (lockActive) return false;
+                    if (lockActive)
+                    {
+                        try { await RaiseSyncStateAsync(cid, SyncStateKind.OfflinePending); } catch { }
+                        if (diag)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Skipped: global lock active");
+                            try { LogManager.Info($"[PUSH][{cid}] Skipped: global lock active"); } catch { }
+                        }
+                        return false;
+                    }
 
-                    // Y a-t-il des changements non synchronisés ?
+                    // Y a-t-il des changements non synchronisés ? (filtrer sur T_Reconciliation uniquement)
                     bool hasPending = true;
+                    List<OfflineFirstAccess.Models.ChangeLogEntry> unsynced = null;
+                    List<OfflineFirstAccess.Models.ChangeLogEntry> recoUnsynced = null;
                     try
                     {
-                        var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(cid));
-                        var unsynced = await tracker.GetUnsyncedChangesAsync();
-                        hasPending = unsynced != null && unsynced.Any();
+                        var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(cid));
+                        var tmp = await tracker.GetUnsyncedChangesAsync();
+                        unsynced = tmp?.ToList();
+                        // Ne pousser que T_Reconciliation (plus simple et ciblé)
+                        recoUnsynced = unsynced?.Where(e => string.Equals(e?.TableName, "T_Reconciliation", StringComparison.OrdinalIgnoreCase)).ToList()
+                                       ?? new List<OfflineFirstAccess.Models.ChangeLogEntry>();
+                        hasPending = recoUnsynced.Any();
+                        if (diag)
+                        {
+                            var cnt = recoUnsynced?.Count() ?? 0;
+                            System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Pending check (T_Reconciliation): {cnt} unsynced change(s)");
+                            try { LogManager.Info($"[PUSH][{cid}] Pending check (T_Reconciliation): {cnt} unsynced"); } catch { }
+                        }
+                        if (!hasPending)
+                        {
+                            try { await RaiseSyncStateAsync(cid, SyncStateKind.UpToDate, pendingOverride: 0); } catch { }
+                        }
+                        else
+                        {
+                            try { await RaiseSyncStateAsync(cid, SyncStateKind.SyncInProgress, pendingOverride: recoUnsynced.Count); } catch { }
+                        }
                     }
                     catch { /* en cas d'erreur, tenter quand même */ }
 
                     if (!hasPending)
                     {
                         _lastPushTimesUtc[cid] = DateTime.UtcNow;
+                        if (diag)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] No pending changes for T_Reconciliation. Marking UpToDate and exiting.");
+                            try { LogManager.Info($"[PUSH][{cid}] No pending changes for T_Reconciliation"); } catch { }
+                        }
                         return true;
                     }
 
-                    var res = await SynchronizeAsync(cid, null, null);
-                    _lastPushTimesUtc[cid] = DateTime.UtcNow;
-                    return res != null && res.Success;
-                }
-                finally
+                // Appel du push granulaire (T_Reconciliation uniquement) AVEC verrou global court pour éviter la course avec import
+                if (diag)
                 {
-                    try { sem.Release(); } catch { }
+                    System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Attempting short global lock for Lite push...");
+                    try { LogManager.Info($"[PUSH][{cid}] Attempting short global lock for Lite push"); } catch { }
                 }
+                using (var gl = await AcquireGlobalLockAsync(cid, "LitePush-Reconciliation", TimeSpan.FromSeconds(8)))
+                {
+                    if (diag)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Global lock acquired. Invoking PushPendingChangesToNetworkAsync (Lite/T_Reconciliation)...");
+                        try { LogManager.Info($"[PUSH][{cid}] Global lock acquired. Invoking PushPendingChangesToNetworkAsync (Lite/T_Reconciliation)"); } catch { }
+                    }
+                    await PushPendingChangesToNetworkAsync(cid, assumeLockHeld: false, source: nameof(PushReconciliationIfPendingAsync) + "/Lite", preloadedUnsynced: recoUnsynced);
+                }
+                _lastPushTimesUtc[cid] = DateTime.UtcNow;
+                try { await RaiseSyncStateAsync(cid, SyncStateKind.UpToDate, pendingOverride: 0); } catch { }
+                // Consider success if operation completed (even if 0 changes were pushed)
+
+                // Completed successfully
+                try { await RaiseSyncStateAsync(cid, SyncStateKind.UpToDate, pendingOverride: 0); } catch { }
+                if (diag)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Completed PushReconciliationIfPendingAsync successfully.");
+                    try { LogManager.Info($"[PUSH][{cid}] Completed PushReconciliationIfPendingAsync"); } catch { }
+                }
+                return true;
             }
-            catch { return false; }
+            catch (Exception ex)
+            {
+                try { await RaiseSyncStateAsync(countryId, SyncStateKind.Error, error: ex); } catch { }
+                try { LogManager.Error($"[PUSH] PushReconciliationIfPendingAsync failed for {countryId}: {ex}", ex); } catch { }
+                return false;
+            }
         }
 
         /// <summary>
@@ -462,6 +800,60 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Deletes all synchronized ChangeLog entries from the control/lock database and then attempts a Compact & Repair.
+        /// Safe to call multiple times. Should be called while holding the global lock to avoid external access.
+        /// </summary>
+        public async Task CleanupChangeLogAndCompactAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            // 1) Delete synchronized rows from ChangeLog (best-effort if table exists)
+            try
+            {
+                var connStr = GetRemoteLockConnectionString(countryId);
+                using (var connection = new OleDbConnection(connStr))
+                {
+                    await connection.OpenAsync();
+
+                    // Verify table exists before deleting
+                    var schema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new object[] { null, null, null, "TABLE" });
+                    bool hasChangeLog = schema != null && schema.Rows.OfType<System.Data.DataRow>()
+                        .Any(r => string.Equals(Convert.ToString(r["TABLE_NAME"]), "ChangeLog", StringComparison.OrdinalIgnoreCase));
+                    if (hasChangeLog)
+                    {
+                        using (var cmd = new OleDbCommand("DELETE FROM ChangeLog WHERE Synchronized = TRUE", connection))
+                        {
+                            try { await cmd.ExecuteNonQueryAsync(); } catch { /* ignore delete errors */ }
+                        }
+                    }
+                }
+            }
+            catch { /* best-effort cleanup */ }
+
+            // 2) Compact & Repair the lock/control database to reclaim space
+            try
+            {
+                var dbPath = GetRemoteLockDbPath(countryId);
+                var compacted = await TryCompactAccessDatabaseAsync(dbPath);
+                if (!string.IsNullOrWhiteSpace(compacted) && File.Exists(compacted))
+                {
+                    try
+                    {
+                        await FileReplaceWithRetriesAsync(compacted, dbPath, dbPath + ".bak", maxAttempts: 6, initialDelayMs: 300);
+                    }
+                    catch
+                    {
+                        try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch { }
+                        File.Move(compacted, dbPath);
+                    }
+                    // Cleanup backup if present
+                    try { var bak = dbPath + ".bak"; if (File.Exists(bak)) File.Delete(bak); } catch { }
+                }
+            }
+            catch { /* ignore compaction errors */ }
+        }
+
+        /// <summary>
         /// Chaîne de connexion vers la base locale d'un pays donné.
         /// Ne nécessite pas que le pays soit le courant.
         /// </summary>
@@ -485,7 +877,7 @@ namespace RecoTool.Services
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
             string iso = utcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture);
 
-            // 1) Tentative sur la base de contrôle (centralisée)
+            // 1) Tentative sur la base de contrôle (centralisée) — best effort, ne bloque pas la suite
             try
             {
                 var controlConnStr = GetControlConnectionString(countryId);
@@ -513,26 +905,25 @@ namespace RecoTool.Services
 
                     using (var update = new OleDbCommand("UPDATE _SyncConfig SET ConfigValue = @val WHERE ConfigKey = 'LastSyncTimestamp'", connection))
                     {
-                        update.Parameters.AddWithValue("@val", iso);
+                        update.Parameters.Add(new OleDbParameter("@val", OleDbType.LongVarWChar) { Value = (object)iso ?? DBNull.Value });
                         int rows = await update.ExecuteNonQueryAsync();
                         if (rows == 0)
                         {
                             using (var insert = new OleDbCommand("INSERT INTO _SyncConfig (ConfigKey, ConfigValue) VALUES ('LastSyncTimestamp', @val)", connection))
                             {
-                                insert.Parameters.AddWithValue("@val", iso);
+                                insert.Parameters.Add(new OleDbParameter("@val", OleDbType.LongVarWChar) { Value = (object)iso ?? DBNull.Value });
                                 await insert.ExecuteNonQueryAsync();
                             }
                         }
                     }
                 }
-                return;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[SYNC][WARN] Echec mise à jour LastSyncTimestamp sur la base de contrôle ({countryId}): {ex.Message}. Tentative sur la base locale.");
             }
 
-            // 2) Fallback: stocker l'ancre dans la base LOCALE du pays
+            // 2) Toujours écrire l'ancre dans la base LOCALE du pays (source pour le SyncOrchestrator)
             try
             {
                 var localConnStr = GetCountryConnectionString(countryId);
@@ -554,13 +945,13 @@ namespace RecoTool.Services
 
                     using (var update = new OleDbCommand("UPDATE _SyncConfig SET ConfigValue = @val WHERE ConfigKey = 'LastSyncTimestamp'", connection))
                     {
-                        update.Parameters.AddWithValue("@val", iso);
+                        update.Parameters.Add(new OleDbParameter("@val", OleDbType.LongVarWChar) { Value = (object)iso ?? DBNull.Value });
                         int rows = await update.ExecuteNonQueryAsync();
                         if (rows == 0)
                         {
                             using (var insert = new OleDbCommand("INSERT INTO _SyncConfig (ConfigKey, ConfigValue) VALUES ('LastSyncTimestamp', @val)", connection))
                             {
-                                insert.Parameters.AddWithValue("@val", iso);
+                                insert.Parameters.Add(new OleDbParameter("@val", OleDbType.LongVarWChar) { Value = (object)iso ?? DBNull.Value });
                                 await insert.ExecuteNonQueryAsync();
                             }
                         }
@@ -594,7 +985,28 @@ namespace RecoTool.Services
             if (toAdd.Count == 0 && toUpdate.Count == 0 && toArchive.Count == 0)
                 return true;
 
-            using (var connection = new OleDbConnection(GetLocalConnectionString()))
+            // Choose target DB based on involved tables.
+            // If the batch exclusively targets AMBRE table, use the AMBRE local DB.
+            // Otherwise use the default local (reconciliation) DB.
+            var allTables = toAdd.Select(e => e.TableName)
+                                 .Concat(toUpdate.Select(e => e.TableName))
+                                 .Concat(toArchive.Select(e => e.TableName))
+                                 .Where(t => !string.IsNullOrWhiteSpace(t))
+                                 .Distinct(StringComparer.OrdinalIgnoreCase)
+                                 .ToList();
+
+            string selectedConnStr;
+            if (allTables.Count == 1 && string.Equals(allTables[0], "T_Data_Ambre", StringComparison.OrdinalIgnoreCase))
+            {
+                var ambrePath = GetLocalAmbreDbPath(identifier);
+                selectedConnStr = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={ambrePath};";
+            }
+            else
+            {
+                selectedConnStr = GetLocalConnectionString();
+            }
+
+            using (var connection = new OleDbConnection(selectedConnStr))
             {
                 await connection.OpenAsync();
                 using (var tx = connection.BeginTransaction())
@@ -602,6 +1014,7 @@ namespace RecoTool.Services
                     var changeTuples = new List<(string TableName, string RecordId, string OperationType)>();
                     // Caches must be declared outside try to be visible in finally
                     var tableColsCache = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+                    var colTypeCache = new Dictionary<string, Dictionary<string, OleDbType>>(StringComparer.OrdinalIgnoreCase);
                     var archiveCmdCache = new Dictionary<string, OleDbCommand>(StringComparer.OrdinalIgnoreCase);
                     var insertCmdCache = new Dictionary<string, (OleDbCommand Cmd, List<string> Cols)>(StringComparer.OrdinalIgnoreCase);
                     var updateCmdCache = new Dictionary<string, (OleDbCommand Cmd, List<string> Cols, int KeyIndex)>(StringComparer.OrdinalIgnoreCase);
@@ -681,10 +1094,18 @@ namespace RecoTool.Services
                                 var paramList = string.Join(", ", validCols.Select((c, i) => $"@p{i}"));
                                 var sql = $"INSERT INTO [{entity.TableName}] ({colList}) VALUES ({paramList})";
                                 var cmd = new OleDbCommand(sql, connection, tx);
+                                var typeMap = colTypeCache.TryGetValue(entity.TableName, out var tm)
+                                    ? tm
+                                    : (colTypeCache[entity.TableName] = await GetColumnTypesAsync(connection, entity.TableName));
                                 for (int i = 0; i < validCols.Count; i++)
                                 {
-                                    // Initialize parameters once
-                                    cmd.Parameters.AddWithValue($"@p{i}", DBNull.Value);
+                                    var colName = validCols[i];
+                                    if (!typeMap.TryGetValue(colName, out var t))
+                                    {
+                                        t = InferOleDbTypeFromValue(entity.Properties[colName]);
+                                    }
+                                    var p = new OleDbParameter($"@p{i}", t) { Value = DBNull.Value };
+                                    cmd.Parameters.Add(p);
                                 }
 
                                 insertCmdCache[sig] = (cmd, validCols.ToList());
@@ -693,8 +1114,8 @@ namespace RecoTool.Services
                             // Set parameter values for this row
                             for (int i = 0; i < tup.Cols.Count; i++)
                             {
-                                var prepared = PrepareValueForDatabase(entity.Properties[tup.Cols[i]]);
-                                tup.Cmd.Parameters[i].Value = prepared;
+                                var p = tup.Cmd.Parameters[i];
+                                p.Value = CoerceValueForOleDb(entity.Properties[tup.Cols[i]], p.OleDbType);
                             }
                             await tup.Cmd.ExecuteNonQueryAsync();
                             // Determine PK value for change logging: prefer provided PK else fetch last identity
@@ -857,15 +1278,27 @@ namespace RecoTool.Services
                                     ? $"UPDATE [{entity.TableName}] SET {setList} WHERE [{keyColumn}] = @key AND ([CRC] <> @crc OR [CRC] IS NULL OR @crc IS NULL)"
                                     : $"UPDATE [{entity.TableName}] SET {setList} WHERE [{keyColumn}] = @key";
                                 var cmd = new OleDbCommand(sql, connection, tx);
+                                var typeMap = colTypeCache.TryGetValue(entity.TableName, out var tm)
+                                    ? tm
+                                    : (colTypeCache[entity.TableName] = await GetColumnTypesAsync(connection, entity.TableName));
                                 for (int i = 0; i < updatable.Count; i++)
                                 {
-                                    cmd.Parameters.AddWithValue($"@p{i}", DBNull.Value);
+                                    var colName = updatable[i];
+                                    if (!typeMap.TryGetValue(colName, out var t)) t = InferOleDbTypeFromValue(entity.Properties.ContainsKey(colName) ? entity.Properties[colName] : null);
+                                    var p = new OleDbParameter($"@p{i}", t) { Value = DBNull.Value };
+                                    cmd.Parameters.Add(p);
                                 }
-                                // key parameter at the end
-                                cmd.Parameters.AddWithValue("@key", DBNull.Value);
+                                // key parameter at the end (typed)
+                                {
+                                    var keyType = typeMap.TryGetValue(keyColumn, out var kt) ? kt : InferOleDbTypeFromValue(keyValue);
+                                    var pKey = new OleDbParameter("@key", keyType) { Value = DBNull.Value };
+                                    cmd.Parameters.Add(pKey);
+                                }
                                 if (hasCrc)
                                 {
-                                    cmd.Parameters.AddWithValue("@crc", DBNull.Value);
+                                    var crcType = typeMap.TryGetValue("CRC", out var ct) ? ct : OleDbType.Integer;
+                                    var pCrc = new OleDbParameter("@crc", crcType) { Value = DBNull.Value };
+                                    cmd.Parameters.Add(pCrc);
                                 }
                                 updateCmdCache[upSig] = (cmd, updatable.ToList(), updatable.Count);
                                 upd = updateCmdCache[upSig];
@@ -873,20 +1306,27 @@ namespace RecoTool.Services
                             // Set parameters for this row
                             for (int i = 0; i < upd.Cols.Count; i++)
                             {
-                                var prepared = PrepareValueForDatabase(entity.Properties[upd.Cols[i]]);
-                                upd.Cmd.Parameters[i].Value = prepared;
+                                var p = upd.Cmd.Parameters[i];
+                                p.Value = CoerceValueForOleDb(entity.Properties[upd.Cols[i]], p.OleDbType);
                             }
-                            upd.Cmd.Parameters[upd.KeyIndex].Value = keyValue ?? DBNull.Value;
+                            {
+                                var pKey = upd.Cmd.Parameters[upd.KeyIndex];
+                                pKey.Value = CoerceValueForOleDb(keyValue, pKey.OleDbType);
+                            }
                             if (hasCrc)
                             {
                                 // last parameter is @crc
-                                upd.Cmd.Parameters[upd.KeyIndex + 1].Value = crcValue.HasValue ? (object)crcValue.Value : DBNull.Value;
+                                var pCrc = upd.Cmd.Parameters[upd.KeyIndex + 1];
+                                pCrc.Value = crcValue.HasValue ? (object)CoerceValueForOleDb(crcValue.Value, pCrc.OleDbType) : DBNull.Value;
                             }
                             var affected = await upd.Cmd.ExecuteNonQueryAsync();
                             if (affected > 0 && !suppressChangeLog)
                             {
                                 string chKey = keyValue?.ToString();
-                                changeTuples.Add((entity.TableName, chKey, "UPDATE"));
+                                // Encode the exact columns updated so the sync push constructs a partial update payload
+                                var opColumns = updatable ?? new List<string>();
+                                var opType = $"UPDATE({string.Join(",", opColumns)})";
+                                changeTuples.Add((entity.TableName, chKey, opType));
                             }
                         }
 
@@ -916,23 +1356,43 @@ namespace RecoTool.Services
                                     if (lastModCol != null) { setParts.Add($"[{lastModCol}] = @p1"); paramNames.Add("@p1"); }
                                     var sql = $"UPDATE [{entity.TableName}] SET {string.Join(", ", setParts)} WHERE [{keyColumn}] = @key";
                                     cmd = new OleDbCommand(sql, connection, tx);
-                                    // Prepare parameters in fixed order if present
-                                    if (hasDeleteDate) cmd.Parameters.AddWithValue("@p0", PrepareValueForDatabase(nowUtc));
-                                    if (lastModCol != null) cmd.Parameters.AddWithValue("@p1", PrepareValueForDatabase(nowUtc));
-                                    cmd.Parameters.AddWithValue("@key", DBNull.Value); // placeholder, set per row
+                                    var typeMap = colTypeCache.TryGetValue(entity.TableName, out var tm)
+                                        ? tm
+                                        : (colTypeCache[entity.TableName] = await GetColumnTypesAsync(connection, entity.TableName));
+                                    // Prepare parameters in fixed order if present (typed)
+                                    if (hasDeleteDate)
+                                    {
+                                        var t = typeMap.TryGetValue("DeleteDate", out var dt) ? dt : OleDbType.Date;
+                                        var p0 = new OleDbParameter("@p0", t) { Value = CoerceValueForOleDb(nowUtc, t) };
+                                        cmd.Parameters.Add(p0);
+                                    }
+                                    if (lastModCol != null)
+                                    {
+                                        var t = typeMap.TryGetValue(lastModCol, out var lt) ? lt : OleDbType.Date;
+                                        var p1 = new OleDbParameter("@p1", t) { Value = CoerceValueForOleDb(nowUtc, t) };
+                                        cmd.Parameters.Add(p1);
+                                    }
+                                    {
+                                        var keyType = typeMap.TryGetValue(keyColumn, out var kt) ? kt : InferOleDbTypeFromValue(keyValue);
+                                        var pk = new OleDbParameter("@key", keyType) { Value = DBNull.Value };
+                                        cmd.Parameters.Add(pk);
+                                    }
                                     archiveCmdCache[entity.TableName] = cmd;
                                 }
                                 // Update parameter values per row
                                 int baseIndex = 0;
                                 if (hasDeleteDate)
                                 {
-                                    cmd.Parameters[baseIndex++].Value = PrepareValueForDatabase(nowUtc);
+                                    var p0 = cmd.Parameters[baseIndex++];
+                                    p0.Value = CoerceValueForOleDb(nowUtc, p0.OleDbType);
                                 }
                                 if (lastModCol != null)
                                 {
-                                    cmd.Parameters[baseIndex++].Value = PrepareValueForDatabase(nowUtc);
+                                    var p1 = cmd.Parameters[baseIndex++];
+                                    p1.Value = CoerceValueForOleDb(nowUtc, p1.OleDbType);
                                 }
-                                cmd.Parameters[baseIndex].Value = keyValue ?? DBNull.Value; // @key
+                                var pkParam = cmd.Parameters[baseIndex];
+                                pkParam.Value = CoerceValueForOleDb(keyValue, pkParam.OleDbType); // @key
                                 await cmd.ExecuteNonQueryAsync();
                             }
                             else
@@ -940,7 +1400,12 @@ namespace RecoTool.Services
                                 var sql = $"DELETE FROM [{entity.TableName}] WHERE [{keyColumn}] = @key";
                                 using (var cmd = new OleDbCommand(sql, connection, tx))
                                 {
-                                    cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
+                                    var typeMap = colTypeCache.TryGetValue(entity.TableName, out var tm)
+                                        ? tm
+                                        : (colTypeCache[entity.TableName] = await GetColumnTypesAsync(connection, entity.TableName));
+                                    var keyType = typeMap.TryGetValue(keyColumn, out var kt) ? kt : InferOleDbTypeFromValue(keyValue);
+                                    var p = new OleDbParameter("@key", keyType) { Value = CoerceValueForOleDb(keyValue, keyType) };
+                                    cmd.Parameters.Add(p);
                                     await cmd.ExecuteNonQueryAsync();
                                 }
                             }
@@ -951,10 +1416,10 @@ namespace RecoTool.Services
 
                         tx.Commit();
 
-                        // Record change logs in the LOCK database (ChangeLog resides in lock DB)
+                        // Record change logs (local or control DB depending on flag)
                         if (!suppressChangeLog && changeTuples.Count > 0)
                         {
-                            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId));
+                            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(_currentCountryId));
                             await tracker.RecordChangesAsync(changeTuples);
                         }
                         return true;
@@ -1039,6 +1504,7 @@ namespace RecoTool.Services
             private readonly int _expirySeconds;
             private bool _released;
             private System.Timers.Timer _heartbeat;
+            private int _hbRunning; // 0 = idle, 1 = executing
 
             public GlobalLockHandle(string connStr, string lockId, int expirySeconds)
             {
@@ -1058,6 +1524,9 @@ namespace RecoTool.Services
                     _heartbeat.AutoReset = true;
                     _heartbeat.Elapsed += (s, e) =>
                     {
+                        // Prevent overlapping ticks or post-release renewals
+                        if (Volatile.Read(ref _released)) return;
+                        if (Interlocked.Exchange(ref _hbRunning, 1) == 1) return;
                         try
                         {
                             var newExpiry = DateTime.UtcNow.AddSeconds(_expirySeconds);
@@ -1066,13 +1535,18 @@ namespace RecoTool.Services
                                 conn.Open();
                                 using (var cmd = new OleDbCommand("UPDATE SyncLocks SET ExpiresAt = ? WHERE LockID = ?", conn))
                                 {
-                                    cmd.Parameters.AddWithValue("@ExpiresAt", newExpiry.ToOADate());
-                                    cmd.Parameters.AddWithValue("@LockID", _lockId);
+                                    var pExpires = new OleDbParameter("@ExpiresAt", OleDbType.Date) { Value = CoerceValueForOleDb(newExpiry, OleDbType.Date) };
+                                    var pLock = new OleDbParameter("@LockID", OleDbType.VarWChar, 36) { Value = (object)_lockId ?? DBNull.Value };
+                                    cmd.Parameters.Add(pExpires);
+                                    cmd.Parameters.Add(pLock);
+                                    var corr = Guid.NewGuid();
+                                    LogOleDbCommand("GlobalLockHandle.Heartbeat", cmd, corr);
                                     cmd.ExecuteNonQuery();
                                 }
                             }
                         }
                         catch { /* best-effort */ }
+                        finally { Interlocked.Exchange(ref _hbRunning, 0); }
                     };
                     _heartbeat.Start();
                 }
@@ -1081,7 +1555,7 @@ namespace RecoTool.Services
 
             public void Dispose()
             {
-                if (_released) return;
+                if (Volatile.Read(ref _released)) return;
                 try
                 {
                     try { _heartbeat?.Stop(); _heartbeat?.Dispose(); } catch { }
@@ -1090,14 +1564,38 @@ namespace RecoTool.Services
                         conn.Open();
                         using (var cmd = new OleDbCommand("DELETE FROM SyncLocks WHERE LockID = ?", conn))
                         {
-                            cmd.Parameters.AddWithValue("@LockID", _lockId);
+                            var pLock = new OleDbParameter("@LockID", OleDbType.VarWChar, 36) { Value = (object)_lockId ?? DBNull.Value };
+                            cmd.Parameters.Add(pLock);
+                            var corr = Guid.NewGuid();
+                            LogOleDbCommand("GlobalLockHandle.Dispose", cmd, corr);
                             cmd.ExecuteNonQuery();
                         }
                     }
                 }
                 catch { /* best-effort */ }
-                finally { _released = true; }
+                finally { Volatile.Write(ref _released, true); }
             }
+        }
+
+        // Lightweight diagnostic helper for OleDb commands
+        private static void LogOleDbCommand(string where, OleDbCommand cmd, Guid correlationId)
+        {
+            try
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine($"[{correlationId}] {where} SQL: {cmd?.CommandText}");
+                if (cmd != null)
+                {
+                    foreach (OleDbParameter p in cmd.Parameters)
+                    {
+                        var v = p?.Value;
+                        var vs = v == null ? "<null>" : (v == DBNull.Value ? "<DBNULL>" : v.ToString());
+                        sb.AppendLine($"[{correlationId}]   {p?.ParameterName} ({p?.OleDbType}): {vs}");
+                    }
+                }
+                System.Diagnostics.Debug.WriteLine(sb.ToString());
+            }
+            catch { /* logging must never throw */ }
         }
 
         private async Task<IDisposable> AcquireGlobalLockInternalAsync(string identifier, string reason, int timeoutSeconds, CancellationToken token)
@@ -1133,7 +1631,7 @@ namespace RecoTool.Services
                         // Cleanup expired locks
                         using (var cleanup = new OleDbCommand("DELETE FROM SyncLocks WHERE ExpiresAt IS NOT NULL AND ExpiresAt < ?", connection))
                         {
-                            cleanup.Parameters.AddWithValue("@ExpiresAt", now.ToOADate());
+                            cleanup.Parameters.Add(new OleDbParameter("@ExpiresAt", OleDbType.Date) { Value = now });
                             await cleanup.ExecuteNonQueryAsync();
                         }
 
@@ -1142,8 +1640,8 @@ namespace RecoTool.Services
                         {
                             using (var selectSelf = new OleDbCommand("SELECT LockID, ProcessId FROM SyncLocks WHERE (ExpiresAt IS NULL OR ExpiresAt > ?) AND MachineName = ?", connection))
                             {
-                                selectSelf.Parameters.AddWithValue("@Now", now.ToOADate());
-                                selectSelf.Parameters.AddWithValue("@MachineName", Environment.MachineName);
+                                selectSelf.Parameters.Add(new OleDbParameter("@Now", OleDbType.Date) { Value = now });
+                                selectSelf.Parameters.Add(new OleDbParameter("@MachineName", OleDbType.VarWChar, 255) { Value = (object)Environment.MachineName ?? DBNull.Value });
                                 using (var reader = await selectSelf.ExecuteReaderAsync())
                                 {
                                     var staleIds = new List<string>();
@@ -1165,7 +1663,7 @@ namespace RecoTool.Services
                                     {
                                         using (var del = new OleDbCommand("DELETE FROM SyncLocks WHERE LockID = ?", connection))
                                         {
-                                            del.Parameters.AddWithValue("@LockID", id);
+                                            del.Parameters.Add(new OleDbParameter("@LockID", OleDbType.VarWChar, 36) { Value = (object)id ?? DBNull.Value });
                                             await del.ExecuteNonQueryAsync();
                                         }
                                     }
@@ -1177,7 +1675,7 @@ namespace RecoTool.Services
                         // Check if a global lock is already held
                         using (var check = new OleDbCommand("SELECT COUNT(*) FROM SyncLocks WHERE ExpiresAt IS NULL OR ExpiresAt > ?", connection))
                         {
-                            check.Parameters.AddWithValue("@Now", now.ToOADate());
+                            check.Parameters.Add(new OleDbParameter("@Now", OleDbType.Date) { Value = now });
                             var countObj = await check.ExecuteScalarAsync();
                             int active = 0;
                             if (countObj != null && countObj != DBNull.Value)
@@ -1188,12 +1686,12 @@ namespace RecoTool.Services
                                 // Try to acquire the lock
                                 using (var command = new OleDbCommand("INSERT INTO SyncLocks (LockID, Reason, CreatedAt, ExpiresAt, MachineName, ProcessId) VALUES (?, ?, ?, ?, ?, ?)", connection))
                                 {
-                                    command.Parameters.AddWithValue("@LockID", lockId);
-                                    command.Parameters.AddWithValue("@Reason", reason ?? "Global");
-                                    command.Parameters.AddWithValue("@CreatedAt", now.ToOADate());
-                                    command.Parameters.AddWithValue("@ExpiresAt", expiresAt.ToOADate());
-                                    command.Parameters.AddWithValue("@MachineName", Environment.MachineName);
-                                    command.Parameters.AddWithValue("@ProcessId", System.Diagnostics.Process.GetCurrentProcess().Id);
+                                    command.Parameters.Add(new OleDbParameter("@LockID", OleDbType.VarWChar, 36) { Value = lockId });
+                                    command.Parameters.Add(new OleDbParameter("@Reason", OleDbType.VarWChar, 255) { Value = (object)(reason ?? "Global") ?? DBNull.Value });
+                                    command.Parameters.Add(new OleDbParameter("@CreatedAt", OleDbType.Date) { Value = now });
+                                    command.Parameters.Add(new OleDbParameter("@ExpiresAt", OleDbType.Date) { Value = expiresAt });
+                                    command.Parameters.Add(new OleDbParameter("@MachineName", OleDbType.VarWChar, 255) { Value = (object)Environment.MachineName ?? DBNull.Value });
+                                    command.Parameters.Add(new OleDbParameter("@ProcessId", OleDbType.Integer) { Value = System.Diagnostics.Process.GetCurrentProcess().Id });
 
                                     await command.ExecuteNonQueryAsync();
                                 }
@@ -1203,8 +1701,8 @@ namespace RecoTool.Services
                                 {
                                     using (var set = new OleDbCommand("UPDATE SyncLocks SET SyncStatus = ? WHERE LockID = ?", connection))
                                     {
-                                        set.Parameters.AddWithValue("@SyncStatus", "Acquired");
-                                        set.Parameters.AddWithValue("@LockID", lockId);
+                                        set.Parameters.Add(new OleDbParameter("@SyncStatus", OleDbType.VarWChar, 50) { Value = "Acquired" });
+                                        set.Parameters.Add(new OleDbParameter("@LockID", OleDbType.VarWChar, 36) { Value = lockId });
                                         await set.ExecuteNonQueryAsync();
                                     }
                                 }
@@ -1262,13 +1760,13 @@ namespace RecoTool.Services
                     // Nettoyer les verrous expirés puis vérifier l'existence d'un verrou actif
                     using (var cleanup = new OleDbCommand("DELETE FROM SyncLocks WHERE ExpiresAt IS NOT NULL AND ExpiresAt < ?", connection))
                     {
-                        cleanup.Parameters.AddWithValue("@ExpiresAt", now.ToOADate());
+                        cleanup.Parameters.Add(new OleDbParameter("@ExpiresAt", OleDbType.Date) { Value = now });
                         await cleanup.ExecuteNonQueryAsync();
                     }
 
                     using (var check = new OleDbCommand("SELECT COUNT(*) FROM SyncLocks WHERE ExpiresAt IS NULL OR ExpiresAt > ?", connection))
                     {
-                        check.Parameters.AddWithValue("@Now", now.ToOADate());
+                        check.Parameters.Add(new OleDbParameter("@Now", OleDbType.Date) { Value = now });
                         var countObj = await check.ExecuteScalarAsync();
                         int active = 0;
                         if (countObj != null && countObj != DBNull.Value)
@@ -1316,10 +1814,10 @@ namespace RecoTool.Services
                     await EnsureSyncLocksTableExistsAsync(connection);
                     using (var cmd = new OleDbCommand("UPDATE SyncLocks SET SyncStatus = ? WHERE MachineName = ? AND ProcessId = ? AND (ExpiresAt IS NULL OR ExpiresAt > ?)", connection))
                     {
-                        cmd.Parameters.AddWithValue("@SyncStatus", status ?? "Unknown");
-                        cmd.Parameters.AddWithValue("@MachineName", Environment.MachineName);
-                        cmd.Parameters.AddWithValue("@ProcessId", System.Diagnostics.Process.GetCurrentProcess().Id);
-                        cmd.Parameters.AddWithValue("@Now", now.ToOADate());
+                        cmd.Parameters.Add(new OleDbParameter("@SyncStatus", OleDbType.VarWChar, 50) { Value = (object)(status ?? "Unknown") ?? DBNull.Value });
+                        cmd.Parameters.Add(new OleDbParameter("@MachineName", OleDbType.VarWChar, 255) { Value = (object)Environment.MachineName ?? DBNull.Value });
+                        cmd.Parameters.Add(new OleDbParameter("@ProcessId", OleDbType.Integer) { Value = System.Diagnostics.Process.GetCurrentProcess().Id });
+                        cmd.Parameters.Add(new OleDbParameter("@Now", OleDbType.Date) { Value = now });
                         await cmd.ExecuteNonQueryAsync();
                     }
                 }
@@ -1343,9 +1841,9 @@ namespace RecoTool.Services
                     await EnsureSyncLocksTableExistsAsync(connection);
                     using (var cmd = new OleDbCommand("SELECT TOP 1 SyncStatus FROM SyncLocks WHERE MachineName = ? AND ProcessId = ? AND (ExpiresAt IS NULL OR ExpiresAt > ?) ORDER BY CreatedAt DESC", connection))
                     {
-                        cmd.Parameters.AddWithValue("@MachineName", Environment.MachineName);
-                        cmd.Parameters.AddWithValue("@ProcessId", System.Diagnostics.Process.GetCurrentProcess().Id);
-                        cmd.Parameters.AddWithValue("@Now", now.ToOADate());
+                        cmd.Parameters.Add(new OleDbParameter("@MachineName", OleDbType.VarWChar, 255) { Value = (object)Environment.MachineName ?? DBNull.Value });
+                        cmd.Parameters.Add(new OleDbParameter("@ProcessId", OleDbType.Integer) { Value = System.Diagnostics.Process.GetCurrentProcess().Id });
+                        cmd.Parameters.Add(new OleDbParameter("@Now", OleDbType.Date) { Value = now });
                         var obj = await cmd.ExecuteScalarAsync();
                         return obj == null || obj == DBNull.Value ? null : obj.ToString();
                     }
@@ -1377,7 +1875,7 @@ namespace RecoTool.Services
         private Country _currentCountry;
         private string _currentCountryId;
         private readonly string _currentUser;
-        private bool _isWatching = false;
+        private readonly ConcurrentDictionary<string, object> _countrySyncLocks = new ConcurrentDictionary<string, object>(); // Added per-country synchronization gate
 
         public string ReferentialDatabasePath => _ReferentialDatabasePath;
 
@@ -1448,6 +1946,11 @@ namespace RecoTool.Services
             
             // Charger les référentiels en mémoire au premier accès
             _ = LoadReferentialsAsync();
+
+            // Feature flag from configuration (T_Param). Any non-empty, non-"false" value enables it
+            var flag = GetCentralConfig("UseLocalChangeLog") ?? GetParameter("UseLocalChangeLog");
+            if (!string.IsNullOrWhiteSpace(flag) && !string.Equals(flag.Trim(), "false", StringComparison.OrdinalIgnoreCase))
+                _useLocalChangeLog = true;
         }
 
         /// <summary>
@@ -1645,6 +2148,133 @@ namespace RecoTool.Services
                 System.Diagnostics.Debug.WriteLine($"[SYNC VALIDATION] Erreur: {ex.Message}");
             }
         }
+        
+        // Ensure the dedicated local ChangeLog database exists and has the proper schema
+        private async Task EnsureLocalChangeLogSchemaAsync(string countryId)
+        {
+            if (!_useLocalChangeLog) return;
+            if (string.IsNullOrWhiteSpace(countryId)) return;
+            try
+            {
+                var changeLogDbPath = GetLocalChangeLogDbPath(countryId);
+
+                // Ensure directory exists
+                var dir = Path.GetDirectoryName(changeLogDbPath);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+                // If DB missing, create with a minimal schema containing only ChangeLog
+                if (!File.Exists(changeLogDbPath))
+                {
+                    await DatabaseTemplateGenerator.CreateCustomTemplateAsync(changeLogDbPath, config =>
+                    {
+                        config.Tables.Clear();
+                        var changeLogTable = new TableConfiguration
+                        {
+                            Name = "ChangeLog",
+                            PrimaryKeyColumn = "ChangeID",
+                            PrimaryKeyType = typeof(long),
+                            LastModifiedColumn = null,
+                            CreateTableSql = @"CREATE TABLE [ChangeLog] (
+    [ChangeID] COUNTER PRIMARY KEY,
+    [TableName] TEXT(128) NOT NULL,
+    [RecordID] TEXT(255),
+    [Operation] TEXT(16) NOT NULL,
+    [Timestamp] DATETIME NOT NULL,
+    [Synchronized] BIT NOT NULL
+)"
+                        };
+                        changeLogTable.Columns.Add(new ColumnDefinition("ChangeID", typeof(long), "LONG", false, true, true));
+                        changeLogTable.Columns.Add(new ColumnDefinition("TableName", typeof(string), "TEXT(128)", false));
+                        changeLogTable.Columns.Add(new ColumnDefinition("RecordID", typeof(string), "TEXT(255)", true));
+                        changeLogTable.Columns.Add(new ColumnDefinition("Operation", typeof(string), "TEXT(16)", false));
+                        changeLogTable.Columns.Add(new ColumnDefinition("Timestamp", typeof(DateTime), "DATETIME", false));
+                        changeLogTable.Columns.Add(new ColumnDefinition("Synchronized", typeof(bool), "BIT", false));
+                        config.Tables.Add(changeLogTable);
+                    });
+                }
+
+                // Open the dedicated ChangeLog DB and ensure columns exist (best-effort schema repair)
+                using (var connection = new OleDbConnection($"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={changeLogDbPath};"))
+                {
+                    await connection.OpenAsync();
+
+                    // Check if ChangeLog table exists
+                    bool tableExists = false;
+                    using (var tblSchema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new object[] { null, null, null, "TABLE" }))
+                    {
+                        if (tblSchema != null)
+                        {
+                            foreach (System.Data.DataRow row in tblSchema.Rows)
+                            {
+                                var name = row["TABLE_NAME"]?.ToString();
+                                if (string.Equals(name, "ChangeLog", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    tableExists = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!tableExists)
+                    {
+                        var createSql = @"CREATE TABLE [ChangeLog] (
+    [ChangeID] COUNTER PRIMARY KEY,
+    [TableName] TEXT(128) NOT NULL,
+    [RecordID] TEXT(255),
+    [Operation] TEXT(16) NOT NULL,
+    [Timestamp] DATETIME NOT NULL,
+    [Synchronized] BIT NOT NULL
+)";
+                        using (var cmd = new OleDbCommand(createSql, connection))
+                        {
+                            await cmd.ExecuteNonQueryAsync();
+                        }
+                    }
+
+                    // Ensure required columns exist (best-effort). No type migrations; deployment guarantees fresh DBs.
+                    var requiredCols = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        { "ChangeID", "COUNTER" },
+                        { "TableName", "TEXT(128)" },
+                        { "RecordID", "TEXT(255)" },
+                        { "Operation", "TEXT(16)" },
+                        { "Timestamp", "DATETIME" },
+                        { "Synchronized", "BIT" }
+                    };
+
+                    var existingCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    using (var colSchema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Columns, new object[] { null, null, "ChangeLog", null }))
+                    {
+                        if (colSchema != null)
+                        {
+                            foreach (System.Data.DataRow row in colSchema.Rows)
+                            {
+                                var colName = row["COLUMN_NAME"]?.ToString();
+                                if (!string.IsNullOrWhiteSpace(colName))
+                                {
+                                    existingCols.Add(colName);
+                                }
+                            }
+                        }
+                    }
+
+                    foreach (var kv in requiredCols)
+                    {
+                        if (!existingCols.Contains(kv.Key))
+                        {
+                            var alter = $"ALTER TABLE [ChangeLog] ADD COLUMN [{kv.Key}] {kv.Value}";
+                            try { using (var cmd = new OleDbCommand(alter, connection)) { await cmd.ExecuteNonQueryAsync(); } }
+                            catch { }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[MIGRATION] EnsureLocalChangeLogSchemaAsync failed for {countryId}: {ex.Message}");
+            }
+        }
 
         /// <summary>
         /// Supprime une entité
@@ -1690,19 +2320,28 @@ namespace RecoTool.Services
                     var sql = $"UPDATE [{entity.TableName}] SET {string.Join(", ", setParts)} WHERE [{keyColumn}] = @key";
                     using (var cmd = new OleDbCommand(sql, connection))
                     {
-                        int pi = 0;
-                        foreach (var p in parameters)
+                        var typeMap = await GetColumnTypesAsync(connection, entity.TableName);
+                        if (hasDeleteDate)
                         {
-                            var prepared = PrepareValueForDatabase(p);
-                            cmd.Parameters.AddWithValue($"@p{pi++}", prepared);
+                            var t = typeMap.TryGetValue("DeleteDate", out var dt) ? dt : OleDbType.Date;
+                            var p0 = new OleDbParameter("@p0", t) { Value = CoerceValueForOleDb(DateTime.UtcNow, t) };
+                            cmd.Parameters.Add(p0);
                         }
-                        cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
+                        if (lastModCol != null)
+                        {
+                            var t = typeMap.TryGetValue(lastModCol, out var lt) ? lt : OleDbType.Date;
+                            var p1 = new OleDbParameter("@p1", t) { Value = CoerceValueForOleDb(DateTime.UtcNow, t) };
+                            cmd.Parameters.Add(p1);
+                        }
+                        var keyType = typeMap.TryGetValue(keyColumn, out var kt) ? kt : InferOleDbTypeFromValue(keyValue);
+                        var pKey = new OleDbParameter("@key", keyType) { Value = CoerceValueForOleDb(keyValue, keyType) };
+                        cmd.Parameters.Add(pKey);
                         var affected = await cmd.ExecuteNonQueryAsync();
                         string changeKey = keyValue?.ToString();
                         if (changeLogSession != null)
                             await changeLogSession.AddAsync(entity.TableName, changeKey, "DELETE");
                         else
-                            await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "DELETE");
+                            await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "DELETE");
                         return affected > 0;
                     }
                 }
@@ -1712,13 +2351,16 @@ namespace RecoTool.Services
                     var sql = $"DELETE FROM [{entity.TableName}] WHERE [{keyColumn}] = @key";
                     using (var cmd = new OleDbCommand(sql, connection))
                     {
-                        cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
+                        var typeMap = await GetColumnTypesAsync(connection, entity.TableName);
+                        var keyType = typeMap.TryGetValue(keyColumn, out var kt) ? kt : InferOleDbTypeFromValue(keyValue);
+                        var pKey = new OleDbParameter("@key", keyType) { Value = CoerceValueForOleDb(keyValue, keyType) };
+                        cmd.Parameters.Add(pKey);
                         var affected = await cmd.ExecuteNonQueryAsync();
                         string changeKey = keyValue?.ToString();
                         if (changeLogSession != null)
                             await changeLogSession.AddAsync(entity.TableName, changeKey, "DELETE");
                         else
-                            await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "DELETE");
+                            await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "DELETE");
                         return affected > 0;
                     }
                 }
@@ -1746,7 +2388,19 @@ namespace RecoTool.Services
                         int i = 0;
                         foreach (var kv in parameters)
                         {
-                            cmd.Parameters.AddWithValue($"@p{i++}", kv.Value ?? DBNull.Value);
+                            var val = kv.Value;
+                            if (val == null)
+                            {
+                                var p = new OleDbParameter($"@p{i}", OleDbType.Variant) { Value = DBNull.Value };
+                                cmd.Parameters.Add(p);
+                            }
+                            else
+                            {
+                                var t = InferOleDbTypeFromValue(val);
+                                var p = new OleDbParameter($"@p{i}", t) { Value = CoerceValueForOleDb(val, t) };
+                                cmd.Parameters.Add(p);
+                            }
+                            i++;
                         }
                     }
                     using (var reader = await cmd.ExecuteReaderAsync())
@@ -1775,8 +2429,9 @@ namespace RecoTool.Services
         /// </summary>
         public async Task<OfflineFirstAccess.ChangeTracking.IChangeLogSession> BeginChangeLogSessionAsync(string countryId)
         {
-            // Pas besoin d'initialisation complète: ne dépend que de la base de lock distante
-            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(countryId));
+            // S'assurer que le schéma ChangeLog local existe et que Timestamp est DATETIME (migration si besoin)
+            try { await EnsureLocalChangeLogSchemaAsync(countryId); } catch { /* best-effort */ }
+            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(countryId));
             return await tracker.BeginSessionAsync();
         }
 
@@ -1787,7 +2442,7 @@ namespace RecoTool.Services
         public async Task<int> GetUnsyncedChangeCountAsync(string countryId)
         {
             // Pas besoin d'initialisation complète: ne dépend que de la base de lock distante
-            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(countryId));
+            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(countryId));
             var entries = await tracker.GetUnsyncedChangesAsync();
             return entries?.Count() ?? 0;
         }
@@ -1799,32 +2454,6 @@ namespace RecoTool.Services
         {
             int timeoutSeconds = (int)Math.Max(0, timeout.TotalSeconds);
             return await AcquireGlobalLockInternalAsync(identifier, reason, timeoutSeconds, token);
-        }
-
-        /// <summary>
-        /// Acquiert un verrou global pour empêcher la synchronisation pendant des opérations critiques (secondes).
-        /// </summary>
-        public async Task<IDisposable> AcquireGlobalLockAsync(string identifier, string reason, int timeoutSeconds = 0, CancellationToken token = default)
-        {
-            return await AcquireGlobalLockInternalAsync(identifier, reason, timeoutSeconds, token);
-        }
-
-        /// <summary>
-        /// Démarre une "surveillance" interne simple (flag) utilisée pour coordonner certaines opérations.
-        /// </summary>
-        public bool StartWatching(string identifier)
-        {
-            _isWatching = true;
-            return true;
-        }
-
-        /// <summary>
-        /// Stoppe la surveillance interne (flag).
-        /// </summary>
-        public bool StopWatching()
-        {
-            _isWatching = false;
-            return true;
         }
 
         private void EnsureInitialized()
@@ -1862,6 +2491,193 @@ namespace RecoTool.Services
                     }
                 }
                 return await Task.FromResult(set);
+            }
+        }
+
+        /// <summary>
+        /// Returns a map of column name -> OleDbType for the given table by reading the schema.
+        /// Opens the connection if needed and closes it if it was opened here.
+        /// </summary>
+        private async Task<Dictionary<string, OleDbType>> GetColumnTypesAsync(OleDbConnection connection, string tableName)
+        {
+            if (connection == null) throw new ArgumentNullException(nameof(connection));
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("tableName is required", nameof(tableName));
+
+            bool openedHere = false;
+            if (connection.State != ConnectionState.Open)
+            {
+                await connection.OpenAsync();
+                openedHere = true;
+            }
+
+            try
+            {
+                var map = new Dictionary<string, OleDbType>(StringComparer.OrdinalIgnoreCase);
+                using (var schema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Columns, new object[] { null, null, tableName, null }))
+                {
+                    if (schema != null)
+                    {
+                        foreach (System.Data.DataRow row in schema.Rows)
+                        {
+                            var colName = Convert.ToString(row["COLUMN_NAME"]);
+                            if (string.IsNullOrWhiteSpace(colName)) continue;
+                            try
+                            {
+                                var typeCode = Convert.ToInt32(row["DATA_TYPE"]);
+                                map[colName] = (OleDbType)typeCode;
+                            }
+                            catch
+                            {
+                                map[colName] = OleDbType.Variant;
+                            }
+                        }
+                    }
+                }
+                return await Task.FromResult(map);
+            }
+            finally
+            {
+                if (openedHere)
+                {
+                    try { connection.Close(); } catch { }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Best-effort inference of OleDbType from a CLR value when schema metadata is unavailable.
+        /// </summary>
+        private OleDbType InferOleDbTypeFromValue(object value)
+        {
+            if (value == null || value == DBNull.Value) return OleDbType.Variant;
+
+            var t = value.GetType();
+            if (t == typeof(Guid)) return OleDbType.Guid;
+            if (t == typeof(byte[])) return OleDbType.Binary;
+            if (t == typeof(TimeSpan)) return OleDbType.Double; // store as OADate seconds if coerced to string/number
+
+            switch (Type.GetTypeCode(t))
+            {
+                case TypeCode.Boolean: return OleDbType.Boolean;
+                case TypeCode.Byte: return OleDbType.UnsignedTinyInt;
+                case TypeCode.SByte: return OleDbType.TinyInt;
+                case TypeCode.Int16: return OleDbType.SmallInt;
+                case TypeCode.UInt16: return OleDbType.Integer; // closest available (Access has no unsigned 16)
+                case TypeCode.Int32: return OleDbType.Integer;
+                case TypeCode.UInt32: return OleDbType.BigInt;
+                case TypeCode.Int64: return OleDbType.BigInt;
+                case TypeCode.UInt64: return OleDbType.Decimal;
+                case TypeCode.Single: return OleDbType.Single;
+                case TypeCode.Double: return OleDbType.Double;
+                case TypeCode.Decimal: return OleDbType.Decimal;
+                case TypeCode.DateTime: return OleDbType.Date;
+                case TypeCode.Char: return OleDbType.WChar;
+                case TypeCode.String: return OleDbType.VarWChar;
+                default: return OleDbType.Variant;
+            }
+        }
+
+        /// <summary>
+        /// Coerces application values into OleDb-compatible values based on the target OleDbType.
+        /// Returns DBNull.Value for null/empty where appropriate.
+        /// </summary>
+        private static object CoerceValueForOleDb(object value, OleDbType targetType)
+        {
+            if (value == null || value == DBNull.Value) return DBNull.Value;
+
+            try
+            {
+                switch (targetType)
+                {
+                    case OleDbType.Boolean:
+                        if (value is bool b) return b;
+                        if (value is string bs)
+                        {
+                            if (bool.TryParse(bs, out var bb)) return bb;
+                            if (int.TryParse(bs, NumberStyles.Integer, CultureInfo.InvariantCulture, out var bi)) return bi != 0;
+                            return DBNull.Value;
+                        }
+                        return Convert.ToBoolean(value, CultureInfo.InvariantCulture);
+
+                    case OleDbType.TinyInt:
+                        if (value is sbyte sb) return sb;
+                        return Convert.ToSByte(value, CultureInfo.InvariantCulture);
+
+                    case OleDbType.UnsignedTinyInt:
+                        if (value is byte by) return by;
+                        return Convert.ToByte(value, CultureInfo.InvariantCulture);
+
+                    case OleDbType.SmallInt:
+                        if (value is short s) return s;
+                        return Convert.ToInt16(value, CultureInfo.InvariantCulture);
+
+                    case OleDbType.Integer:
+                        if (value is int i32) return i32;
+                        return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+
+                    case OleDbType.BigInt:
+                        if (value is long i64) return i64;
+                        return Convert.ToInt64(value, CultureInfo.InvariantCulture);
+
+                    case OleDbType.Single:
+                        if (value is float f) return f;
+                        return Convert.ToSingle(value, CultureInfo.InvariantCulture);
+
+                    case OleDbType.Double:
+                        if (value is double d) return d;
+                        return Convert.ToDouble(value, CultureInfo.InvariantCulture);
+
+                    case OleDbType.Decimal:
+                    case OleDbType.Numeric:
+                    case OleDbType.VarNumeric:
+                    case OleDbType.Currency:
+                        if (value is decimal dec) return dec;
+                        if (value is string ds)
+                        {
+                            if (decimal.TryParse(ds, NumberStyles.Any, CultureInfo.InvariantCulture, out var dd)) return dd;
+                            return DBNull.Value;
+                        }
+                        return Convert.ToDecimal(value, CultureInfo.InvariantCulture);
+
+                    case OleDbType.Date:
+                        if (value is DateTime dt) return dt;
+                        if (value is string dts)
+                        {
+                            if (DateTime.TryParse(dts, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsed)) return parsed;
+                            return DBNull.Value;
+                        }
+                        if (value is double oa) return DateTime.FromOADate(oa);
+                        if (value is float oaf) return DateTime.FromOADate(oaf);
+                        if (value is decimal oad) return DateTime.FromOADate((double)oad);
+                        return Convert.ToDateTime(value, CultureInfo.InvariantCulture);
+
+                    case OleDbType.Guid:
+                        if (value is Guid g) return g;
+                        if (value is string gs) { return Guid.TryParse(gs, out var gg) ? gg : (object)DBNull.Value; }
+                        return DBNull.Value;
+
+                    case OleDbType.Binary:
+                    case OleDbType.VarBinary:
+                    case OleDbType.LongVarBinary:
+                        if (value is byte[] bytes) return bytes;
+                        return DBNull.Value;
+
+                    case OleDbType.Char:
+                    case OleDbType.VarChar:
+                    case OleDbType.LongVarChar:
+                    case OleDbType.WChar:
+                    case OleDbType.VarWChar:
+                    case OleDbType.LongVarWChar:
+                        var sVal = value.ToString();
+                        return sVal;
+
+                    default:
+                        return value;
+                }
+            }
+            catch
+            {
+                return DBNull.Value;
             }
         }
 
@@ -2166,7 +2982,10 @@ namespace RecoTool.Services
                 var sql = $"SELECT * FROM [{tableName}] WHERE [{keyColumn}] = @key";
                 using (var cmd = new OleDbCommand(sql, connection))
                 {
-                    cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
+                    var typeMap = await GetColumnTypesAsync(connection, tableName);
+                    var kType = typeMap.TryGetValue(keyColumn, out var kt) ? kt : InferOleDbTypeFromValue(keyValue);
+                    var p = new OleDbParameter("@key", kType) { Value = CoerceValueForOleDb(keyValue, kType) };
+                    cmd.Parameters.Add(p);
                     using (var reader = await cmd.ExecuteReaderAsync())
                     {
                         if (await reader.ReadAsync())
@@ -2213,6 +3032,7 @@ namespace RecoTool.Services
             using (var connection = new OleDbConnection(GetLocalConnectionString()))
             {
                 await connection.OpenAsync();
+                var typeMap = await GetColumnTypesAsync(connection, tableName);
 
                 for (int i = 0; i < distinctKeys.Count; i += batchSize)
                 {
@@ -2223,7 +3043,9 @@ namespace RecoTool.Services
                     {
                         foreach (var (val, idx) in chunk.Select((v, idx) => (v, idx)))
                         {
-                            cmd.Parameters.AddWithValue($"@p{idx}", val);
+                            var t = typeMap.TryGetValue(keyColumn, out var kt) ? kt : InferOleDbTypeFromValue(val);
+                            var p = new OleDbParameter($"@p{idx}", t) { Value = CoerceValueForOleDb(val, t) };
+                            cmd.Parameters.Add(p);
                         }
                         using (var reader = await cmd.ExecuteReaderAsync())
                         {
@@ -2267,6 +3089,7 @@ namespace RecoTool.Services
                 await connection.OpenAsync();
                 // Check table schema to avoid "No value given for one or more required parameters" when a column name is wrong/missing
                 var cols = await GetTableColumnsAsync(connection, tableName);
+                var typeMap = await GetColumnTypesAsync(connection, tableName);
                 // Validate key column; fallback to ID if available
                 if (!cols.Contains(keyColumn, StringComparer.OrdinalIgnoreCase))
                 {
@@ -2288,7 +3111,9 @@ namespace RecoTool.Services
                     {
                         foreach (var (val, idx) in chunk.Select((v, idx) => (v, idx)))
                         {
-                            cmd.Parameters.AddWithValue($"@p{idx}", val);
+                            var t = typeMap.TryGetValue(keyColumn, out var kt) ? kt : InferOleDbTypeFromValue(val);
+                            var p = new OleDbParameter($"@p{idx}", t) { Value = CoerceValueForOleDb(val, t) };
+                            cmd.Parameters.Add(p);
                         }
                         using (var reader = await cmd.ExecuteReaderAsync())
                         {
@@ -2350,10 +3175,13 @@ namespace RecoTool.Services
                 var sql = $"INSERT INTO [{entity.TableName}] ({colList}) VALUES ({paramList})";
                 using (var cmd = new OleDbCommand(sql, connection))
                 {
+                    var typeMap = await GetColumnTypesAsync(connection, entity.TableName);
                     for (int i = 0; i < validCols.Count; i++)
                     {
-                        var prepared = PrepareValueForDatabase(entity.Properties[validCols[i]]);
-                        cmd.Parameters.AddWithValue($"@p{i}", prepared);
+                        var colName = validCols[i];
+                        var t = typeMap.TryGetValue(colName, out var mapped) ? mapped : InferOleDbTypeFromValue(entity.Properties[colName]);
+                        var p = new OleDbParameter($"@p{i}", t) { Value = CoerceValueForOleDb(entity.Properties[colName], t) };
+                        cmd.Parameters.Add(p);
                     }
                     var affected = await cmd.ExecuteNonQueryAsync();
 
@@ -2371,7 +3199,7 @@ namespace RecoTool.Services
                     if (changeLogSession != null)
                         await changeLogSession.AddAsync(entity.TableName, changeKey, "INSERT");
                     else
-                        await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "INSERT");
+                        await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "INSERT");
 
                     return affected > 0;
                 }
@@ -2388,7 +3216,7 @@ namespace RecoTool.Services
 
         /// <summary>
         /// Met à jour une entité (avec session de change-log optionnelle)
-        /// </summary>
+        /// </summary> 
         public async Task<bool> UpdateEntityAsync(string countryId, Entity entity, OfflineFirstAccess.ChangeTracking.IChangeLogSession changeLogSession)
         {
             if (entity == null) throw new ArgumentNullException(nameof(entity));
@@ -2417,19 +3245,27 @@ namespace RecoTool.Services
                 var sql = $"UPDATE [{entity.TableName}] SET {setList} WHERE [{pkColumn}] = @key";
                 using (var cmd = new OleDbCommand(sql, connection))
                 {
+                    var typeMap = await GetColumnTypesAsync(connection, entity.TableName);
                     for (int i = 0; i < updatable.Count; i++)
                     {
-                        var prepared = PrepareValueForDatabase(entity.Properties[updatable[i]]);
-                        cmd.Parameters.AddWithValue($"@p{i}", prepared);
+                        var col = updatable[i];
+                        var t = typeMap.TryGetValue(col, out var mapped) ? mapped : InferOleDbTypeFromValue(entity.Properties[col]);
+                        var p = new OleDbParameter($"@p{i}", t) { Value = CoerceValueForOleDb(entity.Properties[col], t) };
+                        cmd.Parameters.Add(p);
                     }
-                    cmd.Parameters.AddWithValue("@key", keyValue ?? DBNull.Value);
+                    var keyType = typeMap.TryGetValue(pkColumn, out var kt) ? kt : InferOleDbTypeFromValue(keyValue);
+                    var pKey = new OleDbParameter("@key", keyType) { Value = CoerceValueForOleDb(keyValue, keyType) };
+                    cmd.Parameters.Add(pKey);
                     var affected = await cmd.ExecuteNonQueryAsync();
 
                     string changeKey = keyValue?.ToString();
+                    // Encode the exact columns updated so the sync push constructs a partial update payload
+                    var opColumns = updatable ?? new List<string>();
+                    var opType = $"UPDATE({string.Join(",", opColumns)})";
                     if (changeLogSession != null)
-                        await changeLogSession.AddAsync(entity.TableName, changeKey, "UPDATE");
+                        await changeLogSession.AddAsync(entity.TableName, changeKey, opType);
                     else
-                        await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, "UPDATE");
+                        await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(_currentCountryId)).RecordChangeAsync(entity.TableName, changeKey, opType);
 
                     return affected > 0;
                 }
@@ -2526,6 +3362,7 @@ namespace RecoTool.Services
                 LocalDatabasePath = localDbPath,
                 RemoteDatabasePath = remoteDbPath,
                 LockDatabasePath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}_lock.accdb"),
+                ChangeLogConnectionString = GetChangeLogConnectionString(countryId),
                 TablesToSync = reconTables
             };
         }
@@ -2751,6 +3588,11 @@ namespace RecoTool.Services
                 }
                 
                 // NOTE: ne pas dupliquer la base de lock en local. Les verrous doivent rester sur le réseau.
+                // Ensure local ChangeLog schema exists if feature enabled
+                if (_useLocalChangeLog)
+                {
+                    try { await EnsureLocalChangeLogSchemaAsync(countryId); } catch { }
+                }
 
                 // Marquer le service comme initialisé pour ce pays
                 _isInitialized = true;
@@ -2770,7 +3612,7 @@ namespace RecoTool.Services
         /// Règle: s'il existe des changements locaux non synchronisés, on les pousse d'abord vers le réseau,
         /// puis on recopie toutes les bases pertinentes (Reconciliation, Ambre, DW) du réseau vers le local.
         /// </summary>
-        public async Task<bool> SetCurrentCountryAsync(string countryId)
+        public async Task<bool> SetCurrentCountryAsync(string countryId, bool suppressPush = false)
         {
             if (string.IsNullOrWhiteSpace(countryId))
                 return false;
@@ -2799,20 +3641,23 @@ namespace RecoTool.Services
                 _currentCountry = null; // si échec de chargement, rester prudent
             }
 
-            // 2) Pousser d'éventuels changements locaux en attente
-            try
+            // 2) Pousser d'éventuels changements locaux en attente (sauf si suppression demandée)
+            if (!suppressPush)
             {
-                var pending = await GetUnsyncedChangeCountAsync(countryId);
-                if (pending > 0)
+                try
                 {
-                    System.Diagnostics.Debug.WriteLine($"[{nameof(SetCurrentCountryAsync)}] Pending changes detected ({pending}) for {countryId}. Pushing to network...");
-                    await PushPendingChangesToNetworkAsync(countryId);
+                    var pending = await GetUnsyncedChangeCountAsync(countryId);
+                    if (pending > 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[{nameof(SetCurrentCountryAsync)}] Pending changes detected ({pending}) for {countryId}. Pushing to network (background)...");
+                        _ = PushReconciliationIfPendingAsync(countryId);
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[{nameof(SetCurrentCountryAsync)}] Erreur lors du push des changements en attente pour {countryId}: {ex.Message}");
-                // Ne pas interrompre: on va quand même tenter de réaligner local depuis réseau
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[{nameof(SetCurrentCountryAsync)}] Erreur lors du push des changements en attente pour {countryId}: {ex.Message}");
+                    // Ne pas interrompre: on va quand même tenter de réaligner local depuis réseau
+                }
             }
 
             // 3) Après le push, rafraîchir toutes les bases locales depuis le réseau (best-effort)
@@ -2920,7 +3765,7 @@ namespace RecoTool.Services
                     if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
 
                     // Sauvegarde quotidienne: créer un fichier par jour et ne pas dupliquer si déjà présent
-                    string dayStamp = DateTime.Now.ToString("yyyy-MM-dd");
+                    string dayStamp = DateTime.UtcNow.ToString("yyyy-MM-dd");
                     string dailyBackupPath = Path.Combine(savedDir, $"{countryPrefix}{countryId}_{dayStamp}.accdb");
                     if (!File.Exists(dailyBackupPath))
                     {
@@ -2960,8 +3805,7 @@ namespace RecoTool.Services
             // Remplacer atomiquement la base réseau (ou déplacer si inexistant)
             if (File.Exists(networkDbPath))
             {
-                // File.Replace est atomique et crée une sauvegarde
-                File.Replace(tempPath, networkDbPath, backupPath);
+                await FileReplaceWithRetriesAsync(tempPath, networkDbPath, backupPath, maxAttempts: 6, initialDelayMs: 500);
             }
             else
             {
@@ -2992,7 +3836,7 @@ namespace RecoTool.Services
                 if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
 
                 string baseName = Path.GetFileNameWithoutExtension(localDbPath);
-                string timeStamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string timeStamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
                 string suffix = string.IsNullOrWhiteSpace(label) ? "PreImport" : label.Trim();
                 string backupPath = Path.Combine(savedDir, $"{baseName}_{suffix}_{timeStamp}.accdb");
 
@@ -3017,7 +3861,7 @@ namespace RecoTool.Services
                 throw new ArgumentException("countryId est requis", nameof(countryId));
 
             // Le ChangeLog est stocké dans la base de lock côté réseau (voir DatabaseTemplateBuilder commentaire)
-            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(countryId));
+            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(countryId));
             var unsynced = await tracker.GetUnsyncedChangesAsync();
             if (unsynced == null) return;
             var ids = unsynced.Select(c => c.Id).ToList();
@@ -3066,7 +3910,7 @@ namespace RecoTool.Services
 
             if (File.Exists(localDbPath))
             {
-                File.Replace(tempLocal, localDbPath, backupLocal);
+                await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 400);
             }
             else
             {
@@ -3090,6 +3934,10 @@ namespace RecoTool.Services
         {
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
 
+            // Guard: prevent overwriting local AMBRE DB if unsynced local changes exist
+            if (await HasUnsyncedLocalChangesAsync(countryId))
+                throw new InvalidOperationException($"Rafraîchissement AMBRE bloqué: des changements locaux non synchronisés existent pour {countryId}.");
+
             string localDbPath = GetLocalAmbreDbPath(countryId);
             string networkDbPath = GetNetworkAmbreDbPath(countryId);
             string dataDirectory = Path.GetDirectoryName(localDbPath);
@@ -3108,7 +3956,7 @@ namespace RecoTool.Services
             string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
 
             File.Copy(networkDbPath, tempLocal, true);
-            if (File.Exists(localDbPath)) File.Replace(tempLocal, localDbPath, backupLocal); else File.Move(tempLocal, localDbPath);
+            if (File.Exists(localDbPath)) await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300); else File.Move(tempLocal, localDbPath);
 
             System.Diagnostics.Debug.WriteLine($"AMBRE: base réseau copiée vers local pour {countryId} -> {localDbPath}");
             // Initialiser/mettre à jour l'ancre suite au rafraîchissement complet AMBRE
@@ -3126,6 +3974,10 @@ namespace RecoTool.Services
         public async Task CopyNetworkToLocalReconciliationAsync(string countryId)
         {
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            // Guard: prevent overwriting local RECON DB if unsynced local changes exist
+            if (await HasUnsyncedLocalChangesAsync(countryId))
+                throw new InvalidOperationException($"Rafraîchissement RECON bloqué: des changements locaux non synchronisés existent pour {countryId}.");
 
             string localDbPath = GetLocalReconciliationDbPath(countryId);
             string networkDbPath = GetNetworkReconciliationDbPath(countryId);
@@ -3145,7 +3997,7 @@ namespace RecoTool.Services
             string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
 
             File.Copy(networkDbPath, tempLocal, true);
-            if (File.Exists(localDbPath)) File.Replace(tempLocal, localDbPath, backupLocal); else File.Move(tempLocal, localDbPath);
+            if (File.Exists(localDbPath)) await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300); else File.Move(tempLocal, localDbPath);
 
             System.Diagnostics.Debug.WriteLine($"RECON: base réseau copiée vers local pour {countryId} -> {localDbPath}");
             // Après un rafraîchissement complet local <- réseau, initialiser/mettre à jour l'ancre de synchronisation
@@ -3162,6 +4014,10 @@ namespace RecoTool.Services
         public async Task CopyNetworkToLocalDwAsync(string countryId)
         {
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            // Guard: prevent overwriting local DW DB if unsynced local changes exist
+            if (await HasUnsyncedLocalChangesAsync(countryId))
+                throw new InvalidOperationException($"Rafraîchissement DW bloqué: des changements locaux non synchronisés existent pour {countryId}.");
 
             string localDbPath = GetLocalDwDbPath(countryId);
             string networkDbPath = GetNetworkDwDbPath(countryId);
@@ -3181,7 +4037,7 @@ namespace RecoTool.Services
             string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
 
             File.Copy(networkDbPath, tempLocal, true);
-            if (File.Exists(localDbPath)) File.Replace(tempLocal, localDbPath, backupLocal); else File.Move(tempLocal, localDbPath);
+            if (File.Exists(localDbPath)) await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300); else File.Move(tempLocal, localDbPath);
 
             System.Diagnostics.Debug.WriteLine($"DW: base réseau copiée vers local pour {countryId} -> {localDbPath}");
         }
@@ -3222,7 +4078,7 @@ namespace RecoTool.Services
                     string savedDir = Path.Combine(remoteDir, "Saved");
                     if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
                     string baseName = Path.GetFileNameWithoutExtension(networkDbPath);
-                    string dayStamp = DateTime.Now.ToString("yyyy-MM-dd");
+                    string dayStamp = DateTime.UtcNow.ToString("yyyy-MM-dd");
                     string dailyBackupPath = Path.Combine(savedDir, $"{baseName}_{dayStamp}.accdb");
                     if (!File.Exists(dailyBackupPath))
                     {
@@ -3254,7 +4110,7 @@ namespace RecoTool.Services
             }
 
             File.Copy(sourceForPublish, tempPath, true);
-            if (File.Exists(networkDbPath)) File.Replace(tempPath, networkDbPath, backupPath); else File.Move(tempPath, networkDbPath);
+            if (File.Exists(networkDbPath)) await FileReplaceWithRetriesAsync(tempPath, networkDbPath, backupPath, maxAttempts: 6, initialDelayMs: 400); else File.Move(tempPath, networkDbPath);
             System.Diagnostics.Debug.WriteLine($"AMBRE: base locale publiée vers réseau pour {countryId} -> {networkDbPath}");
             try { if (!string.IsNullOrEmpty(compactTempLocal) && File.Exists(compactTempLocal)) File.Delete(compactTempLocal); } catch { }
         }
@@ -3295,7 +4151,7 @@ namespace RecoTool.Services
                     string savedDir = Path.Combine(remoteDir, "Saved");
                     if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
                     string baseName = Path.GetFileNameWithoutExtension(networkDbPath);
-                    string dayStamp = DateTime.Now.ToString("yyyy-MM-dd");
+                    string dayStamp = DateTime.UtcNow.ToString("yyyy-MM-dd");
                     string dailyBackupPath = Path.Combine(savedDir, $"{baseName}_{dayStamp}.accdb");
                     if (!File.Exists(dailyBackupPath))
                     {
@@ -3327,7 +4183,7 @@ namespace RecoTool.Services
             }
 
             File.Copy(sourceForPublish, tempPath, true);
-            if (File.Exists(networkDbPath)) File.Replace(tempPath, networkDbPath, backupPath); else File.Move(tempPath, networkDbPath);
+            if (File.Exists(networkDbPath)) await FileReplaceWithRetriesAsync(tempPath, networkDbPath, backupPath, maxAttempts: 6, initialDelayMs: 400); else File.Move(tempPath, networkDbPath);
             System.Diagnostics.Debug.WriteLine($"RECON: base locale publiée vers réseau pour {countryId} -> {networkDbPath}");
             try { if (!string.IsNullOrEmpty(compactTempLocal) && File.Exists(compactTempLocal)) File.Delete(compactTempLocal); } catch { }
         }
@@ -3347,7 +4203,15 @@ namespace RecoTool.Services
             int pushed = 0;
             try
             {
-                pushed = await PushPendingChangesToNetworkAsync(countryId, assumeLockHeld: false, token: token);
+                var preloaded = (await new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(countryId)).GetUnsyncedChangesAsync())?.ToList();
+                if (preloaded != null && preloaded.Any())
+                {
+                    pushed = await PushPendingChangesToNetworkAsync(countryId, assumeLockHeld: false, token: token, source: "ServiceEntry", preloadedUnsynced: preloaded);
+                }
+                else
+                {
+                    pushed = 0;
+                }
             }
             catch (Exception ex)
             {
@@ -3372,7 +4236,8 @@ namespace RecoTool.Services
             if (string.IsNullOrWhiteSpace(remoteDir))
                 throw new InvalidOperationException("Paramètre CountryDatabaseDirectory manquant (T_Param)");
             string networkDbPath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}.accdb");
-            return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={networkDbPath};";
+            // Enable row-level locking and avoid share-deny write to reduce locking conflicts
+            return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={networkDbPath};Jet OLEDB:Database Locking Mode=1;Mode=Share Deny None;";
         }
 
         /// <summary>
@@ -3380,7 +4245,46 @@ namespace RecoTool.Services
         /// Applique INSERT/UPDATE/DELETE sur la base réseau à partir de l'état local pour chaque ChangeLog non synchronisé trouvé,
         /// puis marque uniquement ces entrées comme synchronisées. Ignore les entrées qui ne correspondent pas à une ligne locale.
         /// </summary>
-        public async Task<int> PushPendingChangesToNetworkAsync(string countryId, bool assumeLockHeld = false, CancellationToken token = default)
+        public async Task<int> PushPendingChangesToNetworkAsync(string countryId, bool assumeLockHeld = false, CancellationToken token = default, string source = null, IEnumerable<OfflineFirstAccess.Models.ChangeLogEntry> preloadedUnsynced = null)
+        {
+            EnsureInitialized();
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            var diag = IsDiagSyncEnabled();
+            if (diag)
+            {
+                var src = string.IsNullOrWhiteSpace(source) ? "-" : source;
+                System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Enter PushPendingChangesToNetworkAsync (assumeLockHeld={assumeLockHeld}, src={src})");
+                try { LogManager.Info($"[PUSH][{countryId}] Enter PushPendingChangesToNetworkAsync (assumeLockHeld={assumeLockHeld}, src={src})"); } catch { }
+            }
+
+            // Coalesce concurrent calls per country in a race-free way: only one task is created.
+            async Task<int> RunAsync()
+            {
+                var sem = _pushSemaphores.GetOrAdd(countryId, _ => new SemaphoreSlim(1, 1));
+                await sem.WaitAsync(token);
+                try { return await PushPendingChangesToNetworkCoreAsync(countryId, assumeLockHeld, token, preloadedUnsynced); }
+                finally { try { sem.Release(); } catch { } }
+            }
+
+            bool created = false;
+            var task = _activePushes.GetOrAdd(countryId, _ => { created = true; return RunAsync(); });
+            if (!created)
+            {
+                if (diag)
+                {
+                    var src = string.IsNullOrWhiteSpace(source) ? "-" : source;
+                    System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Another push is already running. Skipping this invocation. src={src}");
+                    try { LogManager.Info($"[PUSH][{countryId}] Skip: push already running (src={src})"); } catch { }
+                }
+                return 0; // best-effort: let the ongoing push finish; caller proceeds without blocking
+            }
+            try { return await task; }
+            finally { _activePushes.TryRemove(countryId, out _); }
+        }
+
+        // Core implementation separated so we can gate/coalesce the public entry
+        private async Task<int> PushPendingChangesToNetworkCoreAsync(string countryId, bool assumeLockHeld, CancellationToken token, IEnumerable<OfflineFirstAccess.Models.ChangeLogEntry> preloadedUnsynced)
         {
             EnsureInitialized();
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
@@ -3388,36 +4292,141 @@ namespace RecoTool.Services
             // S'assurer que le service est positionné sur le bon pays (AcquireGlobalLockAsync utilise _currentCountryId)
             if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
             {
-                var ok = await SetCurrentCountryAsync(countryId);
+                var ok = await SetCurrentCountryAsync(countryId, suppressPush: true);
                 if (!ok) throw new InvalidOperationException($"Impossible d'initialiser la base locale pour {countryId}");
             }
 
-            // Récupérer les entrées non synchronisées depuis la base de lock
-            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(countryId));
-            var unsynced = (await tracker.GetUnsyncedChangesAsync())?.ToList() ?? new List<OfflineFirstAccess.Models.ChangeLogEntry>();
-            if (unsynced.Count == 0) return 0;
+            var diag = IsDiagSyncEnabled();
+            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(countryId));
+
+            // Start a per-run watchdog early to capture stalls in FetchUnsynced as well
+            var runId = Guid.NewGuid();
+            _pushRunIds[countryId] = runId;
+            var watchdogCts = new CancellationTokenSource();
+            if (diag)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(30), watchdogCts.Token);
+                        if (watchdogCts.Token.IsCancellationRequested) return;
+                        if (_pushRunIds.TryGetValue(countryId, out var currentId) && currentId == runId)
+                        {
+                            _pushStages.TryGetValue(countryId, out var stageMsg);
+                            System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Still running after 30s... stage={stageMsg}");
+                            try { LogManager.Info($"[PUSH][{countryId}] Still running after 30s... stage={stageMsg}"); } catch { }
+                        }
+                    }
+                    catch { }
+                });
+            }
+
+            // Récupérer les entrées non synchronisées (utiliser la liste préchargée si fournie)
+            List<OfflineFirstAccess.Models.ChangeLogEntry> unsynced;
+            if (preloadedUnsynced != null)
+            {
+                _pushStages[countryId] = "UsePreloadedUnsynced";
+                unsynced = preloadedUnsynced.ToList();
+                if (diag) { System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Using preloaded unsynced: {unsynced.Count}"); try { LogManager.Info($"[PUSH][{countryId}] Using preloaded unsynced: {unsynced.Count}"); } catch { } }
+            }
+            else
+            {
+                _pushStages[countryId] = "FetchUnsynced";
+                if (diag) { System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Fetching unsynced changes from ChangeLog..."); try { LogManager.Info($"[PUSH][{countryId}] Fetching unsynced changes from ChangeLog..."); } catch { } }
+                // Service-level hard cap slightly above inner 15s reader timeout
+                var fetchTask = tracker.GetUnsyncedChangesAsync();
+                var fetchCompleted = await Task.WhenAny(fetchTask, Task.Delay(TimeSpan.FromSeconds(20), token)) == fetchTask;
+                if (!fetchCompleted)
+                {
+                    if (diag) { System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Timeout fetching unsynced changes after 20s"); try { LogManager.Info($"[PUSH][{countryId}] Timeout fetching unsynced changes after 20s"); } catch { } }
+                    try { watchdogCts.Cancel(); } catch { }
+                    try { watchdogCts.Dispose(); } catch { }
+                    try { if (_pushRunIds.TryGetValue(countryId, out var id) && id == runId) _pushRunIds.TryRemove(countryId, out _); } catch { }
+                    throw new TimeoutException("Timeout fetching unsynced changes from ChangeLog after 20s");
+                }
+                unsynced = (await fetchTask)?.ToList() ?? new List<OfflineFirstAccess.Models.ChangeLogEntry>();
+            }
+            if (diag) { System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Unsynced fetched: {unsynced.Count}"); try { LogManager.Info($"[PUSH][{countryId}] Unsynced fetched: {unsynced.Count}"); } catch { } }
+            if (unsynced.Count == 0)
+            {
+                try { await RaiseSyncStateAsync(countryId, SyncStateKind.UpToDate, pendingOverride: 0); } catch { }
+                try { watchdogCts.Cancel(); } catch { }
+                try { watchdogCts.Dispose(); } catch { }
+                try { if (_pushRunIds.TryGetValue(countryId, out var id) && id == runId) _pushRunIds.TryRemove(countryId, out _); } catch { }
+                return 0;
+            }
+
+            // Notify start
+            try { await RaiseSyncStateAsync(countryId, SyncStateKind.SyncInProgress, pendingOverride: unsynced.Count); } catch { }
+            if (diag)
+            {
+                System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Push core start. Unsynced={unsynced.Count}");
+                try { LogManager.Info($"[PUSH][{countryId}] Push core start. Unsynced={unsynced.Count}"); } catch { }
+            }
 
             // Acquérir le verrou global si non détenu par l'appelant
             IDisposable globalLock = null;
             if (!assumeLockHeld)
             {
-                globalLock = await AcquireGlobalLockAsync(countryId, "PushPendingChanges", TimeSpan.FromMinutes(5), token);
+                _pushStages[countryId] = "AcquireLock";
+                if (diag)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Acquiring global lock...");
+                    try { LogManager.Info($"[PUSH][{countryId}] Acquiring global lock..."); } catch { }
+                }
+                int lockSecs = 20; // configurable acquire timeout
+                try { lockSecs = Math.Max(5, Math.Min(120, int.Parse(GetParameter("GlobalLockAcquireTimeoutSeconds") ?? "20"))); } catch { }
+                var acquireTask = AcquireGlobalLockAsync(countryId, "PushPendingChanges", TimeSpan.FromMinutes(5), token);
+                var completed = await Task.WhenAny(acquireTask, Task.Delay(TimeSpan.FromSeconds(lockSecs), token)) == acquireTask;
+                if (!completed)
+                {
+                    if (diag)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Timeout acquiring global lock after {lockSecs}s");
+                        try { LogManager.Info($"[PUSH][{countryId}] Timeout acquiring global lock after {lockSecs}s"); } catch { }
+                    }
+                    try { watchdogCts.Cancel(); } catch { }
+                    try { watchdogCts.Dispose(); } catch { }
+                    try { if (_pushRunIds.TryGetValue(countryId, out var id) && id == runId) _pushRunIds.TryRemove(countryId, out _); } catch { }
+                    throw new TimeoutException($"Timeout acquiring global lock after {lockSecs}s");
+                }
+                globalLock = await acquireTask;
                 if (globalLock == null)
+                {
+                    try { watchdogCts.Cancel(); } catch { }
+                    try { watchdogCts.Dispose(); } catch { }
+                    try { if (_pushRunIds.TryGetValue(countryId, out var id) && id == runId) _pushRunIds.TryRemove(countryId, out _); } catch { }
                     throw new InvalidOperationException($"Impossible d'acquérir le verrou global pour {countryId} (PushPendingChanges)");
+                }
+                if (diag)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Global lock acquired.");
+                    try { LogManager.Info($"[PUSH][{countryId}] Global lock acquired"); } catch { }
+                }
             }
             try
             {
-
                 var appliedIds = new List<long>();
 
                 // Préparer connexions
                 using (var localConn = new OleDbConnection(GetCountryConnectionString(countryId)))
                 using (var netConn = new OleDbConnection(GetNetworkCountryConnectionString(countryId)))
                 {
-                    await localConn.OpenAsync();
-                    await netConn.OpenAsync();
+                    // Configurable open timeout
+                    int openSecs = 20;
+                    try { openSecs = Math.Max(5, Math.Min(120, int.Parse(GetParameter("NetworkOpenTimeoutSeconds") ?? "20"))); } catch { }
+                    var openTimeout = TimeSpan.FromSeconds(openSecs);
 
-                    using (var tx = netConn.BeginTransaction())
+                    _pushStages[countryId] = "OpenLocal";
+                    await OpenWithTimeoutAsync(localConn, openTimeout, token, IsDiagSyncEnabled() ? countryId : null, isNetwork:false);
+                    if (diag) { System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Local DB opened."); try { LogManager.Info($"[PUSH][{countryId}] Local DB opened"); } catch { } }
+                    _pushStages[countryId] = "OpenNetwork";
+                    await OpenWithTimeoutAsync(netConn, openTimeout, token, IsDiagSyncEnabled() ? countryId : null, isNetwork:true);
+                    if (diag) { System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Network DB opened."); try { LogManager.Info($"[PUSH][{countryId}] Network DB opened"); } catch { } }
+
+                    _pushStages[countryId] = "BeginTx";
+                    using (var tx = netConn.BeginTransaction(System.Data.IsolationLevel.ReadCommitted))
                     {
                         try
                         {
@@ -3494,8 +4503,51 @@ namespace RecoTool.Services
                                 }
                                 else
                                 {
-                                    // Fallback: infer from value
-                                    var p = cmd.Parameters.AddWithValue(name, v);
+                                    // Fallback: infer from value and coerce
+                                    var it = InferOleDbTypeFromValue(v);
+                                    var p = new OleDbParameter(name, it) { Value = CoerceValueForOleDb(v, it) };
+                                    cmd.Parameters.Add(p);
+                                }
+                            };
+
+                            // Helper to execute non-query with retry on common Access lock violations
+                            Func<OleDbCommand, Task> execWithRetryAsync = async (cmd) =>
+                            {
+                                _pushStages[countryId] = "ProcessChanges";
+                                const int maxRetries = 5;
+                                int attempt = 0;
+                                while (true)
+                                {
+                                    try
+                                    {
+                                        await cmd.ExecuteNonQueryAsync();
+                                        return;
+                                    }
+                                    catch (OleDbException ex)
+                                    {
+                                        // Access/Jet lock violations often surface with these native error codes
+                                        bool isLock = false;
+                                        foreach (OleDbError err in ex.Errors)
+                                        {
+                                            if (err.NativeError == 3218 || err.NativeError == 3260 || err.NativeError == 3188)
+                                            {
+                                                isLock = true; break;
+                                            }
+                                        }
+                                        var msg = ex.Message?.ToLowerInvariant() ?? string.Empty;
+                                        if (!isLock)
+                                        {
+                                            if (msg.Contains("locked") || msg.Contains("verrou")) isLock = true;
+                                        }
+
+                                        if (isLock && attempt < maxRetries)
+                                        {
+                                            attempt++;
+                                            await Task.Delay(200 * attempt, token);
+                                            continue;
+                                        }
+                                        throw;
+                                    }
                                 }
                             };
 
@@ -3519,7 +4571,10 @@ namespace RecoTool.Services
                                 Dictionary<string, object> localValues = null;
                                 using (var lcCmd = new OleDbCommand($"SELECT * FROM [{table}] WHERE [{pkCol}] = @k", localConn))
                                 {
-                                    lcCmd.Parameters.AddWithValue("@k", localPkVal);
+                                    var localTypeMap = await GetColumnTypesAsync(localConn, table);
+                                    var kType = localTypeMap.TryGetValue(pkCol, out var ktt) ? ktt : InferOleDbTypeFromValue(localPkVal);
+                                    var pK = new OleDbParameter("@k", kType) { Value = CoerceValueForOleDb(localPkVal, kType) };
+                                    lcCmd.Parameters.Add(pK);
                                     using (var r = await lcCmd.ExecuteReaderAsync())
                                     {
                                         if (await r.ReadAsync())
@@ -3559,7 +4614,7 @@ namespace RecoTool.Services
                                         {
                                             for (int i = 0; i < parameters.Count; i++) addParam(cmd, $"@p{i}", parameters[i], i < paramCols.Count ? paramCols[i] : null, typeMap);
                                             addParam(cmd, "@key", localPkVal, pkCol, typeMap);
-                                            await cmd.ExecuteNonQueryAsync();
+                                            await execWithRetryAsync(cmd);
                                         }
                                     }
                                     else
@@ -3567,7 +4622,7 @@ namespace RecoTool.Services
                                         using (var cmd = new OleDbCommand($"DELETE FROM [{table}] WHERE [{pkCol}] = @key", netConn, tx))
                                         {
                                             addParam(cmd, "@key", localPkVal, pkCol, typeMap);
-                                            await cmd.ExecuteNonQueryAsync();
+                                            await execWithRetryAsync(cmd);
                                         }
                                     }
                                     appliedIds.Add(entry.Id);
@@ -3600,7 +4655,7 @@ namespace RecoTool.Services
                                         {
                                             for (int i = 0; i < allCols.Count; i++) addParam(up, $"@p{i}", localValues[allCols[i]], allCols[i], typeMap);
                                             addParam(up, "@key", localPkVal, pkCol, typeMap);
-                                            await up.ExecuteNonQueryAsync();
+                                            await execWithRetryAsync(up);
                                         }
                                     }
                                     else
@@ -3612,7 +4667,7 @@ namespace RecoTool.Services
                                         using (var ins = new OleDbCommand($"INSERT INTO [{table}] ({colList}) VALUES ({ph})", netConn, tx))
                                         {
                                             for (int i = 0; i < insertCols.Count; i++) addParam(ins, $"@p{i}", localValues[insertCols[i]], insertCols[i], typeMap);
-                                            await ins.ExecuteNonQueryAsync();
+                                            await execWithRetryAsync(ins);
                                         }
                                     }
 
@@ -3625,6 +4680,11 @@ namespace RecoTool.Services
                         catch
                         {
                             try { tx.Rollback(); } catch { }
+                            if (diag)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Transaction failed. Rolling back.");
+                                try { LogManager.Info($"[PUSH][{countryId}] Transaction failed. Rolling back"); } catch { }
+                            }
                             throw;
                         }
                     }
@@ -3634,42 +4694,30 @@ namespace RecoTool.Services
                 if (appliedIds.Count > 0)
                 {
                     await tracker.MarkChangesAsSyncedAsync(appliedIds);
-                    // Rafraîchir local pour refléter l'état réseau après application des pending
-                    await CopyNetworkToLocalAsync(countryId);
+                    if (diag)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Marked {appliedIds.Count} ChangeLog entries as synced.");
+                        try { LogManager.Info($"[PUSH][{countryId}] Marked {appliedIds.Count} entries as synced"); } catch { }
+                    }
                 }
 
+                // Notify completion as UpToDate
+                try { await RaiseSyncStateAsync(countryId, SyncStateKind.UpToDate, pendingOverride: 0); } catch { }
+
+                if (diag)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Push core completed. Applied={appliedIds.Count}");
+                    try { LogManager.Info($"[PUSH][{countryId}] Push core completed. Applied={appliedIds.Count}"); } catch { }
+                }
                 return appliedIds.Count;
             }
             finally
             {
                 try { globalLock?.Dispose(); } catch { }
+                try { watchdogCts.Cancel(); } catch { }
+                try { watchdogCts.Dispose(); } catch { }
+                try { if (_pushRunIds.TryGetValue(countryId, out var id) && id == runId) _pushRunIds.TryRemove(countryId, out _); } catch { }
             }
-        }
-        
-        /// <summary>
-        /// Récupère les garanties DWINGS depuis la base DW
-        /// </summary>
-        /// <returns>Liste des garanties DWINGS</returns>
-        public async Task<List<DWGuarantee>> GetDWGuaranteesAsync()
-        {
-            string query = "SELECT * FROM T_DW_Guarantee ORDER BY GUARANTEE_ID";
-            
-            return await QueryDWDatabaseAsync(query, reader => new DWGuarantee
-            {
-                GUARANTEE_ID = reader["GUARANTEE_ID"]?.ToString(),
-                SYNDICATE = reader["SYNDICATE"]?.ToString(),
-                CURRENCY = reader["CURRENCY"]?.ToString(),
-                AMOUNT = reader["AMOUNT"]?.ToString(),
-                OfficialID = reader["OfficialID"]?.ToString(),
-                GuaranteeType = reader["GuaranteeType"]?.ToString(),
-                Client = reader["Client"]?.ToString(),
-                _791Sent = reader["791Sent"]?.ToString(),
-                InvoiceStatus = reader["InvoiceStatus"]?.ToString(),
-                TriggerDate = reader["TriggerDate"]?.ToString(),
-                FXRate = reader["FXRate"]?.ToString(),
-                RMPM = reader["RMPM"]?.ToString(),
-                GroupName = reader["GroupName"]?.ToString()
-            });
         }
         
         /// <summary>
@@ -3835,6 +4883,27 @@ namespace RecoTool.Services
         /// <summary>
         /// Prépare une valeur .NET pour l'envoyer à OLE DB (gère les null/DBNull/DateTime/bool/etc.)
         /// </summary>
+        private bool IsDiagSyncEnabled()
+        {
+            try
+            {
+                var flag = GetParameter("DiagSyncLog");
+                if (string.Equals(flag, "1", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            catch { }
+            try
+            {
+                var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) ?? string.Empty, "RecoTool");
+                var marker = Path.Combine(dir, "diag_sync.on");
+                return File.Exists(marker);
+            }
+            catch { }
+            return false;
+        }
+
+        /// <summary>
+        /// Prépare une valeur .NET pour l'envoyer à OLE DB (gère les null/DBNull/DateTime/bool/etc.)
+        /// </summary>
         private object PrepareValueForDatabase(object value)
         {
             if (value == null || value == DBNull.Value)
@@ -3856,6 +4925,30 @@ namespace RecoTool.Services
 
             // Pour tous les autres types (string, int, etc.), on retourne la valeur telle quelle
             return value;
+        }
+
+        /// <summary>
+        /// Ouvre une connexion OleDb avec un timeout. En cas de dépassement, log et lève TimeoutException.
+        /// </summary>
+        private async Task OpenWithTimeoutAsync(OleDbConnection connection, TimeSpan timeout, CancellationToken token, string diagCountryId, bool isNetwork)
+        {
+            if (connection == null) throw new ArgumentNullException(nameof(connection));
+            var openTask = connection.OpenAsync();
+            var completed = await Task.WhenAny(openTask, Task.Delay(timeout, token)) == openTask;
+            if (!completed)
+            {
+                var kind = isNetwork ? "network" : "local";
+                if (IsDiagSyncEnabled())
+                {
+                    System.Diagnostics.Debug.WriteLine($"[PUSH][{diagCountryId}] Timeout opening {kind} DB after {timeout.TotalSeconds}s");
+                    try { LogManager.Info($"[PUSH][{diagCountryId}] Timeout opening {kind} DB after {timeout.TotalSeconds}s"); } catch { }
+                }
+                try { connection.Close(); } catch { }
+                try { connection.Dispose(); } catch { }
+                throw new TimeoutException($"Timeout opening {kind} database connection after {timeout.TotalSeconds}s");
+            }
+            // Propagate any exception
+            await openTask;
         }
 
         /// <summary>
@@ -3959,7 +5052,7 @@ namespace RecoTool.Services
             // Si nécessaire, basculer sur le bon pays
             if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
             {
-                var ok = await SetCurrentCountryAsync(countryId);
+                var ok = await SetCurrentCountryAsync(countryId, suppressPush: true);
                 if (!ok) throw new InvalidOperationException($"Impossible d'initialiser la base locale pour {countryId}");
             }
             EnsureInitialized();
@@ -4009,91 +5102,139 @@ namespace RecoTool.Services
         {
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
 
-            // S'assurer que la configuration est prête pour le pays demandé
-            if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
+            // Coalesce: if a sync for this country is already running, return the same Task
+            if (_activeSyncs.TryGetValue(countryId, out var existing))
             {
-                var ok = await SetCurrentCountryAsync(countryId);
-                if (!ok)
-                    return new SyncResult { Success = false, Message = $"Initialisation impossible pour {countryId}" };
+                return await existing;
             }
 
-            // Pause automatique de la synchronisation si un verrou d'import global est actif
-            try
+            async Task<SyncResult> RunSyncAsync()
             {
-                var lockActive = await IsGlobalLockActiveAsync();
-                if (lockActive)
+                // Per-country sync semaphore to serialize syncs (safety net)
+                var sem = _syncSemaphores.GetOrAdd(countryId, _ => new SemaphoreSlim(1, 1));
+                if (!await sem.WaitAsync(0))
                 {
-                    onProgress?.Invoke(0, "Synchronisation en pause: verrou d'import actif");
-                    return new SyncResult { Success = false, Message = "Import lock active - sync paused" };
+                    return new SyncResult { Success = false, Message = "Synchronization already in progress for this country" };
                 }
-            }
-            catch { /* ignorer les erreurs lors de la vérification du verrou */ }
-
-            try
-            {
-                // Fast-path: comparer uniquement la base de réconciliation (AMBRE est géré par import)
                 try
                 {
-                    var localPath = GetLocalReconciliationDbPath(_currentCountryId);
-                    var remotePath = GetNetworkReconciliationDbPath(_currentCountryId);
-                    if (!string.IsNullOrWhiteSpace(localPath) && !string.IsNullOrWhiteSpace(remotePath)
-                        && File.Exists(localPath) && File.Exists(remotePath))
+                    // S'assurer que la configuration est prête pour le pays demandé
+                    if (!string.Equals(countryId, _currentCountryId, StringComparison.OrdinalIgnoreCase))
                     {
-                        var lfi = new FileInfo(localPath);
-                        var rfi = new FileInfo(remotePath);
-                        bool filesLikelyIdentical = lfi.Length == rfi.Length && lfi.LastWriteTimeUtc == rfi.LastWriteTimeUtc;
+                        var ok = await SetCurrentCountryAsync(countryId, suppressPush: true);
+                        if (!ok)
+                            return new SyncResult { Success = false, Message = $"Initialisation impossible pour {countryId}" };
+                    }
 
-                        if (filesLikelyIdentical)
+                    // Pause automatique si verrou d'import actif
+                    try
+                    {
+                        var lockActive = await IsGlobalLockActiveAsync();
+                        if (lockActive)
                         {
-                            // Vérifier les changements en attente dans la base de lock
-                            var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetRemoteLockConnectionString(_currentCountryId));
-                            var unsynced = await tracker.GetUnsyncedChangesAsync();
-                            if (unsynced == null || !unsynced.Any())
+                            onProgress?.Invoke(0, "Synchronisation en pause: verrou d'import actif");
+                            return new SyncResult { Success = false, Message = "Import lock active - sync paused" };
+                        }
+                    }
+                    catch { /* ignorer les erreurs lors de la vérification du verrou */ }
+
+                    // Push local pending changes first (best-effort)
+                    if (_useLocalChangeLog)
+                    {
+                        try
+                        {
+                            onProgress?.Invoke(1, "Poussée des changements locaux en attente...");
+                            await PushReconciliationIfPendingAsync(_currentCountryId);
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[SYNC] Pre-pull push failed: {ex.Message}");
+                            // continue with reconcile; entries remain pending locally
+                        }
+                    }
+
+                    // Fast-path: comparer uniquement la base de réconciliation (AMBRE est géré par import)
+                    try
+                    {
+                        var localPath = GetLocalReconciliationDbPath(_currentCountryId);
+                        var remotePath = GetNetworkReconciliationDbPath(_currentCountryId);
+                        if (!string.IsNullOrWhiteSpace(localPath) && !string.IsNullOrWhiteSpace(remotePath)
+                            && File.Exists(localPath) && File.Exists(remotePath))
+                        {
+                            var lfi = new FileInfo(localPath);
+                            var rfi = new FileInfo(remotePath);
+                            bool filesLikelyIdentical = lfi.Length == rfi.Length && lfi.LastWriteTimeUtc == rfi.LastWriteTimeUtc;
+
+                            if (filesLikelyIdentical)
                             {
-                                onProgress?.Invoke(100, "Bases identiques (RECON) - aucune synchronisation nécessaire.");
-                                return new SyncResult { Success = true, Message = "No-op (identique)" };
+                                // Vérifier les changements en attente dans la base de lock
+                                var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(_currentCountryId));
+                                var unsynced = await tracker.GetUnsyncedChangesAsync();
+                                if (unsynced == null || !unsynced.Any())
+                                {
+                                    onProgress?.Invoke(100, "Bases identiques (RECON) - aucune synchronisation nécessaire.");
+                                    return new SyncResult { Success = true, Message = "No-op (identique)" };
+                                }
                             }
                         }
                     }
-                }
-                catch { /* best-effort, en cas d'erreur on continue avec la synchro normale */ }
+                    catch { /* best-effort, en cas d'erreur on continue avec la synchro normale */ }
 
-                // Déterminer les tables de réconciliation à synchroniser
-                var reconTables = new List<string>();
-                var syncTables = GetParameter("SyncTables");
-                if (!string.IsNullOrWhiteSpace(syncTables))
-                {
-                    foreach (var t in syncTables.Split(','))
+                    // Déterminer les tables de réconciliation à synchroniser
+                    var reconTables = new List<string>();
+                    var syncTables = GetParameter("SyncTables");
+                    if (!string.IsNullOrWhiteSpace(syncTables))
                     {
-                        var name = t?.Trim();
-                        if (!string.IsNullOrEmpty(name) && name.StartsWith("T_Reconciliation", StringComparison.OrdinalIgnoreCase))
-                            reconTables.Add(name);
+                        foreach (var t in syncTables.Split(','))
+                        {
+                            var name = t?.Trim();
+                            if (!string.IsNullOrEmpty(name) && name.StartsWith("T_Reconciliation", StringComparison.OrdinalIgnoreCase))
+                                reconTables.Add(name);
+                        }
                     }
-                }
-                if (reconTables.Count == 0)
-                {
-                    // Valeur par défaut minimale
-                    reconTables.Add("T_Reconciliation");
-                }
+                    if (reconTables.Count == 0)
+                    {
+                        reconTables.Add("T_Reconciliation");
+                    }
 
-                onProgress?.Invoke(0, "Initialisation synchro RECON...");
-                var reconCfg = BuildReconciliationSyncConfiguration(_currentCountryId, reconTables);
-                if (_syncService == null) _syncService = new SynchronizationService();
-                await _syncService.InitializeAsync(reconCfg);
-                onProgress?.Invoke(5, "Démarrage RECON...");
-                var reconRes = await _syncService.SynchronizeAsync(onProgress);
+                    onProgress?.Invoke(0, "Initialisation synchro RECON...");
+                    var reconCfg = BuildReconciliationSyncConfiguration(_currentCountryId, reconTables);
+                    if (_syncService == null) _syncService = new SynchronizationService();
+                    await _syncService.InitializeAsync(reconCfg);
+                    onProgress?.Invoke(5, "Démarrage RECON...");
+                    var reconRes = await _syncService.SynchronizeAsync(onProgress);
 
-                if (reconRes != null && reconRes.Success)
-                {
-                    _lastSyncTimes[_currentCountryId] = DateTime.UtcNow;
-                    return reconRes;
+                    if (reconRes != null && reconRes.Success)
+                    {
+                        _lastSyncTimes[_currentCountryId] = DateTime.UtcNow;
+                        return reconRes;
+                    }
+                    return reconRes ?? new SyncResult { Success = false, Message = "Résultat RECON nul" };
                 }
-                return reconRes ?? new SyncResult { Success = false, Message = "Résultat RECON nul" };
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SYNC] Erreur: {ex.Message}");
+                    return new SyncResult { Success = false, Message = ex.Message };
+                }
+                finally
+                {
+                    try { sem.Release(); } catch { }
+                }
             }
-            catch (Exception ex)
+
+            var runner = RunSyncAsync();
+            if (!_activeSyncs.TryAdd(countryId, runner))
             {
-                System.Diagnostics.Debug.WriteLine($"[SYNC] Erreur: {ex.Message}");
-                return new SyncResult { Success = false, Message = ex.Message };
+                // Race: another runner just got added
+                if (_activeSyncs.TryGetValue(countryId, out var current)) return await current;
+            }
+            try
+            {
+                return await runner;
+            }
+            finally
+            {
+                _activeSyncs.TryRemove(countryId, out _);
             }
         }
         
@@ -4133,7 +5274,7 @@ namespace RecoTool.Services
                     // Arrêter la surveillance des changements
                     try
                     {
-                        StopWatching();
+                        //StopWatching();
                     }
                     catch
                     {

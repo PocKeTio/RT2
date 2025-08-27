@@ -707,6 +707,13 @@
                                 </Setter>
                                 <EventSetter Event="ContextMenuOpening" Handler="DataGridRow_ContextMenuOpening"/>
                                 <Style.Triggers>
+                                    <!-- transient highlights after sync refresh -->
+                                    <DataTrigger Binding="{Binding IsNewlyAdded}" Value="True">
+                                        <Setter Property="Background" Value="#E6FFED"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsUpdated}" Value="True">
+                                        <Setter Property="Background" Value="#FFF8E1"/>
+                                    </DataTrigger>
                                     <Trigger Property="IsMouseOver" Value="True">
                                         <Setter Property="Background" Value="#EEF5FF"/>
                                     </Trigger>

@@ -35,8 +35,16 @@ namespace OfflineFirstAccess.Helpers
         /// </summary>
         private void AddSystemTables()
         {
-            // CORRECTION : ChangeLog supprimé - maintenant géré dans la base Lock
-            // ChangeLog est créé automatiquement via EnsureChangeLogTableExistsAsync
+            // ChangeLog local pour durabilité hors-ligne
+            AddTable("ChangeLog")
+                .WithPrimaryKey("ChangeID", typeof(long), true)
+                .WithColumn("TableName", typeof(string), true)
+                .WithColumn("RecordID", typeof(string), true)
+                .WithColumn("Operation", typeof(string), "TEXT(50)", true)
+                // Stocké en DATETIME (UTC) pour un typage correct
+                .WithColumn("Timestamp", typeof(DateTime), "DATETIME", true)
+                .WithColumn("Synchronized", typeof(bool), true)
+                .EndTable();
 
             // Table des verrous (SyncLocks)
             AddTable("SyncLocks")

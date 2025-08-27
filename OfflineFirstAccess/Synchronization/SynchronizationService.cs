@@ -30,8 +30,11 @@ namespace OfflineFirstAccess.Synchronization
             if (string.IsNullOrWhiteSpace(config.LockDatabasePath))
                 throw new InvalidOperationException("LockDatabasePath must be set in SyncConfiguration.");
 
-            string lockConnStr = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={config.LockDatabasePath};";
-            var changeTracker = new ChangeTracking.ChangeTracker(lockConnStr);
+            // Prefer an explicit ChangeLog connection string if provided; otherwise fall back to Lock DB
+            string trackerConnStr = !string.IsNullOrWhiteSpace(config.ChangeLogConnectionString)
+                ? config.ChangeLogConnectionString
+                : $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={config.LockDatabasePath};";
+            var changeTracker = new ChangeTracking.ChangeTracker(trackerConnStr);
 
             // 3. Create the Conflict Resolver
             var conflictResolver = new ManualConflictResolver(config);
@@ -138,13 +141,13 @@ namespace OfflineFirstAccess.Synchronization
             using (var connection = new OleDbConnection(LockConnStr))
             {
                 await connection.OpenAsync();
-                string insertSql = "INSERT INTO SyncLog (Operation, Status, Details, [Timestamp]) VALUES (@op, @st, @de, @ts)";
+                string insertSql = "INSERT INTO SyncLog ([Operation], [Status], [Details], [Timestamp]) VALUES (@op, @st, @de, @ts)";
                 using (var cmd = new OleDbCommand(insertSql, connection))
                 {
-                    cmd.Parameters.AddWithValue("@op", operation);
-                    cmd.Parameters.AddWithValue("@st", status);
-                    cmd.Parameters.AddWithValue("@de", details ?? string.Empty);
-                    cmd.Parameters.AddWithValue("@ts", DateTime.UtcNow.ToOADate());
+                    var pOp = cmd.Parameters.Add("@op", OleDbType.VarChar, 50); pOp.Value = operation ?? string.Empty;
+                    var pSt = cmd.Parameters.Add("@st", OleDbType.VarChar, 50); pSt.Value = status ?? string.Empty;
+                    var pDe = cmd.Parameters.Add("@de", OleDbType.VarChar, 255); pDe.Value = details ?? string.Empty;
+                    var pTs = cmd.Parameters.Add("@ts", OleDbType.Date); pTs.Value = DateTime.UtcNow;
                     await cmd.ExecuteNonQueryAsync();
                 }
             }

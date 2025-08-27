@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using RecoTool.Models;
 using OfflineFirstAccess.ChangeTracking;
+using OfflineFirstAccess.Helpers;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -200,6 +201,25 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Récupère uniquement les réconciliations dont l'action est TRIGGER (non supprimées)
+        /// </summary>
+        public async Task<List<Reconciliation>> GetTriggerReconciliationsAsync(string countryId)
+        {
+            // Jointure sur AMBRE identique pour respecter la portée pays, mais seules les colonnes r.* sont nécessaires
+            string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
+            string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
+            string ambreJoin = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre AS a" : $"(SELECT * FROM [{ambreEsc}].T_Data_Ambre) AS a";
+
+            // Filter by Action = Trigger (use enum to avoid hardcoded IDs)
+            var query = $@"SELECT r.* FROM (T_Reconciliation AS r
+                             INNER JOIN {ambreJoin} ON r.ID = a.ID)
+                           WHERE r.DeleteDate IS NULL AND r.Action = ?
+                           ORDER BY r.LastModified DESC";
+
+            return await ExecuteQueryAsync<Reconciliation>(query, _connectionString, (int)ActionType.Trigger);
+        }
+
+        /// <summary>
         /// Récupère les données jointes Ambre + Réconciliation
         /// </summary>
         public async Task<List<ReconciliationViewData>> GetReconciliationViewAsync(string countryId, string filterSql = null)
@@ -265,8 +285,22 @@ namespace RecoTool.Services
                 // 3) Strip leading WHERE if present (case-insensitive)
                 if (cond.StartsWith("WHERE ", StringComparison.OrdinalIgnoreCase))
                     cond = cond.Substring(6).Trim();
+
+                // 4) Minimal safety gate: reject dangerous keywords to avoid logic injections or heavy subqueries
                 if (!string.IsNullOrEmpty(cond))
-                    query += $" AND ({cond})";
+                {
+                    var lower = cond.ToLowerInvariant();
+                    string[] banned = { " union ", " select ", " insert ", " delete ", " update ", " drop ", " alter ", " exec ", ";" };
+                    bool hasBanned = banned.Any(k => lower.Contains(k));
+                    if (!hasBanned)
+                    {
+                        query += $" AND ({cond})";
+                    }
+                    else
+                    {
+                        try { System.Diagnostics.Debug.WriteLine("[RecoView][WARN] Unsafe filterSql detected and ignored."); } catch { }
+                    }
+                }
             }
 
             query += " ORDER BY a.Operation_Date DESC";
@@ -756,7 +790,7 @@ namespace RecoTool.Services
 
                             transaction.Commit();
 
-                            // Record changes in the LOCK database (ChangeLog resides in lock DB)
+                            // Record changes in ChangeLog (stored locally via OfflineFirstService configuration)
                             try
                             {
                                 if (_offlineFirstService != null && changeTuples.Count > 0)
@@ -812,66 +846,7 @@ namespace RecoTool.Services
             }
         }
 
-        #region Snapshot label helpers
-        private static string GetActionName(int action)
-        {
-            try
-            {
-                var value = (ActionType)action;
-                return GetEnumDescription(value);
-            }
-            catch
-            {
-                return action.ToString();
-            }
-        }
-
-        private static string GetKPIName(int kpi)
-        {
-            try
-            {
-                var value = (KPIType)kpi;
-                switch (value)
-                {
-                    case KPIType.ITIssues: return "IT Issues";
-                    case KPIType.PaidButNotReconciled: return "Paid but not reconciled";
-                    case KPIType.CorrespondentChargesToBeInvoiced: return "Corr. charges to be invoiced";
-                    case KPIType.UnderInvestigation: return "Under investigation";
-                    case KPIType.NotClaimed: return "Not claimed";
-                    case KPIType.ClaimedButNotPaid: return "Claimed but not paid";
-                    case KPIType.CorrespondentChargesPendingTrigger: return "Corr. charges pending trigger";
-                    default: return SplitCamelCase(value.ToString());
-                }
-            }
-            catch
-            {
-                return kpi.ToString();
-            }
-        }
-
-        private static string GetEnumDescription(Enum value)
-        {
-            try
-            {
-                var fi = value.GetType().GetField(value.ToString());
-                if (fi != null)
-                {
-                    var attrs = (DescriptionAttribute[])fi.GetCustomAttributes(typeof(DescriptionAttribute), false);
-                    if (attrs != null && attrs.Length > 0)
-                        return attrs[0].Description;
-                }
-            }
-            catch { }
-            return SplitCamelCase(value.ToString());
-        }
-
-        private static string SplitCamelCase(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return s;
-            var spaced = Regex.Replace(s, "([a-z])([A-Z])", "$1 $2");
-            return spaced.Replace('_', ' ');
-        }
-        #endregion
+        
 
         /// <summary>
         /// Sauvegarde une réconciliation unique dans une transaction
@@ -888,6 +863,7 @@ namespace RecoTool.Services
                 // If the row exists, compare business fields to avoid no-op updates
                 if (exists)
                 {
+                    var changed = new System.Collections.Generic.List<string>();
                     var selectCmd = new OleDbCommand(@"SELECT 
                                 [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_CommissionID],
                                 [Action], [Assignee], [Comments], [InternalInvoiceReference],
@@ -917,52 +893,170 @@ namespace RecoTool.Services
                                 catch { return null; }
                             }
 
-                            var same =
-                                Equal(DbVal(0), (object)reconciliation.DWINGS_GuaranteeID) &&
-                                Equal(DbVal(1), (object)reconciliation.DWINGS_InvoiceID) &&
-                                Equal(DbVal(2), (object)reconciliation.DWINGS_CommissionID) &&
-                                Equal(DbVal(3), (object)reconciliation.Action) &&
-                                Equal(DbVal(4), (object)reconciliation.Assignee) &&
-                                Equal(DbVal(5), (object)reconciliation.Comments) &&
-                                Equal(DbVal(6), (object)reconciliation.InternalInvoiceReference) &&
-                                Equal(DbVal(7), reconciliation.FirstClaimDate.HasValue ? (object)reconciliation.FirstClaimDate.Value : null) &&
-                                Equal(DbVal(8), reconciliation.LastClaimDate.HasValue ? (object)reconciliation.LastClaimDate.Value : null) &&
-                                Equal(DbBool(DbVal(9)), (object)reconciliation.ToRemind) &&
-                                Equal(DbVal(10), reconciliation.ToRemindDate.HasValue ? (object)reconciliation.ToRemindDate.Value : null) &&
-                                Equal(DbBool(DbVal(11)), (object)reconciliation.ACK) &&
-                                Equal(DbVal(12), (object)reconciliation.SwiftCode) &&
-                                Equal(DbVal(13), (object)reconciliation.PaymentReference) &&
-                                Equal(DbVal(14), (object)reconciliation.KPI) &&
-                                Equal(DbVal(15), (object)reconciliation.IncidentType) &&
-                                Equal(DbBool(DbVal(16)), (object)reconciliation.RiskyItem) &&
-                                Equal(DbVal(17), (object)reconciliation.ReasonNonRisky);
+                            // Build the list of changed business fields
+                            if (!Equal(DbVal(0), (object)reconciliation.DWINGS_GuaranteeID)) changed.Add("DWINGS_GuaranteeID");
+                            if (!Equal(DbVal(1), (object)reconciliation.DWINGS_InvoiceID)) changed.Add("DWINGS_InvoiceID");
+                            if (!Equal(DbVal(2), (object)reconciliation.DWINGS_CommissionID)) changed.Add("DWINGS_CommissionID");
+                            if (!Equal(DbVal(3), (object)reconciliation.Action)) changed.Add("Action");
+                            if (!Equal(DbVal(4), (object)reconciliation.Assignee)) changed.Add("Assignee");
+                            if (!Equal(DbVal(5), (object)reconciliation.Comments)) changed.Add("Comments");
+                            if (!Equal(DbVal(6), (object)reconciliation.InternalInvoiceReference)) changed.Add("InternalInvoiceReference");
+                            if (!Equal(DbVal(7), reconciliation.FirstClaimDate.HasValue ? (object)reconciliation.FirstClaimDate.Value : null)) changed.Add("FirstClaimDate");
+                            if (!Equal(DbVal(8), reconciliation.LastClaimDate.HasValue ? (object)reconciliation.LastClaimDate.Value : null)) changed.Add("LastClaimDate");
+                            if (!Equal(DbBool(DbVal(9)), (object)reconciliation.ToRemind)) changed.Add("ToRemind");
+                            if (!Equal(DbVal(10), reconciliation.ToRemindDate.HasValue ? (object)reconciliation.ToRemindDate.Value : null)) changed.Add("ToRemindDate");
+                            if (!Equal(DbBool(DbVal(11)), (object)reconciliation.ACK)) changed.Add("ACK");
+                            if (!Equal(DbVal(12), (object)reconciliation.SwiftCode)) changed.Add("SwiftCode");
+                            if (!Equal(DbVal(13), (object)reconciliation.PaymentReference)) changed.Add("PaymentReference");
+                            if (!Equal(DbVal(14), (object)reconciliation.KPI)) changed.Add("KPI");
+                            if (!Equal(DbVal(15), (object)reconciliation.IncidentType)) changed.Add("IncidentType");
+                            if (!Equal(DbBool(DbVal(16)), (object)reconciliation.RiskyItem)) changed.Add("RiskyItem");
+                            if (!Equal(DbVal(17), (object)reconciliation.ReasonNonRisky)) changed.Add("ReasonNonRisky");
 
-                            if (same)
+                            if (changed.Count == 0)
                             {
                                 // No business-field change: skip UPDATE and ChangeLog
+                                LogManager.Debug($"Reconciliation NOOP: ID={reconciliation.ID} - no business-field changes detected.");
                                 return "NOOP";
                             }
                         }
                     }
 
-                    // Apply update with refreshed modification metadata
+                    // Apply update with refreshed modification metadata (partial update of changed fields only)
+                    LogManager.Debug($"Reconciliation UPDATE detected: ID={reconciliation.ID} Changed=[{string.Join(",", changed)}]");
                     reconciliation.ModifiedBy = _currentUser;
                     reconciliation.LastModified = DateTime.UtcNow;
 
-                    var updateQuery = @"UPDATE T_Reconciliation SET 
-                             [DWINGS_GuaranteeID] = ?, [DWINGS_InvoiceID] = ?, [DWINGS_CommissionID] = ?,
-                             [Action] = ?, [Assignee] = ?, [Comments] = ?, [InternalInvoiceReference] = ?,
-                             [FirstClaimDate] = ?, [LastClaimDate] = ?, [ToRemind] = ?, [ToRemindDate] = ?,
-                             [ACK] = ?, [SwiftCode] = ?, [PaymentReference] = ?, [KPI] = ?,
-                             [IncidentType] = ?, [RiskyItem] = ?, [ReasonNonRisky] = ?,
-                             [ModifiedBy] = ?, [LastModified] = ?
-                             WHERE [ID] = ?";
+                    // Build dynamic UPDATE statement
+                    var setClauses = new System.Collections.Generic.List<string>();
+                    foreach (var col in changed)
+                    {
+                        setClauses.Add($"[{col}] = ?");
+                    }
+                    // Always update metadata
+                    setClauses.Add("[ModifiedBy] = ?");
+                    setClauses.Add("[LastModified] = ?");
+                    var updateQuery = $"UPDATE T_Reconciliation SET {string.Join(", ", setClauses)} WHERE [ID] = ?";
 
                     using (var cmd = new OleDbCommand(updateQuery, connection, transaction))
                     {
-                        AddReconciliationParameters(cmd, reconciliation, isInsert: false);
+                        // Add parameters in the same order as placeholders
+                        foreach (var col in changed)
+                        {
+                            switch (col)
+                            {
+                                case "DWINGS_GuaranteeID":
+                                    cmd.Parameters.AddWithValue("@DWINGS_GuaranteeID", reconciliation.DWINGS_GuaranteeID ?? (object)DBNull.Value);
+                                    break;
+                                case "DWINGS_InvoiceID":
+                                    cmd.Parameters.AddWithValue("@DWINGS_InvoiceID", reconciliation.DWINGS_InvoiceID ?? (object)DBNull.Value);
+                                    break;
+                                case "DWINGS_CommissionID":
+                                    cmd.Parameters.AddWithValue("@DWINGS_CommissionID", reconciliation.DWINGS_CommissionID ?? (object)DBNull.Value);
+                                    break;
+                                case "Action":
+                                    cmd.Parameters.AddWithValue("@Action", reconciliation.Action ?? (object)DBNull.Value);
+                                    break;
+                                case "Assignee":
+                                    cmd.Parameters.AddWithValue("@Assignee", string.IsNullOrWhiteSpace(reconciliation.Assignee) ? (object)DBNull.Value : reconciliation.Assignee);
+                                    break;
+                                case "Comments":
+                                    cmd.Parameters.AddWithValue("@Comments", reconciliation.Comments ?? (object)DBNull.Value);
+                                    break;
+                                case "InternalInvoiceReference":
+                                    cmd.Parameters.AddWithValue("@InternalInvoiceReference", reconciliation.InternalInvoiceReference ?? (object)DBNull.Value);
+                                    break;
+                                case "FirstClaimDate":
+                                    {
+                                        var p = cmd.Parameters.Add("@FirstClaimDate", OleDbType.Date);
+                                        p.Value = reconciliation.FirstClaimDate.HasValue ? (object)reconciliation.FirstClaimDate.Value : DBNull.Value;
+                                        break;
+                                    }
+                                case "LastClaimDate":
+                                    {
+                                        var p = cmd.Parameters.Add("@LastClaimDate", OleDbType.Date);
+                                        p.Value = reconciliation.LastClaimDate.HasValue ? (object)reconciliation.LastClaimDate.Value : DBNull.Value;
+                                        break;
+                                    }
+                                case "ToRemind":
+                                    {
+                                        var p = cmd.Parameters.Add("@ToRemind", OleDbType.Boolean);
+                                        p.Value = reconciliation.ToRemind;
+                                        break;
+                                    }
+                                case "ToRemindDate":
+                                    {
+                                        var p = cmd.Parameters.Add("@ToRemindDate", OleDbType.Date);
+                                        p.Value = reconciliation.ToRemindDate.HasValue ? (object)reconciliation.ToRemindDate.Value : DBNull.Value;
+                                        break;
+                                    }
+                                case "ACK":
+                                    {
+                                        var p = cmd.Parameters.Add("@ACK", OleDbType.Boolean);
+                                        p.Value = reconciliation.ACK;
+                                        break;
+                                    }
+                                case "SwiftCode":
+                                    cmd.Parameters.AddWithValue("@SwiftCode", reconciliation.SwiftCode ?? (object)DBNull.Value);
+                                    break;
+                                case "PaymentReference":
+                                    cmd.Parameters.AddWithValue("@PaymentReference", reconciliation.PaymentReference ?? (object)DBNull.Value);
+                                    break;
+                                case "KPI":
+                                    {
+                                        var p = cmd.Parameters.Add("@KPI", OleDbType.Integer);
+                                        p.Value = reconciliation.KPI.HasValue ? (object)reconciliation.KPI.Value : DBNull.Value;
+                                        break;
+                                    }
+                                case "IncidentType":
+                                    {
+                                        var p = cmd.Parameters.Add("@IncidentType", OleDbType.Integer);
+                                        p.Value = reconciliation.IncidentType.HasValue ? (object)reconciliation.IncidentType.Value : DBNull.Value;
+                                        break;
+                                    }
+                                case "RiskyItem":
+                                    {
+                                        var p = cmd.Parameters.Add("@RiskyItem", OleDbType.Boolean);
+                                        p.Value = reconciliation.RiskyItem.HasValue ? (object)reconciliation.RiskyItem.Value : DBNull.Value;
+                                        break;
+                                    }
+                                case "ReasonNonRisky":
+                                    {
+                                        var p = cmd.Parameters.Add("@ReasonNonRisky", OleDbType.Integer);
+                                        p.Value = reconciliation.ReasonNonRisky.HasValue ? (object)reconciliation.ReasonNonRisky.Value : DBNull.Value;
+                                        break;
+                                    }
+                            }
+                        }
+
+                        // Metadata
+                        cmd.Parameters.AddWithValue("@ModifiedBy", reconciliation.ModifiedBy ?? (object)DBNull.Value);
+                        var pMod = cmd.Parameters.Add("@LastModified", OleDbType.Date);
+                        pMod.Value = reconciliation.LastModified.HasValue ? (object)reconciliation.LastModified.Value : DBNull.Value;
+
+                        // WHERE ID
+                        cmd.Parameters.AddWithValue("@ID", reconciliation.ID);
+
+                        // Debug SQL and parameters
+                        try
+                        {
+                            var paramDbg = string.Join(" | ", cmd.Parameters
+                                .Cast<OleDbParameter>()
+                                .Select(p =>
+                                {
+                                    var val = p.Value;
+                                    string display = val == null || val is DBNull ? "NULL" : (val is byte[] b ? $"byte[{b.Length}]" : val.ToString());
+                                    return $"{p.ParameterName} type={p.OleDbType} value={display}";
+                                }));
+                            LogManager.Debug($"Reconciliation UPDATE SQL: {updateQuery} | Params: {paramDbg}");
+                        }
+                        catch { }
+
                         await cmd.ExecuteNonQueryAsync();
-                        return "UPDATE";
+                        // Encode changed fields for partial update during sync
+                        var op = $"UPDATE({string.Join(",", changed)})";
+                        LogManager.Debug($"Reconciliation UPDATE operation encoded: {op}");
+                        return op;
                     }
                 }
                 else
@@ -983,6 +1077,7 @@ namespace RecoTool.Services
                     using (var cmd = new OleDbCommand(insertQuery, connection, transaction))
                     {
                         AddReconciliationParameters(cmd, reconciliation, isInsert: true);
+                        LogManager.Debug($"Reconciliation INSERT: ID={reconciliation.ID}");
                         await cmd.ExecuteNonQueryAsync();
                         return "INSERT";
                     }
@@ -1186,7 +1281,7 @@ namespace RecoTool.Services
 
             // Receivable vs Pivot by Action
             var actionGroups = list.Where(r => r.Action.HasValue).GroupBy(r => r.Action.Value).OrderBy(g => g.Key).ToList();
-            var labels = actionGroups.Select(g => GetActionName(g.Key)).ToList();
+            var labels = actionGroups.Select(g => EnumHelper.GetActionName(g.Key, _offlineFirstService?.UserFields)).ToList();
             var recvVals = actionGroups.Select(g => g.Count(x => x.Account_ID == receivableId)).ToList();
             var pivVals  = actionGroups.Select(g => g.Count(x => x.Account_ID == pivotId)).ToList();
             dto.ReceivablePivotByActionJson = JsonSerializer.Serialize(new { labels, receivable = recvVals, pivot = pivVals });
@@ -1194,7 +1289,7 @@ namespace RecoTool.Services
             // KPI Distribution
             var kpiDist = list.Where(r => r.KPI.HasValue)
                               .GroupBy(r => r.KPI.Value)
-                              .Select(g => new { kpi = GetKPIName(g.Key), count = g.Count() })
+                              .Select(g => new { kpi = EnumHelper.GetKPIName(g.Key, _offlineFirstService?.UserFields), count = g.Count() })
                               .OrderByDescending(x => x.count)
                               .ToList();
             dto.KpiDistributionJson = JsonSerializer.Serialize(kpiDist);
@@ -1204,7 +1299,7 @@ namespace RecoTool.Services
                               .GroupBy(r => r.KPI.Value)
                               .OrderBy(g => g.Key)
                               .ToList();
-            var kpiLabels = kpiRisk.Select(g => GetKPIName(g.Key)).ToList();
+            var kpiLabels = kpiRisk.Select(g => EnumHelper.GetKPIName(g.Key, _offlineFirstService?.UserFields)).ToList();
             var risky = kpiRisk.Select(g => g.Count(x => x.RiskyItem == true)).ToList();
             var nonRisky = kpiRisk.Select(g => g.Count(x => x.RiskyItem != true)).ToList();
             dto.KpiRiskMatrixJson = JsonSerializer.Serialize(new { kpiLabels, series = new[] { "Risky", "Non-Risky" }, values = new[] { risky, nonRisky } });
@@ -1221,7 +1316,7 @@ namespace RecoTool.Services
             // Action Distribution (counts per action)
             var act = list.Where(r => r.Action.HasValue)
                           .GroupBy(r => r.Action.Value)
-                          .Select(g => new { action = GetActionName(g.Key), count = g.Count() })
+                          .Select(g => new { action = EnumHelper.GetActionName(g.Key, _offlineFirstService?.UserFields), count = g.Count() })
                           .OrderByDescending(x => x.count)
                           .ToList();
             dto.ActionDistributionJson = JsonSerializer.Serialize(act);

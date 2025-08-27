@@ -10,6 +10,7 @@ namespace OfflineFirstAccess.Models
         public string LocalDatabasePath { get; set; }
         public string RemoteDatabasePath { get; set; }
         public string LockDatabasePath { get; set; }
+        public string ChangeLogConnectionString { get; set; }
         public List<string> TablesToSync { get; set; } = new List<string>();
 
         // Standard metadata columns

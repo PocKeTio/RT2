@@ -90,6 +90,16 @@
                             <TextBlock Text="Under investigation" FontSize="12" Foreground="#666666" HorizontalAlignment="Center"/>
                         </StackPanel>
                     </Grid>
+
+                    <!-- Report Missing Invoice Button -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,0,0,10">
+                        <Button Height="30" MinWidth="200" Style="{StaticResource StandardButtonStyle}" Click="ReportMissingInvoices_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE715;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBlock Text="Report Missing Invoice" FontSize="13" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
                 </Grid>
             </Border>
 

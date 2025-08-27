@@ -28,6 +28,8 @@ namespace RecoTool.Windows
         private readonly OfflineFirstService _offlineFirstService;
         private readonly AmbreImportService _ambreImportService;
         private string _selectedFilePath;
+        private string _selectedFilePath1;
+        private string _selectedFilePath2;
         private string[] _selectedFilePaths = Array.Empty<string>();
         private bool _isImporting;
         private bool _isValidating;
@@ -130,38 +132,68 @@ namespace RecoTool.Windows
         #region Event Handlers
 
         /// <summary>
-        /// Parcourir et sélectionner un fichier Excel
+        /// Parcourir et sélectionner le premier fichier Excel
         /// </summary>
-        private void BrowseFileButton_Click(object sender, RoutedEventArgs e)
+        private void BrowseFile1Button_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 var openFileDialog = new OpenFileDialog
                 {
-                    Title = "Select all AMBRE files (Pivot and Receivable) — up to 2 files",
+                    Title = "Select AMBRE file (Pivot or Receivable)",
                     Filter = "Excel Files (*.xlsx;*.xls)|*.xlsx;*.xls|All Files (*.*)|*.*",
-                    Multiselect = true
+                    Multiselect = false
                 };
 
                 if (openFileDialog.ShowDialog() == true)
                 {
-                    // Limit to 2 files max
-                    var chosen = openFileDialog.FileNames?.Take(2).ToArray() ?? Array.Empty<string>();
-                    SelectedFilePaths = chosen;
-                    if (chosen.Length == 0)
-                    {
-                        FilePathTextBox.Text = string.Empty;
-                    }
-                    else if (chosen.Length == 1)
-                    {
-                        FilePathTextBox.Text = chosen[0];
-                    }
-                    else
-                    {
-                        FilePathTextBox.Text = $"{chosen.Length} files selected";
-                    }
+                    _selectedFilePath1 = openFileDialog.FileName;
+                    SelectedFilePath = _selectedFilePath1; // keep compatibility for validation/preview
+                    FilePathTextBox1.Text = _selectedFilePath1;
 
-                    // Title already informs the user; no extra popup here
+                    try
+                    {
+                        var fi = new FileInfo(_selectedFilePath1);
+                        FileInfoText1.Text = $"File: {fi.Name} ({fi.Length / 1024:N0} KB) - Modified: {fi.LastWriteTime:dd/MM/yyyy HH:mm}";
+                    }
+                    catch { FileInfoText1.Text = string.Empty; }
+
+                    RebuildSelectedFilePaths();
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Error selecting file: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Parcourir et sélectionner le second fichier Excel (optionnel)
+        /// </summary>
+        private void BrowseFile2Button_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var openFileDialog = new OpenFileDialog
+                {
+                    Title = "Select second AMBRE file (optional)",
+                    Filter = "Excel Files (*.xlsx;*.xls)|*.xlsx;*.xls|All Files (*.*)|*.*",
+                    Multiselect = false
+                };
+
+                if (openFileDialog.ShowDialog() == true)
+                {
+                    _selectedFilePath2 = openFileDialog.FileName;
+                    FilePathTextBox2.Text = _selectedFilePath2;
+
+                    try
+                    {
+                        var fi = new FileInfo(_selectedFilePath2);
+                        FileInfoText2.Text = $"File: {fi.Name} ({fi.Length / 1024:N0} KB) - Modified: {fi.LastWriteTime:dd/MM/yyyy HH:mm}";
+                    }
+                    catch { FileInfoText2.Text = string.Empty; }
+
+                    RebuildSelectedFilePaths();
                 }
             }
             catch (Exception ex)
@@ -241,34 +273,28 @@ namespace RecoTool.Windows
         /// </summary>
         private void OnFilePathChanged()
         {
-            if (SelectedFilePaths != null && SelectedFilePaths.Length > 0)
+            // Keep status/UI in sync when SelectedFilePath changes
+            UpdateStatusSummary();
+            UpdateButtonStates();
+        }
+
+        /// <summary>
+        /// Reconstruit la liste des fichiers sélectionnés à partir des deux champs
+        /// </summary>
+        private void RebuildSelectedFilePaths()
+        {
+            var list = new List<string>();
+            if (!string.IsNullOrWhiteSpace(_selectedFilePath1)) list.Add(_selectedFilePath1);
+            if (!string.IsNullOrWhiteSpace(_selectedFilePath2)) list.Add(_selectedFilePath2);
+            SelectedFilePaths = list.ToArray();
+
+            LogMessage(list.Count switch
             {
-                try
-                {
-                    if (SelectedFilePaths.Length == 1)
-                    {
-                        var fileInfo = new FileInfo(SelectedFilePaths[0]);
-                        FileInfoText.Text = $"File: {fileInfo.Name} ({fileInfo.Length / 1024:N0} KB) - Modified: {fileInfo.LastWriteTime:dd/MM/yyyy HH:mm}";
-                        LogMessage($"File selected: {SelectedFilePaths[0]}");
-                    }
-                    else
-                    {
-                        var names = SelectedFilePaths.Select(p => Path.GetFileName(p)).ToList();
-                        FileInfoText.Text = $"Files selected ({names.Count}): {string.Join(", ", names)}";
-                        LogMessage($"Files selected: {string.Join(", ", SelectedFilePaths)}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    FileInfoText.Text = "Error reading file information";
-                    LogMessage($"File error: {ex.Message}", true);
-                }
-            }
-            else
-            {
-                FileInfoText.Text = "";
-            }
-            
+                0 => "No file selected",
+                1 => $"File selected: {list[0]}",
+                _ => $"Files selected: {string.Join(", ", list)}"
+            });
+
             UpdateStatusSummary();
             UpdateButtonStates();
         }

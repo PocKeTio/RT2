@@ -10,7 +10,9 @@ namespace RecoTool.Services
 {
     /// <summary>
     /// Service unique pour (re)créer les bases Access attendues par l'application
-    /// dans un répertoire donné: Ambre.accdb, Dwings.accdb, Reconciliation.accdb, Lock.accdb.
+    /// dans un répertoire donné: Ambre.accdb, Reconciliation.accdb, Lock.accdb,
+    /// et 2 bases DWINGS distinctes: "{DWDatabasePrefix} GUARANTEE.accdb" (T_DW_Guarantee)
+    /// et "{DWDatabasePrefix} INVOICE.accdb" (T_DW_Data).
     /// S'appuie sur les générateurs de templates Access existants (ADOX/EmptyTemplate/OleDb).
     /// </summary>
     public class DatabaseRecreationService
@@ -20,7 +22,10 @@ namespace RecoTool.Services
             public bool Success { get; set; }
             public string TargetDirectory { get; set; }
             public string AmbrePath { get; set; }
+            // Legacy single DWINGS file (kept for compatibility; now split into two files)
             public string DwingsPath { get; set; }
+            public string DwingsGuaranteePath { get; set; }
+            public string DwingsInvoicePath { get; set; }
             public string ReconciliationPath { get; set; }
             public string LockPath { get; set; }
             public List<string> Errors { get; set; } = new List<string>();
@@ -28,14 +33,21 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// (Re)crée les 4 bases de données Access (Ambre, Dwings, Reconciliation, Lock)
-        /// dans le répertoire spécifié. Les fichiers sont nommés exactement:
-        /// Ambre.accdb, Dwings.accdb, Reconciliation.accdb, Lock.accdb
+        /// (Re)crée les bases de données Access (Ambre, Reconciliation, Lock) et DWINGS scindé en 2 fichiers
+        /// dans le répertoire spécifié. Les fichiers sont nommés:
+        /// Ambre.accdb, Reconciliation.accdb, Lock.accdb, "{dwDatabasePrefix}{country}_GUARANTEE.accdb", "{dwDatabasePrefix}{country}_INVOICE.accdb".
         /// </summary>
-        public async Task<RecreationReport> RecreateAllAsync(string directory)
+        /// <param name="directory">Répertoire cible</param>
+        /// <param name="dwDatabasePrefix">Préfixe commun aux 2 bases DWINGS (ex: "DWINGS" ou "Dwings")</param>
+        /// <param name="country">Code pays (ex: "ES") à concaténer dans le nom des bases DWINGS</param>
+        public async Task<RecreationReport> RecreateAllAsync(string directory, string dwDatabasePrefix, string country)
         {
             if (string.IsNullOrWhiteSpace(directory))
                 throw new ArgumentNullException(nameof(directory));
+            if (string.IsNullOrWhiteSpace(dwDatabasePrefix))
+                throw new ArgumentNullException(nameof(dwDatabasePrefix));
+            if (string.IsNullOrWhiteSpace(country))
+                throw new ArgumentNullException(nameof(country));
 
             var report = new RecreationReport
             {
@@ -53,14 +65,17 @@ namespace RecoTool.Services
             }
 
             var ambrePath = Path.Combine(directory, "Ambre.accdb");
-            var dwingsPath = Path.Combine(directory, "Dwings.accdb");
             var reconciliationPath = Path.Combine(directory, "Reconciliation.accdb");
             var lockPath = Path.Combine(directory, "Lock.accdb");
+            var cc = country.Trim();
+            var dwingsGuaranteePath = Path.Combine(directory, $"{dwDatabasePrefix}{cc}_GUARANTEE.accdb");
+            var dwingsInvoicePath = Path.Combine(directory, $"{dwDatabasePrefix}{cc}_INVOICE.accdb");
 
             report.AmbrePath = ambrePath;
-            report.DwingsPath = dwingsPath;
             report.ReconciliationPath = reconciliationPath;
             report.LockPath = lockPath;
+            report.DwingsGuaranteePath = dwingsGuaranteePath;
+            report.DwingsInvoicePath = dwingsInvoicePath;
 
             // Ambre
             if (!await CreateAmbreDatabaseAsync(ambrePath, report))
@@ -74,10 +89,15 @@ namespace RecoTool.Services
                 LogManager.Error($"Echec de création de {reconciliationPath}", null);
             }
 
-            // DWINGS
-            if (!await CreateDwingsDatabaseAsync(dwingsPath, report))
+            // DWINGS (split in 2)
+            if (!await CreateDwingsGuaranteeDatabaseAsync(dwingsGuaranteePath, report))
             {
-                LogManager.Error($"Echec de création de {dwingsPath}", null);
+                LogManager.Error($"Echec de création de {dwingsGuaranteePath}", null);
+            }
+
+            if (!await CreateDwingsInvoiceDatabaseAsync(dwingsInvoicePath, report))
+            {
+                LogManager.Error($"Echec de création de {dwingsInvoicePath}", null);
             }
 
             // Lock
@@ -90,10 +110,22 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// Méthode statique utilitaire si vous préférez ne pas instancier le service.
+        /// Méthode statique utilitaire (obsolète): un code pays est désormais requis pour les bases DWINGS.
         /// </summary>
         public static Task<RecreationReport> RecreateAll(string directory)
-            => new DatabaseRecreationService().RecreateAllAsync(directory);
+            => throw new ArgumentException("Country is required. Use RecreateAll(directory, dwDatabasePrefix, country). Example: RecreateAll(path, \"Dwings\", \"ES\").");
+
+        /// <summary>
+        /// Variante statique (obsolète): un code pays est désormais requis pour les bases DWINGS.
+        /// </summary>
+        public static Task<RecreationReport> RecreateAll(string directory, string dwDatabasePrefix)
+            => throw new ArgumentException("Country is required. Use RecreateAll(directory, dwDatabasePrefix, country). Example: RecreateAll(path, dwDatabasePrefix, \"ES\").");
+
+        /// <summary>
+        /// Variante statique avec préfixe DWINGS et code pays.
+        /// </summary>
+        public static Task<RecreationReport> RecreateAll(string directory, string dwDatabasePrefix, string country)
+            => new DatabaseRecreationService().RecreateAllAsync(directory, dwDatabasePrefix, country);
 
         private RecreationReport FinalizeReport(RecreationReport report)
         {
@@ -156,7 +188,7 @@ namespace RecoTool.Services
             }
         }
 
-        private async Task<bool> CreateDwingsDatabaseAsync(string path, RecreationReport report)
+        private async Task<bool> CreateDwingsGuaranteeDatabaseAsync(string path, RecreationReport report)
         {
             try
             {
@@ -181,7 +213,27 @@ namespace RecoTool.Services
                             .WithColumn("GroupName", typeof(string))
                             .WithColumn("STATUS", typeof(string))
                             .EndTable();
+                    });
 
+                if (!ok) report.Errors.Add($"DWINGS GUARANTEE: échec de création ({Path.GetFileName(path)})");
+                else report.Logs.Add($"DWINGS GUARANTEE créé: {path}");
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                report.Errors.Add($"DWINGS GUARANTEE: exception {ex.Message}");
+                return false;
+            }
+        }
+
+        private async Task<bool> CreateDwingsInvoiceDatabaseAsync(string path, RecreationReport report)
+        {
+            try
+            {
+                bool ok = await DatabaseTemplateFactory.CreateCustomTemplateAsync(
+                    path,
+                    builder =>
+                    {
                         // T_DW_Data
                         builder.AddTable("T_DW_Data")
                             .WithPrimaryKey("INVOICE_ID", typeof(string))
@@ -225,13 +277,13 @@ namespace RecoTool.Services
                             .EndTable();
                     });
 
-                if (!ok) report.Errors.Add($"DWINGS: échec de création ({Path.GetFileName(path)})");
-                else report.Logs.Add($"DWINGS créé: {path}");
+                if (!ok) report.Errors.Add($"DWINGS INVOICE: échec de création ({Path.GetFileName(path)})");
+                else report.Logs.Add($"DWINGS INVOICE créé: {path}");
                 return ok;
             }
             catch (Exception ex)
             {
-                report.Errors.Add($"DWINGS: exception {ex.Message}");
+                report.Errors.Add($"DWINGS INVOICE: exception {ex.Message}");
                 return false;
             }
         }

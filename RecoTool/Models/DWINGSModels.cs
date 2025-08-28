@@ -28,7 +28,7 @@ namespace RecoTool.Models
     /// Modèle pour les données DWINGS
     /// Table T_DW_Data
     /// </summary>
-    public class DWINGSData
+    public class DWINGSInvoice
     {
         public string INVOICE_ID { get; set; }
         public string BOOKING { get; set; }

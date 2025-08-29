@@ -16,6 +16,7 @@ using System.Text;
 using System.Threading;
 using System.ComponentModel;
 using System.Reflection;
+using System.Globalization;
 
 namespace RecoTool.Services
 {
@@ -231,7 +232,6 @@ namespace RecoTool.Services
             string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
             // Build JOIN targets: use IN 'path' subqueries when external, otherwise direct tables
             string dwDataJoinInv = string.IsNullOrEmpty(dwEsc) ? "T_DW_Data AS dInv" : $"(SELECT * FROM [{dwEsc}].T_DW_Data) AS dInv";
-            string dwDataJoinCom = string.IsNullOrEmpty(dwEsc) ? "T_DW_Data AS dCom" : $"(SELECT * FROM [{dwEsc}].T_DW_Data) AS dCom";
             string dwGuaranteeJoin = string.IsNullOrEmpty(dwEsc) ? "T_DW_Guarantee AS g" : $"(SELECT * FROM [{dwEsc}].T_DW_Guarantee) AS g";
             string ambreJoin = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre AS a" : $"(SELECT * FROM [{ambreEsc}].T_Data_Ambre) AS a";
 
@@ -256,18 +256,94 @@ namespace RecoTool.Services
                                    r.RiskyItem,
                                    r.ReasonNonRisky,
                                    r.ModifiedBy AS Reco_ModifiedBy,
-                                   g.SYNDICATE,
-                                   g.AMOUNT AS GUARANTEE_AMOUNT,
-                                   g.CURRENCY AS GUARANTEE_CURRENCY,
-                                   g.STATUS AS GUARANTEE_STATUS,
+                                    NULL AS SYNDICATE,
+                                    g.OUTSTANDING_AMOUNT AS GUARANTEE_AMOUNT,
+                                    g.CURRENCYNAME AS GUARANTEE_CURRENCY,
+                                    g.GUARANTEE_STATUS AS GUARANTEE_STATUS,
                                    dInv.INVOICE_ID AS INVOICE_ID,
-                                   dCom.COMMISSION_ID AS COMMISSION_ID,
-                                   g.GUARANTEE_ID
-                           FROM ((({ambreJoin} 
+                                   NULL AS COMMISSION_ID,
+                                   g.GUARANTEE_ID,
+                                  
+                                  /* DWINGS Guarantee extended fields */
+                                  g.BOOKING AS G_BOOKING,
+                                  g.NATURE AS G_NATURE,
+                                  g.EVENT_STATUS AS G_EVENT_STATUS,
+                                  g.EVENT_EFFECTIVEDATE AS G_EVENT_EFFECTIVEDATE,
+                                  g.ISSUEDATE AS G_ISSUEDATE,
+                                  g.OFFICIALREF AS G_OFFICIALREF,
+                                  g.UNDERTAKINGEVENT AS G_UNDERTAKINGEVENT,
+                                  g.PROCESS AS G_PROCESS,
+                                  g.EXPIRYDATETYPE AS G_EXPIRYDATETYPE,
+                                  g.EXPIRYDATE AS G_EXPIRYDATE,
+                                  g.PARTY_ID AS G_PARTY_ID,
+                                  g.PARTY_REF AS G_PARTY_REF,
+                                  g.SECONDARY_OBLIGOR AS G_SECONDARY_OBLIGOR,
+                                  g.SECONDARY_OBLIGOR_NATURE AS G_SECONDARY_OBLIGOR_NATURE,
+                                  g.ROLE AS G_ROLE,
+                                  g.COUNTRY AS G_COUNTRY,
+                                  g.CENTRAL_PARTY_CODE AS G_CENTRAL_PARTY_CODE,
+                                  g.NAME1 AS G_NAME1,
+                                  g.NAME2 AS G_NAME2,
+                                  g.GROUPE AS G_GROUPE,
+                                  g.PREMIUM AS G_PREMIUM,
+                                  g.BRANCH_CODE AS G_BRANCH_CODE,
+                                  g.BRANCH_NAME AS G_BRANCH_NAME,
+                                  g.OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY AS G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY,
+                                  g.CANCELLATIONDATe AS G_CANCELLATIONDATE,
+                                  g.CONTROLER AS G_CONTROLER,
+                                  g.AUTOMATICBOOKOFF AS G_AUTOMATICBOOKOFF,
+                                  g.NATUREOFDEAL AS G_NATUREOFDEAL,
+                                  
+                                  /* DWINGS Invoice extended fields */
+                                  dInv.BOOKING AS I_BOOKING,
+                                  dInv.REQUESTED_INVOICE_AMOUNT AS I_REQUESTED_INVOICE_AMOUNT,
+                                  dInv.SENDER_NAME AS I_SENDER_NAME,
+                                  dInv.RECEIVER_NAME AS I_RECEIVER_NAME,
+                                  dInv.SENDER_REFERENCE AS I_SENDER_REFERENCE,
+                                  dInv.RECEIVER_REFERENCE AS I_RECEIVER_REFERENCE,
+                                  dInv.T_INVOICE_STATUS AS I_T_INVOICE_STATUS,
+                                  dInv.BILLING_AMOUNT AS I_BILLING_AMOUNT,
+                                  dInv.BILLING_CURRENCY AS I_BILLING_CURRENCY,
+                                  dInv.START_DATE AS I_START_DATE,
+                                  dInv.END_DATE AS I_END_DATE,
+                                  dInv.FINAL_AMOUNT AS I_FINAL_AMOUNT,
+                                  dInv.T_COMMISSION_PERIOD_STATUS AS I_T_COMMISSION_PERIOD_STATUS,
+                                  dInv.BUSINESS_CASE_REFERENCE AS I_BUSINESS_CASE_REFERENCE,
+                                  dInv.BUSINESS_CASE_ID AS I_BUSINESS_CASE_ID,
+                                  dInv.POSTING_PERIODICITY AS I_POSTING_PERIODICITY,
+                                  dInv.EVENT_ID AS I_EVENT_ID,
+                                  dInv.COMMENTS AS I_COMMENTS,
+                                  dInv.SENDER_ACCOUNT_NUMBER AS I_SENDER_ACCOUNT_NUMBER,
+                                  dInv.SENDER_ACCOUNT_BIC AS I_SENDER_ACCOUNT_BIC,
+                                  dInv.RECEIVER_ACCOUNT_NUMBER AS I_RECEIVER_ACCOUNT_NUMBER,
+                                  dInv.RECEIVER_ACCOUNT_BIC AS I_RECEIVER_ACCOUNT_BIC,
+                                  dInv.REQUESTED_AMOUNT AS I_REQUESTED_AMOUNT,
+                                  dInv.EXECUTED_AMOUNT AS I_EXECUTED_AMOUNT,
+                                  dInv.REQUESTED_EXECUTION_DATE AS I_REQUESTED_EXECUTION_DATE,
+                                  dInv.T_PAYMENT_REQUEST_STATUS AS I_T_PAYMENT_REQUEST_STATUS,
+                                  dInv.BGPMT AS I_BGPMT,
+                                  dInv.DEBTOR_ACCOUNT_ID AS I_DEBTOR_ACCOUNT_ID,
+                                  dInv.CREDITOR_ACCOUNT_ID AS I_CREDITOR_ACCOUNT_ID,
+                                  dInv.MT_STATUS AS I_MT_STATUS,
+                                  dInv.REMINDER_NUMBER AS I_REMINDER_NUMBER,
+                                  dInv.ERROR_MESSAGE AS I_ERROR_MESSAGE,
+                                  dInv.DEBTOR_PARTY_ID AS I_DEBTOR_PARTY_ID,
+                                  dInv.PAYMENT_METHOD AS I_PAYMENT_METHOD,
+                                  dInv.PAYMENT_TYPE AS I_PAYMENT_TYPE,
+                                  dInv.DEBTOR_PARTY_NAME AS I_DEBTOR_PARTY_NAME,
+                                  dInv.DEBTOR_ACCOUNT_NUMBER AS I_DEBTOR_ACCOUNT_NUMBER,
+                                  dInv.CREDITOR_PARTY_ID AS I_CREDITOR_PARTY_ID,
+                                  dInv.CREDITOR_ACCOUNT_NUMBER AS I_CREDITOR_ACCOUNT_NUMBER
+                           FROM (({ambreJoin} 
                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
                            LEFT JOIN {dwDataJoinInv} ON r.DWINGS_InvoiceID = dInv.INVOICE_ID)
-                           LEFT JOIN {dwDataJoinCom} ON r.DWINGS_CommissionID = dCom.COMMISSION_ID)
-                           LEFT JOIN {dwGuaranteeJoin} ON r.DWINGS_GuaranteeID = g.GUARANTEE_ID
+                           LEFT JOIN {dwGuaranteeJoin} ON (
+                               r.DWINGS_GuaranteeID = g.GUARANTEE_ID
+                               OR (
+                                   dInv.BUSINESS_CASE_REFERENCE IS NOT NULL AND dInv.BUSINESS_CASE_REFERENCE <> ''
+                                   AND dInv.BUSINESS_CASE_REFERENCE = g.GUARANTEE_ID
+                               )
+                           )
                            WHERE 1=1";
 
             if (!string.IsNullOrEmpty(filterSql))
@@ -309,15 +385,6 @@ namespace RecoTool.Services
             var swExec = Stopwatch.StartNew();
             var list = await ExecuteQueryAsync<ReconciliationViewData>(query);
             swExec.Stop();
-
-            try
-            {
-                LogPerf(
-                    "GetReconciliationView",
-                    $"country={countryId} | usingDW={(string.IsNullOrEmpty(dwPath) ? "false" : "true")} | usingAmbre={(string.IsNullOrEmpty(ambrePath) ? "false" : "true")} | filterLen={(filterSql?.Length ?? 0)} | buildMs={swBuild.ElapsedMilliseconds} | execMs={swExec.ElapsedMilliseconds} | rows={list?.Count ?? 0} | queryLen={(query?.Length ?? 0)}"
-                );
-            }
-            catch { }
 
             return list;
         }
@@ -519,7 +586,7 @@ namespace RecoTool.Services
                 foreach (var data in ambreData)
                 {
                     var reconciliation = await GetOrCreateReconciliationAsync(data.ID);
-                    
+
                     // Déterminer si c'est Pivot ou Receivable
                     bool isPivot = data.IsPivotAccount(country.CNT_AmbrePivot);
                     bool isReceivable = data.IsReceivableAccount(country.CNT_AmbreReceivable);
@@ -692,7 +759,7 @@ namespace RecoTool.Services
                     if (string.IsNullOrEmpty(receivableLine.Receivable_InvoiceFromAmbre)) continue;
 
                     // Rechercher des lignes pivot avec la même référence invoice
-                    var matchingPivotLines = pivotLines.Where(p => 
+                    var matchingPivotLines = pivotLines.Where(p =>
                         !string.IsNullOrEmpty(p.Pivot_MbawIDFromLabel) &&
                         p.Pivot_MbawIDFromLabel.Contains(receivableLine.Receivable_InvoiceFromAmbre))
                         .ToList();
@@ -719,7 +786,7 @@ namespace RecoTool.Services
         private async Task CreateMatchingReconciliationsAsync(DataAmbre receivableLine, List<DataAmbre> pivotLines)
         {
             var receivableReco = await GetOrCreateReconciliationAsync(receivableLine.ID);
-            
+
             // Marquer comme matché et ajouter commentaire
             receivableReco.Action = (int)ActionType.Match;
             receivableReco.KPI = (int)KPIType.PaidButNotReconciled;
@@ -749,7 +816,7 @@ namespace RecoTool.Services
             var query = "SELECT * FROM T_Reconciliation WHERE ID = ? AND DeleteDate IS NULL";
             // Explicitly pass the connection string to avoid binding to the wrong overload (id mistaken for connection string)
             var existing = await ExecuteQueryAsync<Reconciliation>(query, _connectionString, id);
-            
+
             if (existing.Any())
                 return existing.First();
 
@@ -846,7 +913,7 @@ namespace RecoTool.Services
             }
         }
 
-        
+
 
         /// <summary>
         /// Sauvegarde une réconciliation unique dans une transaction
@@ -869,7 +936,8 @@ namespace RecoTool.Services
                                 [Action], [Assignee], [Comments], [InternalInvoiceReference],
                                 [FirstClaimDate], [LastClaimDate], [ToRemind], [ToRemindDate],
                                 [ACK], [SwiftCode], [PaymentReference], [KPI],
-                                [IncidentType], [RiskyItem], [ReasonNonRisky]
+                                [IncidentType], [RiskyItem], [ReasonNonRisky],
+                                [MbawData], [SpiritData]
                               FROM T_Reconciliation WHERE [ID] = ?", connection, transaction);
                     selectCmd.Parameters.AddWithValue("@ID", reconciliation.ID);
                     using (var rdr = await selectCmd.ExecuteReaderAsync())
@@ -912,6 +980,8 @@ namespace RecoTool.Services
                             if (!Equal(DbVal(15), (object)reconciliation.IncidentType)) changed.Add("IncidentType");
                             if (!Equal(DbBool(DbVal(16)), (object)reconciliation.RiskyItem)) changed.Add("RiskyItem");
                             if (!Equal(DbVal(17), (object)reconciliation.ReasonNonRisky)) changed.Add("ReasonNonRisky");
+                            if (!Equal(DbVal(18), (object)reconciliation.MbawData)) changed.Add("MbawData");
+                            if (!Equal(DbVal(19), (object)reconciliation.SpiritData)) changed.Add("SpiritData");
 
                             if (changed.Count == 0)
                             {
@@ -1002,6 +1072,12 @@ namespace RecoTool.Services
                                 case "PaymentReference":
                                     cmd.Parameters.AddWithValue("@PaymentReference", reconciliation.PaymentReference ?? (object)DBNull.Value);
                                     break;
+                                case "MbawData":
+                                    cmd.Parameters.AddWithValue("@MbawData", reconciliation.MbawData ?? (object)DBNull.Value);
+                                    break;
+                                case "SpiritData":
+                                    cmd.Parameters.AddWithValue("@SpiritData", reconciliation.SpiritData ?? (object)DBNull.Value);
+                                    break;
                                 case "KPI":
                                     {
                                         var p = cmd.Parameters.Add("@KPI", OleDbType.Integer);
@@ -1070,9 +1146,9 @@ namespace RecoTool.Services
                     var insertQuery = @"INSERT INTO T_Reconciliation 
                              ([ID], [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_CommissionID],
                               [Action], [Assignee], [Comments], [InternalInvoiceReference], [FirstClaimDate], [LastClaimDate],
-                              [ToRemind], [ToRemindDate], [ACK], [SwiftCode], [PaymentReference], [KPI],
+                              [ToRemind], [ToRemindDate], [ACK], [SwiftCode], [PaymentReference], [MbawData], [SpiritData], [KPI],
                               [IncidentType], [RiskyItem], [ReasonNonRisky], [CreationDate], [ModifiedBy], [LastModified])
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
                     using (var cmd = new OleDbCommand(insertQuery, connection, transaction))
                     {
@@ -1115,6 +1191,8 @@ namespace RecoTool.Services
             pAck.Value = reconciliation.ACK;
             cmd.Parameters.AddWithValue("@SwiftCode", reconciliation.SwiftCode ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@PaymentReference", reconciliation.PaymentReference ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("@MbawData", reconciliation.MbawData ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("@SpiritData", reconciliation.SpiritData ?? (object)DBNull.Value);
             var pKpi = cmd.Parameters.Add("@KPI", OleDbType.Integer);
             pKpi.Value = reconciliation.KPI.HasValue ? (object)reconciliation.KPI.Value : DBNull.Value;
             var pInc = cmd.Parameters.Add("@IncidentType", OleDbType.Integer);
@@ -1242,20 +1320,20 @@ namespace RecoTool.Services
             };
 
             // KPI counts
-            dto.PaidNotReconciled   = list.LongCount(r => r.KPI == (int)KPIType.PaidButNotReconciled);
-            dto.UnderInvestigation  = list.LongCount(r => r.KPI == (int)KPIType.UnderInvestigation);
-            dto.MissingInvoices     = list.LongCount(r => r.KPI == (int)KPIType.NotClaimed);
+            dto.PaidNotReconciled = list.LongCount(r => r.KPI == (int)KPIType.PaidButNotReconciled);
+            dto.UnderInvestigation = list.LongCount(r => r.KPI == (int)KPIType.UnderInvestigation);
+            dto.MissingInvoices = list.LongCount(r => r.KPI == (int)KPIType.NotClaimed);
 
             // Receivable vs Pivot totals
             var receivableData = string.IsNullOrEmpty(receivableId) ? new List<ReconciliationViewData>() : list.Where(r => r.Account_ID == receivableId).ToList();
             var pivotData = string.IsNullOrEmpty(pivotId) ? new List<ReconciliationViewData>() : list.Where(r => r.Account_ID == pivotId).ToList();
             dto.ReceivableAmount = receivableData.Sum(r => r.SignedAmount);
-            dto.ReceivableCount  = receivableData.LongCount();
-            dto.PivotAmount      = pivotData.Sum(r => r.SignedAmount);
-            dto.PivotCount       = pivotData.LongCount();
+            dto.ReceivableCount = receivableData.LongCount();
+            dto.PivotAmount = pivotData.Sum(r => r.SignedAmount);
+            dto.PivotCount = pivotData.LongCount();
 
             // New vs Deleted for that day
-            dto.NewCount     = list.LongCount(r => r.CreationDate.HasValue && r.CreationDate.Value.Date == date.Date);
+            dto.NewCount = list.LongCount(r => r.CreationDate.HasValue && r.CreationDate.Value.Date == date.Date);
             dto.DeletedCount = list.LongCount(r => r.DeleteDate.HasValue && r.DeleteDate.Value.Date == date.Date);
 
             // Deletion delay buckets (average days)
@@ -1283,7 +1361,7 @@ namespace RecoTool.Services
             var actionGroups = list.Where(r => r.Action.HasValue).GroupBy(r => r.Action.Value).OrderBy(g => g.Key).ToList();
             var labels = actionGroups.Select(g => EnumHelper.GetActionName(g.Key, _offlineFirstService?.UserFields)).ToList();
             var recvVals = actionGroups.Select(g => g.Count(x => x.Account_ID == receivableId)).ToList();
-            var pivVals  = actionGroups.Select(g => g.Count(x => x.Account_ID == pivotId)).ToList();
+            var pivVals = actionGroups.Select(g => g.Count(x => x.Account_ID == pivotId)).ToList();
             dto.ReceivablePivotByActionJson = JsonSerializer.Serialize(new { labels, receivable = recvVals, pivot = pivVals });
 
             // KPI Distribution
@@ -1791,9 +1869,35 @@ namespace RecoTool.Services
                                         {
                                             converted = DateTime.FromOADate((double)m);
                                         }
-                                        else if (double.TryParse(Convert.ToString(value), out var d2))
+                                        else
                                         {
-                                            converted = DateTime.FromOADate(d2);
+                                            var sVal = Convert.ToString(value);
+                                            if (!string.IsNullOrWhiteSpace(sVal))
+                                            {
+                                                // Try OADate numeric string first
+                                                if (double.TryParse(sVal, NumberStyles.Any, CultureInfo.InvariantCulture, out var d2))
+                                                {
+                                                    try { converted = DateTime.FromOADate(d2); }
+                                                    catch { converted = null; }
+                                                }
+
+                                                // Try DWINGS textual date formats like 30-APR-22
+                                                if (converted == null && TryParseDwingsDate(sVal, out var parsed))
+                                                {
+                                                    converted = parsed;
+                                                }
+
+                                                // Fallback to broad parsing
+                                                if (converted == null)
+                                                {
+                                                    if (DateTime.TryParse(sVal, CultureInfo.InvariantCulture, DateTimeStyles.None, out var gen))
+                                                        converted = gen;
+                                                    else if (DateTime.TryParse(sVal, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out gen))
+                                                        converted = gen;
+                                                    else if (DateTime.TryParse(sVal, CultureInfo.GetCultureInfo("it-IT"), DateTimeStyles.None, out gen))
+                                                        converted = gen;
+                                                }
+                                            }
                                         }
                                     }
                                     else if (targetType == typeof(bool))
@@ -1834,6 +1938,12 @@ namespace RecoTool.Services
                                 }
                             }
 
+                            // Normalize date-like strings for specific DTOs
+                            if (typeof(T) == typeof(ReconciliationViewData))
+                            {
+                                try { NormalizeDwingsDateStrings(item as ReconciliationViewData); } catch { }
+                            }
+
                             results.Add(item);
                         }
                         swMap.Stop();
@@ -1846,10 +1956,6 @@ namespace RecoTool.Services
             try
             {
                 var dbTag = string.Equals(connectionString, _connectionString, StringComparison.OrdinalIgnoreCase) ? "Main" : "Alt";
-                LogPerf(
-                    $"ExecuteQuery[{typeof(T).Name}]",
-                    $"db={dbTag} | rows={results.Count} | params={(parameters?.Length ?? 0)} | openMs={msOpen} | execMs={msExecute} | mapPrepMs={msMapPrep} | mapRowsMs={msMapRows} | totalMs={swTotal.ElapsedMilliseconds} | fields={fieldCount} | propMaps={propMapCount} | queryLen={(query?.Length ?? 0)}"
-                );
             }
             catch { }
 
@@ -1857,67 +1963,78 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// Vérifie si une colonne existe dans le reader
+        /// Normalize DWINGS string date fields on ReconciliationViewData to yyyy-MM-dd if parseable.
         /// </summary>
-        /// <param name="reader">DbDataReader</param>
-        /// <param name="columnName">Nom de la colonne</param>
-        /// <returns>True si la colonne existe</returns>
-        private bool HasColumn(DbDataReader reader, string columnName)
+        private static void NormalizeDwingsDateStrings(ReconciliationViewData dto)
         {
-            try
+            if (dto == null) return;
+
+            string Norm(string s)
             {
-                for (int i = 0; i < reader.FieldCount; i++)
-                {
-                    if (reader.GetName(i).Equals(columnName, StringComparison.OrdinalIgnoreCase))
-                        return true;
-                }
-                return false;
+                if (string.IsNullOrWhiteSpace(s)) return s;
+                if (TryParseDwingsDate(s, out var dt)) return dt.ToString("yyyy-MM-dd");
+                if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd");
+                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd");
+                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("it-IT"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd");
+                return s;
             }
-            catch
-            {
-                return false;
-            }
+
+            // DWINGS Invoice date-like strings
+            dto.I_START_DATE = Norm(dto.I_START_DATE);
+            dto.I_END_DATE = Norm(dto.I_END_DATE);
+            dto.I_REQUESTED_EXECUTION_DATE = Norm(dto.I_REQUESTED_EXECUTION_DATE);
+
+            // DWINGS Guarantee date-like strings
+            dto.G_EVENT_EFFECTIVEDATE = Norm(dto.G_EVENT_EFFECTIVEDATE);
+            dto.G_ISSUEDATE = Norm(dto.G_ISSUEDATE);
+            dto.G_EXPIRYDATE = Norm(dto.G_EXPIRYDATE);
+            dto.G_CANCELLATIONDATE = Norm(dto.G_CANCELLATIONDATE);
         }
 
         /// <summary>
-        /// Obtient l'index d'une colonne dans le reader
+        /// Parse DWINGS textual date formats such as "30-APR-22" or "30-APR-2022" and other common variants.
         /// </summary>
-        /// <param name="reader">DbDataReader</param>
-        /// <param name="columnName">Nom de la colonne</param>
-        /// <returns>Index de la colonne ou -1 si non trouvée</returns>
-        private int GetColumnIndex(DbDataReader reader, string columnName)
+        private static bool TryParseDwingsDate(string input, out DateTime dt)
         {
-            try
-            {
-                for (int i = 0; i < reader.FieldCount; i++)
-                {
-                    if (reader.GetName(i).Equals(columnName, StringComparison.OrdinalIgnoreCase))
-                        return i;
-                }
-                return -1;
-            }
-            catch
-            {
-                return -1;
-            }
-        }
+            dt = default;
+            if (string.IsNullOrWhiteSpace(input)) return false;
 
-        /// <summary>
-        /// Append a performance log line to %APPDATA%/RecoTool/perf.log
-        /// </summary>
-        private void LogPerf(string area, string details)
-        {
-            try
-            {
-                var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RecoTool");
-                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                var path = Path.Combine(dir, "perf.log");
-                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}\t{area}\t{details}";
-                File.AppendAllLines(path, new[] { line }, Encoding.UTF8);
-            }
-            catch { }
-        }
+            var s = input.Trim();
+            // Replace multiple spaces and normalize dashes
+            s = Regex.Replace(s, "[\u2013\u2014\\-]", "-");
+            s = Regex.Replace(s, "\\s+", " ").Trim();
 
-        #endregion
+            // Try exact formats with English month abbreviations
+            var formats = new[]
+            {
+                "dd-MMM-yy",
+                "dd-MMM-yyyy",
+                "d-MMM-yy",
+                "d-MMM-yyyy",
+                "dd/MM/yy",
+                "dd/MM/yyyy",
+                "d/M/yy",
+                "d/M/yyyy",
+                "yyyy-MM-dd",
+                "dd.MM.yyyy",
+                "d.MM.yyyy",
+            };
+
+            if (DateTime.TryParseExact(s, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
+                return true;
+
+            // Fallback generic parses
+            if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt)) return true;
+            if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out dt)) return true;
+            if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("it-IT"), DateTimeStyles.None, out dt)) return true;
+
+            // Try uppercasing month abbreviations to help parsing
+            var up = s.ToUpperInvariant();
+            if (!ReferenceEquals(up, s) && DateTime.TryParseExact(up, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
+                return true;
+
+            return false;
+        }
     }
+    #endregion
 }

@@ -981,6 +981,23 @@
                             <DataGridTextColumn Header="DW Syndicate" Binding="{Binding SYNDICATE}" Width="100"/>
                             <DataGridTextColumn Header="DW Currency" Binding="{Binding GUARANTEE_CURRENCY}" Width="80"/>
                             <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120"/>
+                            
+                            <!-- DWINGS Guarantee extended fields -->
+                            <DataGridTextColumn Header="G Booking" Binding="{Binding G_BOOKING}" Width="110"/>
+                            <DataGridTextColumn Header="G Nature" Binding="{Binding G_NATURE}" Width="110"/>
+                            <DataGridTextColumn Header="G Event Status" Binding="{Binding G_EVENT_STATUS}" Width="120"/>
+                            <DataGridTextColumn Header="G Issue Date" Binding="{Binding G_ISSUEDATE}" Width="110"/>
+                            <DataGridTextColumn Header="G Party ID" Binding="{Binding G_PARTY_ID}" Width="110"/>
+                            <DataGridTextColumn Header="G Name" Binding="{Binding G_NAME1}" Width="160"/>
+                            
+                            <!-- DWINGS Invoice extended fields -->
+                            <DataGridTextColumn Header="I Booking" Binding="{Binding I_BOOKING}" Width="110"/>
+                            <DataGridTextColumn Header="I Req Amount" Binding="{Binding I_REQUESTED_INVOICE_AMOUNT}" Width="130"/>
+                            <DataGridTextColumn Header="I Curr" Binding="{Binding I_BILLING_CURRENCY}" Width="70"/>
+                            <DataGridTextColumn Header="I Start" Binding="{Binding I_START_DATE}" Width="110"/>
+                            <DataGridTextColumn Header="I End" Binding="{Binding I_END_DATE}" Width="110"/>
+                            <DataGridTextColumn Header="I Status" Binding="{Binding I_T_INVOICE_STATUS}" Width="120"/>
+                            <DataGridTextColumn Header="I BC Ref" Binding="{Binding I_BUSINESS_CASE_REFERENCE}" Width="150"/>
                         </DataGrid.Columns>
                     </DataGrid>
 

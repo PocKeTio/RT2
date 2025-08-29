@@ -11,6 +11,7 @@ using System.Collections.Concurrent;
 using System.Data;
 using System.Data.OleDb;
 using System.IO;
+using System.IO.Compression;
 using System.Timers;
 using System.Text;
 using System.Globalization;
@@ -4024,6 +4025,72 @@ namespace RecoTool.Services
             string dataDirectory = Path.GetDirectoryName(localDbPath);
             if (string.IsNullOrWhiteSpace(dataDirectory)) throw new InvalidOperationException("DataDirectory invalide");
 
+            // 0) Si un ZIP DWINGS est présent côté réseau pour ce pays, on l'extrait en priorité
+            try
+            {
+                string remoteDir = Path.GetDirectoryName(networkDbPath);
+                string zipPath = null;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(remoteDir) && Directory.Exists(remoteDir))
+                    {
+                        var candidates = Directory.EnumerateFiles(remoteDir, "*.zip", SearchOption.TopDirectoryOnly)
+                            .Where(f => f.IndexOf(countryId, StringComparison.OrdinalIgnoreCase) >= 0)
+                            .Where(f =>
+                            {
+                                var n = Path.GetFileName(f);
+                                return n.IndexOf("DW", StringComparison.OrdinalIgnoreCase) >= 0
+                                       || n.IndexOf("DWINGS", StringComparison.OrdinalIgnoreCase) >= 0;
+                            });
+                        if (candidates.Any())
+                        {
+                            zipPath = candidates
+                                .Select(f => new FileInfo(f))
+                                .OrderByDescending(fi => fi.LastWriteTimeUtc)
+                                .First().FullName;
+                        }
+                    }
+                }
+                catch { /* best-effort */ }
+
+                if (!string.IsNullOrWhiteSpace(zipPath) && File.Exists(zipPath))
+                {
+                    if (!Directory.Exists(dataDirectory)) Directory.CreateDirectory(dataDirectory);
+
+                    using (var archive = ZipFile.OpenRead(zipPath))
+                    {
+                        var accdbEntry = archive.Entries
+                            .OrderByDescending(e => e.Length)
+                            .FirstOrDefault(e => e.FullName.EndsWith(".accdb", StringComparison.OrdinalIgnoreCase));
+
+                        if (accdbEntry != null)
+                        {
+                            string baseNameLocal = Path.GetFileNameWithoutExtension(localDbPath);
+                            string tempLocalFromZip = Path.Combine(dataDirectory, $"{baseNameLocal}.accdb.tmp_{Guid.NewGuid():N}");
+                            string backupLocalZip = Path.Combine(dataDirectory, $"{baseNameLocal}.accdb.bak");
+
+                            // Extraire vers un fichier temporaire puis remplacer atomiquement
+                            accdbEntry.ExtractToFile(tempLocalFromZip, true);
+                            if (File.Exists(localDbPath))
+                                await FileReplaceWithRetriesAsync(tempLocalFromZip, localDbPath, backupLocalZip, maxAttempts: 5, initialDelayMs: 300);
+                            else
+                                File.Move(tempLocalFromZip, localDbPath);
+
+                            System.Diagnostics.Debug.WriteLine($"DW: ZIP extrait pour {countryId} depuis {zipPath} -> {localDbPath}");
+                            return;
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine($"DW: Aucun fichier .accdb trouvé dans l'archive {zipPath}. Bascule sur la copie réseau.");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"DW: échec extraction ZIP ({ex.Message}). Bascule sur copie réseau.");
+            }
+
             if (!File.Exists(networkDbPath))
                 throw new FileNotFoundException($"Base DW réseau introuvable pour {countryId}", networkDbPath);
 
@@ -4743,7 +4810,8 @@ namespace RecoTool.Services
                 START_DATE = reader["START_DATE"]?.ToString(),
                 END_DATE = reader["END_DATE"]?.ToString(),
                 FINAL_AMOUNT = reader["FINAL_AMOUNT"]?.ToString(),
-                T_COMMISSION_PERIOD_STAT = reader["T_COMMISSION_PERIOD_STAT"]?.ToString(),
+                // DWINGS schema update: column renamed to T_COMMISSION_PERIOD_STATUS
+                T_COMMISSION_PERIOD_STAT = reader["T_COMMISSION_PERIOD_STATUS"]?.ToString(),
                 BUSINESS_CASE_REFERENCE = reader["BUSINESS_CASE_REFERENCE"]?.ToString(),
                 BUSINESS_CASE_ID = reader["BUSINESS_CASE_ID"]?.ToString(),
                 POSTING_PERIODICITY = reader["POSTING_PERIODICITY"]?.ToString(),
@@ -4760,7 +4828,8 @@ namespace RecoTool.Services
                 BGPMT = reader["BGPMT"]?.ToString(),
                 DEBTOR_ACCOUNT_ID = reader["DEBTOR_ACCOUNT_ID"]?.ToString(),
                 CREDITOR_ACCOUNT_ID = reader["CREDITOR_ACCOUNT_ID"]?.ToString(),
-                COMMISSION_ID = reader["COMMISSION_ID"]?.ToString(),
+                // DWINGS schema update: COMMISSION_ID removed from T_DW_Data
+                COMMISSION_ID = null,
                 DEBTOR_PARTY_ID = reader["DEBTOR_PARTY_ID"]?.ToString(),
                 DEBTOR_PARTY_NAME = reader["DEBTOR_PARTY_NAME"]?.ToString(),
                 DEBTOR_ACCOUNT_NUMBER = reader["DEBTOR_ACCOUNT_NUMBER"]?.ToString(),
@@ -4784,18 +4853,21 @@ namespace RecoTool.Services
             var results = await QueryDWDatabaseAsync(query, reader => new DWGuarantee
             {
                 GUARANTEE_ID = reader["GUARANTEE_ID"]?.ToString(),
-                SYNDICATE = reader["SYNDICATE"]?.ToString(),
-                CURRENCY = reader["CURRENCY"]?.ToString(),
-                AMOUNT = reader["AMOUNT"]?.ToString(),
-                OfficialID = reader["OfficialID"]?.ToString(),
-                GuaranteeType = reader["GuaranteeType"]?.ToString(),
-                Client = reader["Client"]?.ToString(),
-                _791Sent = reader["791Sent"]?.ToString(),
-                InvoiceStatus = reader["InvoiceStatus"]?.ToString(),
-                TriggerDate = reader["TriggerDate"]?.ToString(),
-                FXRate = reader["FXRate"]?.ToString(),
-                RMPM = reader["RMPM"]?.ToString(),
-                GroupName = reader["GroupName"]?.ToString()
+                // DWINGS schema update: SYNDICATE not present anymore
+                SYNDICATE = null,
+                // Map new schema fields to legacy properties for compatibility
+                CURRENCY = reader["CURRENCYNAME"]?.ToString(),
+                AMOUNT = reader["OUTSTANDING_AMOUNT"]?.ToString(),
+                OfficialID = reader["OFFICIALREF"]?.ToString(),
+                // Obsolete/unknown fields in new schema -> keep nulls to preserve stability
+                GuaranteeType = null,
+                Client = null,
+                _791Sent = null,
+                InvoiceStatus = reader["GUARANTEE_STATUS"]?.ToString(),
+                TriggerDate = null,
+                FXRate = null,
+                RMPM = null,
+                GroupName = reader["BRANCH_NAME"]?.ToString()
             });
             
             return results.FirstOrDefault();

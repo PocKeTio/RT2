@@ -9,19 +9,37 @@ namespace RecoTool.Models
     public class DWINGSGuarantee
     {
         public string GUARANTEE_ID { get; set; }
-        public string SYNDICATE { get; set; }
-        public string CURRENCY { get; set; }
-        public string AMOUNT { get; set; }
-        public string OfficialID { get; set; }
-        public string GuaranteeType { get; set; }
-        public string Client { get; set; }
-        public string _791Sent { get; set; }
-        public string InvoiceStatus { get; set; }
-        public string TriggerDate { get; set; }
-        public string FXRate { get; set; }
-        public string RMPM { get; set; }
-        public string GroupName { get; set; }
-        public string STATUS { get; set; }
+        public string BOOKING { get; set; }
+        public string GUARANTEE_STATUS { get; set; }
+        public string NATURE { get; set; }
+        public string EVENT_STATUS { get; set; }
+        public DateTime? EVENT_EFFECTIVEDATE { get; set; }
+        public DateTime? ISSUEDATE { get; set; }
+        public string OFFICIALREF { get; set; }
+        public string UNDERTAKINGEVENT { get; set; }
+        public string PROCESS { get; set; }
+        public string EXPIRYDATETYPE { get; set; }
+        public DateTime? EXPIRYDATE { get; set; }
+        public string PARTY_ID { get; set; }
+        public string PARTY_REF { get; set; }
+        public string SECONDARY_OBLIGOR { get; set; }
+        public string SECONDARY_OBLIGOR_NATURE { get; set; }
+        public string ROLE { get; set; }
+        public string COUNTRY { get; set; }
+        public string CENTRAL_PARTY_CODE { get; set; }
+        public string NAME1 { get; set; }
+        public string NAME2 { get; set; }
+        public string GROUPE { get; set; }
+        public bool? PREMIUM { get; set; }
+        public string BRANCH_CODE { get; set; }
+        public string BRANCH_NAME { get; set; }
+        public double? OUTSTANDING_AMOUNT { get; set; }
+        public double? OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY { get; set; }
+        public string CURRENCYNAME { get; set; }
+        public DateTime? CANCELLATIONDATE { get; set; }
+        public bool? CONTROLER { get; set; }
+        public bool? AUTOMATICBOOKOFF { get; set; }
+        public string NATUREOFDEAL { get; set; }
     }
 
     /// <summary>
@@ -43,7 +61,7 @@ namespace RecoTool.Models
         public string START_DATE { get; set; }
         public string END_DATE { get; set; }
         public string FINAL_AMOUNT { get; set; }
-        public string T_COMMISSION_PERIOD_STAT { get; set; }
+        public string T_COMMISSION_PERIOD_STATUS { get; set; }
         public string BUSINESS_CASE_REFERENCE { get; set; }
         public string BUSINESS_CASE_ID { get; set; }
         public string POSTING_PERIODICITY { get; set; }
@@ -60,16 +78,16 @@ namespace RecoTool.Models
         public string BGPMT { get; set; }
         public string DEBTOR_ACCOUNT_ID { get; set; }
         public string CREDITOR_ACCOUNT_ID { get; set; }
-        public string COMMISSION_ID { get; set; }
+        public string MT_STATUS { get; set; }
+        public string REMINDER_NUMBER { get; set; }
+        public string ERROR_MESSAGE { get; set; }
         public string DEBTOR_PARTY_ID { get; set; }
+        public string PAYMENT_METHOD { get; set; }
+        public string PAYMENT_TYPE { get; set; }
         public string DEBTOR_PARTY_NAME { get; set; }
         public string DEBTOR_ACCOUNT_NUMBER { get; set; }
         public string CREDITOR_PARTY_ID { get; set; }
-        public string CREDITOR_PARTY_NAME { get; set; }
         public string CREDITOR_ACCOUNT_NUMBER { get; set; }
-
-        // New: PAYMENT_METHOD (TEXT(255) in DB)
-        public string PAYMENT_METHOD { get; set; }
 
         /// <summary>
         /// Détermine si cette donnée DWINGS correspond à une invoice ID spécifique

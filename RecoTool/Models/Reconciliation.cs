@@ -25,6 +25,9 @@ namespace RecoTool.Models
         public bool ACK { get; set; }
         public string SwiftCode { get; set; }
         public string PaymentReference { get; set; }
+        // New long text fields for reconciliation notes
+        public string MbawData { get; set; }
+        public string SpiritData { get; set; }
         public int? KPI { get; set; }
         public int? IncidentType { get; set; }
         public bool? RiskyItem { get; set; }

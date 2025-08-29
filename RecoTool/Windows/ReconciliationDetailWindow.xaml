@@ -242,6 +242,95 @@
                                         </Grid>
                                     </GroupBox>
 
+                                    <!-- DWINGS Guarantee Details -->
+                                    <GroupBox Header="DWINGS Guarantee" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="140"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Nature:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="GNatureValue" Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Status:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="GStatusValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Issue Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="GIssueDateValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Party ID:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="GPartyIdValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Name:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="GName1Value" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                        </Grid>
+                                    </GroupBox>
+
+                                    <!-- DWINGS Invoice Details -->
+                                    <GroupBox Header="DWINGS Invoice" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="160"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Requested Amount:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="IRequestedAmountValue" Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Billing Currency:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="IBillingCurrencyValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Start Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="IStartDateValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="End Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="IEndDateValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Status:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="IStatusValue" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Business Case Ref:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                            <TextBlock x:Name="IBusinessCaseRefValue" Grid.Row="5" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                        </Grid>
+                                    </GroupBox>
+
+                                    <!-- Additional Data (MbawData, SpiritData) -->
+                                    <GroupBox Header="Additional Data" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="140"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Mbaw Data:" Style="{StaticResource FieldLabelStyle}" VerticalAlignment="Top"/>
+                                            <TextBox x:Name="MbawDataTextBox" Grid.Row="0" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="80"/>
+
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Spirit Data:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0" VerticalAlignment="Top"/>
+                                            <TextBox x:Name="SpiritDataTextBox" Grid.Row="1" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="80" Margin="0,10,0,0"/>
+                                        </Grid>
+                                    </GroupBox>
+
                                     <!-- Informations utilisateur (modifiables) -->
                                     <GroupBox Header="User Information" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
                                         <Grid>

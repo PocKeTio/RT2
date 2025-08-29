@@ -201,6 +201,21 @@ namespace RecoTool.UI.Views.Windows
                 .Where(s => !string.IsNullOrWhiteSpace(s));
                 DwingsIdsValue.Text = string.Join(" | ", ids);
             }
+
+            // DWINGS Guarantee extended fields (if present)
+            if (GNatureValue != null) GNatureValue.Text = _item.G_NATURE ?? string.Empty;
+            if (GStatusValue != null) GStatusValue.Text = _item.G_EVENT_STATUS ?? string.Empty;
+            if (GIssueDateValue != null) GIssueDateValue.Text = _item.G_ISSUEDATE ?? string.Empty;
+            if (GPartyIdValue != null) GPartyIdValue.Text = _item.G_PARTY_ID ?? string.Empty;
+            if (GName1Value != null) GName1Value.Text = _item.G_NAME1 ?? string.Empty;
+
+            // DWINGS Invoice extended fields (if present)
+            if (IRequestedAmountValue != null) IRequestedAmountValue.Text = _item.I_REQUESTED_INVOICE_AMOUNT ?? string.Empty;
+            if (IBillingCurrencyValue != null) IBillingCurrencyValue.Text = _item.I_BILLING_CURRENCY ?? string.Empty;
+            if (IStartDateValue != null) IStartDateValue.Text = _item.I_START_DATE ?? string.Empty;
+            if (IEndDateValue != null) IEndDateValue.Text = _item.I_END_DATE ?? string.Empty;
+            if (IStatusValue != null) IStatusValue.Text = _item.I_T_INVOICE_STATUS ?? string.Empty;
+            if (IBusinessCaseRefValue != null) IBusinessCaseRefValue.Text = _item.I_BUSINESS_CASE_REFERENCE ?? string.Empty;
         }
 
         private void PopulateReferentialOptions()
@@ -286,6 +301,12 @@ namespace RecoTool.UI.Views.Windows
 
                 if (RiskyItemTextBox != null)
                     RiskyItemTextBox.Text = (_reconciliation?.RiskyItem ?? _item?.RiskyItem)?.ToString() ?? string.Empty;
+
+                // Load new long text fields
+                if (MbawDataTextBox != null)
+                    MbawDataTextBox.Text = _reconciliation?.MbawData ?? string.Empty;
+                if (SpiritDataTextBox != null)
+                    SpiritDataTextBox.Text = _reconciliation?.SpiritData ?? string.Empty;
 
                 // Preselect reason
                 SelectedReasonId = _reconciliation?.ReasonNonRisky ?? SelectedReasonId;
@@ -500,6 +521,18 @@ namespace RecoTool.UI.Views.Windows
 
                 // Persist selected reason (nullable)
                 reco.ReasonNonRisky = SelectedReasonId;
+
+                // Persist new long text fields
+                if (MbawDataTextBox != null)
+                {
+                    var v = MbawDataTextBox.Text?.Trim();
+                    reco.MbawData = string.IsNullOrWhiteSpace(v) ? null : v;
+                }
+                if (SpiritDataTextBox != null)
+                {
+                    var v = SpiritDataTextBox.Text?.Trim();
+                    reco.SpiritData = string.IsNullOrWhiteSpace(v) ? null : v;
+                }
 
                 // Persist
                 await _reconciliationService.SaveReconciliationAsync(reco);

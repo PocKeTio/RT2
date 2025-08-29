@@ -364,21 +364,67 @@ namespace RecoTool.Services
                 await Task.CompletedTask;
             }
 
-            // AMBRE
+            // AMBRE (préférez ZIP si présent)
             try
             {
-                var netAmbre = GetNetworkAmbreDbPath(countryId);
-                var locAmbre = GetLocalAmbreDbPath(countryId);
-                await CopyIfDifferentAsync(netAmbre, locAmbre);
+                var netAmbreZip = GetNetworkAmbreZipPath(countryId);
+                var locAmbreDb = GetLocalAmbreDbPath(countryId);
+                if (!string.IsNullOrWhiteSpace(netAmbreZip) && File.Exists(netAmbreZip))
+                {
+                    var locZip = GetLocalAmbreZipCachePath(countryId);
+                    try
+                    {
+                        var copied = await CopyZipIfDifferentAsync(netAmbreZip, locZip);
+                        if (copied)
+                        {
+                            await ExtractAmbreZipToLocalAsync(countryId, locZip, locAmbreDb);
+                        }
+                        else if (!File.Exists(locAmbreDb))
+                        {
+                            // Première extraction
+                            await ExtractAmbreZipToLocalAsync(countryId, locZip, locAmbreDb);
+                        }
+                    }
+                    catch { }
+                }
+                else
+                {
+                    // Fallback: copie brute .accdb si aucun ZIP AMBRE côté réseau
+                    var netAmbre = GetNetworkAmbreDbPath(countryId);
+                    await CopyIfDifferentAsync(netAmbre, locAmbreDb);
+                }
             }
             catch { }
 
-            // DWINGS
+            // DWINGS (préférez ZIP si présent)
             try
             {
-                var netDw = GetNetworkDwDbPath(countryId);
-                var locDw = GetLocalDwDbPath(countryId);
-                await CopyIfDifferentAsync(netDw, locDw);
+                var netDwZip = GetNetworkDwZipPath(countryId);
+                var locDwDb = GetLocalDwDbPath(countryId);
+                if (!string.IsNullOrWhiteSpace(netDwZip) && File.Exists(netDwZip))
+                {
+                    var locZip = GetLocalDwZipCachePath(countryId);
+                    try
+                    {
+                        var copied = await CopyZipIfDifferentAsync(netDwZip, locZip);
+                        if (copied)
+                        {
+                            await ExtractDwZipToLocalAsync(countryId, locZip, locDwDb);
+                        }
+                        else if (!File.Exists(locDwDb))
+                        {
+                            // Première extraction si DB absente
+                            await ExtractDwZipToLocalAsync(countryId, locZip, locDwDb);
+                        }
+                    }
+                    catch { }
+                }
+                else
+                {
+                    var netDw = GetNetworkDwDbPath(countryId);
+                    var locDw = GetLocalDwDbPath(countryId);
+                    await CopyIfDifferentAsync(netDw, locDw);
+                }
             }
             catch { }
         }
@@ -701,6 +747,275 @@ namespace RecoTool.Services
             if (string.IsNullOrWhiteSpace(prefix)) prefix = GetCentralConfig("CountryDatabasePrefix");
             if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
             return Path.Combine(dataDirectory, $"{prefix}{countryId}.accdb");
+        }
+
+        /// <summary>
+        /// Returns network path for Ambre ZIP for a country. Uses same prefix logic as Ambre DB and appends _AMBRE.zip
+        /// </summary>
+        private string GetNetworkAmbreZipPath(string countryId)
+        {
+            string remoteDir = GetCentralConfig("CountryDatabaseDirectory");
+            if (string.IsNullOrWhiteSpace(remoteDir)) remoteDir = GetParameter("CountryDatabaseDirectory");
+            string prefix = GetCentralConfig("AmbreDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetCentralConfig("CountryDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            return Path.Combine(remoteDir, $"{prefix}{countryId}_AMBRE.zip");
+        }
+
+        /// <summary>
+        /// Returns local cached ZIP path for Ambre content. Uses same prefix logic and appends _AMBRE.zip
+        /// </summary>
+        private string GetLocalAmbreZipCachePath(string countryId)
+        {
+            string dataDirectory = GetParameter("DataDirectory");
+            string prefix = GetCentralConfig("AmbreDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetCentralConfig("CountryDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            return Path.Combine(dataDirectory, $"{prefix}{countryId}_AMBRE.zip");
+        }
+
+        /// <summary>
+        /// Vérifie si le ZIP AMBRE local correspond au ZIP réseau (comparaison taille et LastWriteTimeUtc).
+        /// Renvoie true si le ZIP réseau est absent (rien à comparer) ou si les deux existent et correspondent, sinon false.
+        /// </summary>
+        public Task<bool> IsLocalAmbreZipInSyncWithNetworkAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+            try
+            {
+                string networkZip = GetNetworkAmbreZipPath(countryId);
+                if (string.IsNullOrWhiteSpace(networkZip) || !File.Exists(networkZip))
+                {
+                    // Aucun ZIP réseau -> on considère l'état local comme à jour
+                    return Task.FromResult(true);
+                }
+
+                string localZip = GetLocalAmbreZipCachePath(countryId);
+                var netFi = new FileInfo(networkZip);
+                var locFi = new FileInfo(localZip);
+
+                if (!locFi.Exists) return Task.FromResult(false);
+
+                bool same = netFi.Length == locFi.Length && netFi.LastWriteTimeUtc == locFi.LastWriteTimeUtc;
+                return Task.FromResult(same);
+            }
+            catch
+            {
+                return Task.FromResult(false);
+            }
+        }
+
+        /// <summary>
+        /// Extracts the .accdb from a local Ambre ZIP cache and atomically replaces the local AMBRE DB.
+        /// </summary>
+        private async Task ExtractAmbreZipToLocalAsync(string countryId, string localZipPath, string localDbPath)
+        {
+            string dataDirectory = Path.GetDirectoryName(localDbPath) ?? GetParameter("DataDirectory");
+            if (!Directory.Exists(dataDirectory)) Directory.CreateDirectory(dataDirectory);
+
+            using (var archive = ZipFile.OpenRead(localZipPath))
+            {
+                var accdbEntry = archive.Entries
+                    .OrderByDescending(e => e.Length)
+                    .FirstOrDefault(e => e.FullName.EndsWith(".accdb", StringComparison.OrdinalIgnoreCase));
+
+                if (accdbEntry == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"AMBRE: Aucun .accdb dans l'archive {localZipPath}");
+                    throw new FileNotFoundException("Aucun fichier .accdb dans l'archive AMBRE", localZipPath);
+                }
+
+                string baseNameLocal = Path.GetFileNameWithoutExtension(localDbPath);
+                string tempLocalFromZip = Path.Combine(dataDirectory, $"{baseNameLocal}.accdb.tmp_{Guid.NewGuid():N}");
+                string backupLocalZip = Path.Combine(dataDirectory, $"{baseNameLocal}.accdb.bak");
+
+                accdbEntry.ExtractToFile(tempLocalFromZip, true);
+                if (File.Exists(localDbPath))
+                    await FileReplaceWithRetriesAsync(tempLocalFromZip, localDbPath, backupLocalZip, maxAttempts: 5, initialDelayMs: 300);
+                else
+                    File.Move(tempLocalFromZip, localDbPath);
+            }
+        }
+
+        /// <summary>
+        /// Copie un ZIP depuis le réseau vers un cache local si différent (taille/date) de manière atomique. Renvoie true si une copie a été effectuée.
+        /// </summary>
+        private async Task<bool> CopyZipIfDifferentAsync(string networkZipPath, string localZipPath)
+        {
+            var netFi = new FileInfo(networkZipPath);
+            var locFi = new FileInfo(localZipPath);
+            bool needZipCopy = !locFi.Exists || locFi.Length != netFi.Length || locFi.LastWriteTimeUtc != netFi.LastWriteTimeUtc;
+            if (!needZipCopy) return false;
+
+            Directory.CreateDirectory(Path.GetDirectoryName(localZipPath) ?? string.Empty);
+            string tmp = localZipPath + ".tmp_copy";
+            File.Copy(networkZipPath, tmp, true);
+            try { await FileReplaceWithRetriesAsync(tmp, localZipPath, localZipPath + ".bak", maxAttempts: 5, initialDelayMs: 200); }
+            catch
+            {
+                try { if (File.Exists(localZipPath)) File.Delete(localZipPath); } catch { }
+                File.Move(tmp, localZipPath);
+            }
+            try { var bak = localZipPath + ".bak"; if (File.Exists(bak)) File.Delete(bak); } catch { }
+            return true;
+        }
+
+        /// <summary>
+        /// Retourne le chemin du ZIP DW réseau le plus pertinent pour un pays (le plus récent contenant le pays et "DW/DWINGS"). Peut renvoyer null.
+        /// </summary>
+        private string GetNetworkDwZipPath(string countryId)
+        {
+            string networkDbPath = GetNetworkDwDbPath(countryId);
+            string remoteDir = Path.GetDirectoryName(networkDbPath);
+            if (string.IsNullOrWhiteSpace(remoteDir) || !Directory.Exists(remoteDir)) return null;
+
+            try
+            {
+                var candidates = Directory.EnumerateFiles(remoteDir, "*.zip", SearchOption.TopDirectoryOnly)
+                    .Where(f => f.IndexOf(countryId, StringComparison.OrdinalIgnoreCase) >= 0)
+                    .Where(f =>
+                    {
+                        var n = Path.GetFileName(f);
+                        return n.IndexOf("DW", StringComparison.OrdinalIgnoreCase) >= 0
+                               || n.IndexOf("DWINGS", StringComparison.OrdinalIgnoreCase) >= 0;
+                    });
+                var best = candidates
+                    .Select(f => new FileInfo(f))
+                    .OrderByDescending(fi => fi.LastWriteTimeUtc)
+                    .FirstOrDefault();
+                return best?.FullName;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Retourne le chemin du cache local ZIP DW (nom stable).
+        /// </summary>
+        private string GetLocalDwZipCachePath(string countryId)
+        {
+            string dataDirectory = GetParameter("DataDirectory");
+            string prefix = GetCentralConfig("DWDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("DWDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetCentralConfig("CountryDatabasePrefix");
+            if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            return Path.Combine(dataDirectory, $"{prefix}{countryId}_DW.zip");
+        }
+
+        /// <summary>
+        /// Vérifie si le ZIP DW local correspond au ZIP DW réseau (taille/date). True si pas de ZIP réseau ou si identiques.
+        /// </summary>
+        public Task<bool> IsLocalDwZipInSyncWithNetworkAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+            try
+            {
+                string networkZip = GetNetworkDwZipPath(countryId);
+                if (string.IsNullOrWhiteSpace(networkZip) || !File.Exists(networkZip))
+                {
+                    return Task.FromResult(true);
+                }
+                string localZip = GetLocalDwZipCachePath(countryId);
+                var netFi = new FileInfo(networkZip);
+                var locFi = new FileInfo(localZip);
+                if (!locFi.Exists) return Task.FromResult(false);
+                bool same = netFi.Length == locFi.Length && netFi.LastWriteTimeUtc == locFi.LastWriteTimeUtc;
+                return Task.FromResult(same);
+            }
+            catch { return Task.FromResult(false); }
+        }
+
+        /// <summary>
+        /// Diagnostics détaillés sur l'état de synchronisation ZIP AMBRE (réseau vs cache local).
+        /// </summary>
+        public string GetAmbreZipDiagnostics(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) return "countryId manquant";
+            try
+            {
+                var net = GetNetworkAmbreZipPath(countryId);
+                var loc = GetLocalAmbreZipCachePath(countryId);
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"Network ZIP: {(string.IsNullOrWhiteSpace(net) ? "(introuvable)" : net)}");
+                if (!string.IsNullOrWhiteSpace(net) && File.Exists(net))
+                {
+                    var fi = new FileInfo(net);
+                    sb.AppendLine($"  Size: {fi.Length:N0} bytes");
+                    sb.AppendLine($"  LastWriteUtc: {fi.LastWriteTimeUtc:O}");
+                }
+                sb.AppendLine($"Local ZIP: {(string.IsNullOrWhiteSpace(loc) ? "(introuvable)" : loc)}");
+                if (!string.IsNullOrWhiteSpace(loc) && File.Exists(loc))
+                {
+                    var fi = new FileInfo(loc);
+                    sb.AppendLine($"  Size: {fi.Length:N0} bytes");
+                    sb.AppendLine($"  LastWriteUtc: {fi.LastWriteTimeUtc:O}");
+                }
+                return sb.ToString();
+            }
+            catch (Exception ex)
+            {
+                return $"Diagnostics AMBRE indisponibles: {ex.Message}";
+            }
+        }
+
+        /// <summary>
+        /// Diagnostics détaillés sur l'état de synchronisation ZIP DW (réseau vs cache local).
+        /// </summary>
+        public string GetDwZipDiagnostics(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) return "countryId manquant";
+            try
+            {
+                var net = GetNetworkDwZipPath(countryId);
+                var loc = GetLocalDwZipCachePath(countryId);
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"Network ZIP: {(string.IsNullOrWhiteSpace(net) ? "(introuvable)" : net)}");
+                if (!string.IsNullOrWhiteSpace(net) && File.Exists(net))
+                {
+                    var fi = new FileInfo(net);
+                    sb.AppendLine($"  Size: {fi.Length:N0} bytes");
+                    sb.AppendLine($"  LastWriteUtc: {fi.LastWriteTimeUtc:O}");
+                }
+                sb.AppendLine($"Local ZIP: {(string.IsNullOrWhiteSpace(loc) ? "(introuvable)" : loc)}");
+                if (!string.IsNullOrWhiteSpace(loc) && File.Exists(loc))
+                {
+                    var fi = new FileInfo(loc);
+                    sb.AppendLine($"  Size: {fi.Length:N0} bytes");
+                    sb.AppendLine($"  LastWriteUtc: {fi.LastWriteTimeUtc:O}");
+                }
+                return sb.ToString();
+            }
+            catch (Exception ex)
+            {
+                return $"Diagnostics DW indisponibles: {ex.Message}";
+            }
+        }
+
+        /// <summary>
+        /// Extrait le .accdb depuis un ZIP DW local et remplace atomiquement la base DW locale.
+        /// </summary>
+        private async Task ExtractDwZipToLocalAsync(string countryId, string localZipPath, string localDbPath)
+        {
+            string dataDirectory = Path.GetDirectoryName(localDbPath) ?? GetParameter("DataDirectory");
+            if (!Directory.Exists(dataDirectory)) Directory.CreateDirectory(dataDirectory);
+            using (var archive = ZipFile.OpenRead(localZipPath))
+            {
+                var accdbEntry = archive.Entries
+                    .OrderByDescending(e => e.Length)
+                    .FirstOrDefault(e => e.FullName.EndsWith(".accdb", StringComparison.OrdinalIgnoreCase));
+                if (accdbEntry == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"DW: Aucun .accdb dans l'archive {localZipPath}");
+                    throw new FileNotFoundException("Aucun fichier .accdb dans l'archive DW", localZipPath);
+                }
+                string baseNameLocal = Path.GetFileNameWithoutExtension(localDbPath);
+                string tempLocalFromZip = Path.Combine(dataDirectory, $"{baseNameLocal}.accdb.tmp_{Guid.NewGuid():N}");
+                string backupLocalZip = Path.Combine(dataDirectory, $"{baseNameLocal}.accdb.bak");
+                accdbEntry.ExtractToFile(tempLocalFromZip, true);
+                if (File.Exists(localDbPath))
+                    await FileReplaceWithRetriesAsync(tempLocalFromZip, localDbPath, backupLocalZip, maxAttempts: 5, initialDelayMs: 300);
+                else
+                    File.Move(tempLocalFromZip, localDbPath);
+            }
         }
 
         /// <summary>
@@ -3940,10 +4255,53 @@ namespace RecoTool.Services
                 throw new InvalidOperationException($"Rafraîchissement AMBRE bloqué: des changements locaux non synchronisés existent pour {countryId}.");
 
             string localDbPath = GetLocalAmbreDbPath(countryId);
-            string networkDbPath = GetNetworkAmbreDbPath(countryId);
             string dataDirectory = Path.GetDirectoryName(localDbPath);
             if (string.IsNullOrWhiteSpace(dataDirectory)) throw new InvalidOperationException("DataDirectory invalide");
 
+            // 0) Si un ZIP AMBRE est présent côté réseau pour ce pays, on le préfère et on ne copie que s'il est différent
+            try
+            {
+                string networkZipPath = GetNetworkAmbreZipPath(countryId);
+                if (!string.IsNullOrWhiteSpace(networkZipPath) && File.Exists(networkZipPath))
+                {
+                    if (!Directory.Exists(dataDirectory)) Directory.CreateDirectory(dataDirectory);
+                    string localZipPath = GetLocalAmbreZipCachePath(countryId);
+
+                    var netFi = new FileInfo(networkZipPath);
+                    var locFi = new FileInfo(localZipPath);
+                    bool needZipCopy = !locFi.Exists || locFi.Length != netFi.Length || locFi.LastWriteTimeUtc != netFi.LastWriteTimeUtc;
+
+                    if (needZipCopy)
+                    {
+                        string tmpZip = localZipPath + ".tmp_copy";
+                        File.Copy(networkZipPath, tmpZip, true);
+                        try { await FileReplaceWithRetriesAsync(tmpZip, localZipPath, localZipPath + ".bak", maxAttempts: 5, initialDelayMs: 250); }
+                        catch
+                        {
+                            try { if (File.Exists(localZipPath)) File.Delete(localZipPath); } catch { }
+                            File.Move(tmpZip, localZipPath);
+                        }
+                        try { var bak = localZipPath + ".bak"; if (File.Exists(bak)) File.Delete(bak); } catch { }
+
+                        await ExtractAmbreZipToLocalAsync(countryId, localZipPath, localDbPath);
+                    }
+                    else if (!File.Exists(localDbPath))
+                    {
+                        await ExtractAmbreZipToLocalAsync(countryId, localZipPath, localDbPath);
+                    }
+
+                    System.Diagnostics.Debug.WriteLine($"AMBRE: ZIP réseau synchronisé vers local pour {countryId} -> {localDbPath}");
+                    try { await SetLastSyncAnchorAsync(countryId, DateTime.UtcNow); } catch { }
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"AMBRE: échec gestion ZIP ({ex.Message}). Bascule sur copie réseau .accdb.");
+            }
+
+            // 1) Fallback: copie brute .accdb réseau -> local
+            string networkDbPath = GetNetworkAmbreDbPath(countryId);
             if (!File.Exists(networkDbPath))
                 throw new FileNotFoundException($"Base AMBRE réseau introuvable pour {countryId}", networkDbPath);
 
@@ -3960,7 +4318,6 @@ namespace RecoTool.Services
             if (File.Exists(localDbPath)) await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300); else File.Move(tempLocal, localDbPath);
 
             System.Diagnostics.Debug.WriteLine($"AMBRE: base réseau copiée vers local pour {countryId} -> {localDbPath}");
-            // Initialiser/mettre à jour l'ancre suite au rafraîchissement complet AMBRE
             try { await SetLastSyncAnchorAsync(countryId, DateTime.UtcNow); }
             catch (Exception ex)
             {
@@ -4025,71 +4382,27 @@ namespace RecoTool.Services
             string dataDirectory = Path.GetDirectoryName(localDbPath);
             if (string.IsNullOrWhiteSpace(dataDirectory)) throw new InvalidOperationException("DataDirectory invalide");
 
-            // 0) Si un ZIP DWINGS est présent côté réseau pour ce pays, on l'extrait en priorité
+            // 0) Si un ZIP DWINGS est présent côté réseau pour ce pays, on l'extrait en priorité via le cache local
             try
             {
-                string remoteDir = Path.GetDirectoryName(networkDbPath);
-                string zipPath = null;
-                try
+                var netDwZip = GetNetworkDwZipPath(countryId);
+                if (!string.IsNullOrWhiteSpace(netDwZip) && File.Exists(netDwZip))
                 {
-                    if (!string.IsNullOrWhiteSpace(remoteDir) && Directory.Exists(remoteDir))
+                    var locZip = GetLocalDwZipCachePath(countryId);
+                    try
                     {
-                        var candidates = Directory.EnumerateFiles(remoteDir, "*.zip", SearchOption.TopDirectoryOnly)
-                            .Where(f => f.IndexOf(countryId, StringComparison.OrdinalIgnoreCase) >= 0)
-                            .Where(f =>
-                            {
-                                var n = Path.GetFileName(f);
-                                return n.IndexOf("DW", StringComparison.OrdinalIgnoreCase) >= 0
-                                       || n.IndexOf("DWINGS", StringComparison.OrdinalIgnoreCase) >= 0;
-                            });
-                        if (candidates.Any())
-                        {
-                            zipPath = candidates
-                                .Select(f => new FileInfo(f))
-                                .OrderByDescending(fi => fi.LastWriteTimeUtc)
-                                .First().FullName;
-                        }
+                        await CopyZipIfDifferentAsync(netDwZip, locZip);
+                        await ExtractDwZipToLocalAsync(countryId, locZip, localDbPath);
+                        System.Diagnostics.Debug.WriteLine($"DW: ZIP extrait pour {countryId} depuis {netDwZip} -> {localDbPath}");
+                        return;
                     }
-                }
-                catch { /* best-effort */ }
-
-                if (!string.IsNullOrWhiteSpace(zipPath) && File.Exists(zipPath))
-                {
-                    if (!Directory.Exists(dataDirectory)) Directory.CreateDirectory(dataDirectory);
-
-                    using (var archive = ZipFile.OpenRead(zipPath))
+                    catch (Exception ex)
                     {
-                        var accdbEntry = archive.Entries
-                            .OrderByDescending(e => e.Length)
-                            .FirstOrDefault(e => e.FullName.EndsWith(".accdb", StringComparison.OrdinalIgnoreCase));
-
-                        if (accdbEntry != null)
-                        {
-                            string baseNameLocal = Path.GetFileNameWithoutExtension(localDbPath);
-                            string tempLocalFromZip = Path.Combine(dataDirectory, $"{baseNameLocal}.accdb.tmp_{Guid.NewGuid():N}");
-                            string backupLocalZip = Path.Combine(dataDirectory, $"{baseNameLocal}.accdb.bak");
-
-                            // Extraire vers un fichier temporaire puis remplacer atomiquement
-                            accdbEntry.ExtractToFile(tempLocalFromZip, true);
-                            if (File.Exists(localDbPath))
-                                await FileReplaceWithRetriesAsync(tempLocalFromZip, localDbPath, backupLocalZip, maxAttempts: 5, initialDelayMs: 300);
-                            else
-                                File.Move(tempLocalFromZip, localDbPath);
-
-                            System.Diagnostics.Debug.WriteLine($"DW: ZIP extrait pour {countryId} depuis {zipPath} -> {localDbPath}");
-                            return;
-                        }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine($"DW: Aucun fichier .accdb trouvé dans l'archive {zipPath}. Bascule sur la copie réseau.");
-                        }
+                        System.Diagnostics.Debug.WriteLine($"DW: échec extraction ZIP ({ex.Message}). Bascule sur copie réseau.");
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"DW: échec extraction ZIP ({ex.Message}). Bascule sur copie réseau.");
-            }
+            catch { }
 
             if (!File.Exists(networkDbPath))
                 throw new FileNotFoundException($"Base DW réseau introuvable pour {countryId}", networkDbPath);
@@ -4117,68 +4430,72 @@ namespace RecoTool.Services
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
 
             string localDbPath = GetLocalAmbreDbPath(countryId);
-            string networkDbPath = GetNetworkAmbreDbPath(countryId);
             if (!File.Exists(localDbPath)) throw new FileNotFoundException($"Base AMBRE locale introuvable pour {countryId}", localDbPath);
 
-            string remoteDir = Path.GetDirectoryName(networkDbPath);
+            string networkZipPath = GetNetworkAmbreZipPath(countryId);
+            string remoteDir = Path.GetDirectoryName(networkZipPath);
             if (string.IsNullOrWhiteSpace(remoteDir)) throw new InvalidOperationException("Répertoire réseau AMBRE invalide");
             if (!Directory.Exists(remoteDir)) Directory.CreateDirectory(remoteDir);
 
+            // Backup quotidienne Saved/ du ZIP réseau existant
             try
             {
-                if (File.Exists(networkDbPath))
-                {
-                    bool locked = await IsDatabaseLockedAsync(networkDbPath);
-                    if (locked) throw new IOException($"La base AMBRE réseau est verrouillée: {networkDbPath}");
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"AMBRE: avertissement vérification verrou échouée ({ex.Message}). Poursuite.");
-            }
-
-            // Backup quotidienne Saved/
-            try
-            {
-                if (File.Exists(networkDbPath))
+                if (File.Exists(networkZipPath))
                 {
                     string savedDir = Path.Combine(remoteDir, "Saved");
                     if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
-                    string baseName = Path.GetFileNameWithoutExtension(networkDbPath);
+                    string baseName = Path.GetFileNameWithoutExtension(networkZipPath);
                     string dayStamp = DateTime.UtcNow.ToString("yyyy-MM-dd");
-                    string dailyBackupPath = Path.Combine(savedDir, $"{baseName}_{dayStamp}.accdb");
+                    string dailyBackupPath = Path.Combine(savedDir, $"{baseName}_{dayStamp}.zip");
                     if (!File.Exists(dailyBackupPath))
                     {
-                        File.Copy(networkDbPath, dailyBackupPath, true);
-                        System.Diagnostics.Debug.WriteLine($"AMBRE: Daily backup created: {dailyBackupPath}");
+                        File.Copy(networkZipPath, dailyBackupPath, true);
+                        System.Diagnostics.Debug.WriteLine($"AMBRE: Daily ZIP backup created: {dailyBackupPath}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"AMBRE: sauvegarde journalière échouée ({ex.Message}). Poursuite de la publication.");
+                System.Diagnostics.Debug.WriteLine($"AMBRE: sauvegarde journalière ZIP échouée ({ex.Message}). Poursuite de la publication.");
             }
 
-            // Compact & Replace atomique
-            string baseNameForTemp = Path.GetFileNameWithoutExtension(networkDbPath);
-            string tempPath = Path.Combine(remoteDir, $"{baseNameForTemp}.accdb.tmp_{Guid.NewGuid():N}");
-            string backupPath = Path.Combine(remoteDir, $"{baseNameForTemp}.accdb.bak");
-
-            string sourceForPublish = localDbPath;
+            // Compact local puis créer un ZIP temporaire local
+            string sourceForZip = localDbPath;
             string compactTempLocal = null;
             try
             {
                 compactTempLocal = await TryCompactAccessDatabaseAsync(localDbPath);
-                if (!string.IsNullOrEmpty(compactTempLocal) && File.Exists(compactTempLocal)) sourceForPublish = compactTempLocal;
+                if (!string.IsNullOrEmpty(compactTempLocal) && File.Exists(compactTempLocal)) sourceForZip = compactTempLocal;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"AMBRE: Compact/Repair échec ({ex.Message}). Publication avec la base locale.");
+                System.Diagnostics.Debug.WriteLine($"AMBRE: Compact/Repair échec ({ex.Message}). Compression du fichier courant.");
             }
 
-            File.Copy(sourceForPublish, tempPath, true);
-            if (File.Exists(networkDbPath)) await FileReplaceWithRetriesAsync(tempPath, networkDbPath, backupPath, maxAttempts: 6, initialDelayMs: 400); else File.Move(tempPath, networkDbPath);
-            System.Diagnostics.Debug.WriteLine($"AMBRE: base locale publiée vers réseau pour {countryId} -> {networkDbPath}");
+            string localTempZip = Path.Combine(Path.GetDirectoryName(localDbPath) ?? Path.GetTempPath(), $"{Path.GetFileNameWithoutExtension(localDbPath)}_AMBRE.zip.tmp_{Guid.NewGuid():N}");
+            try
+            {
+                using (var archive = ZipFile.Open(localTempZip, ZipArchiveMode.Create))
+                {
+                    string entryName = Path.GetFileName(localDbPath);
+                    archive.CreateEntryFromFile(sourceForZip, entryName, CompressionLevel.Optimal);
+                }
+            }
+            catch
+            {
+                try { if (File.Exists(localTempZip)) File.Delete(localTempZip); } catch { }
+                throw;
+            }
+
+            // Copier le ZIP temporaire vers le réseau de façon atomique
+            string tempRemote = Path.Combine(remoteDir, $"{Path.GetFileNameWithoutExtension(networkZipPath)}.tmp_{Guid.NewGuid():N}.zip");
+            string backupZip = Path.Combine(remoteDir, $"{Path.GetFileNameWithoutExtension(networkZipPath)}.bak");
+            File.Copy(localTempZip, tempRemote, true);
+            if (File.Exists(networkZipPath)) await FileReplaceWithRetriesAsync(tempRemote, networkZipPath, backupZip, maxAttempts: 6, initialDelayMs: 400); else File.Move(tempRemote, networkZipPath);
+            System.Diagnostics.Debug.WriteLine($"AMBRE: archive ZIP publiée vers réseau pour {countryId} -> {networkZipPath}");
+
+            // Nettoyage local temporaire
+            try { if (File.Exists(localTempZip)) File.Delete(localTempZip); } catch { }
             try { if (!string.IsNullOrEmpty(compactTempLocal) && File.Exists(compactTempLocal)) File.Delete(compactTempLocal); } catch { }
         }
 

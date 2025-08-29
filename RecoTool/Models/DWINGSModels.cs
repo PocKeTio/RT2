@@ -9,7 +9,6 @@ namespace RecoTool.Models
     public class DWINGSGuarantee
     {
         public string GUARANTEE_ID { get; set; }
-        public string BOOKING { get; set; }
         public string GUARANTEE_STATUS { get; set; }
         public string NATURE { get; set; }
         public string EVENT_STATUS { get; set; }
@@ -49,7 +48,6 @@ namespace RecoTool.Models
     public class DWINGSInvoice
     {
         public string INVOICE_ID { get; set; }
-        public string BOOKING { get; set; }
         public string REQUESTED_INVOICE_AMOUNT { get; set; }
         public string SENDER_NAME { get; set; }
         public string RECEIVER_NAME { get; set; }

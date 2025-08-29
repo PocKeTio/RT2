@@ -551,7 +551,8 @@ namespace RecoTool.Services
 
                         // Refresh the local databases from network atomically (under the same global lock)
                         try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
-                        await _offlineFirstService.CopyNetworkToLocalAsync(countryId);
+                        await _offlineFirstService.CopyNetworkToLocalAmbreAsync(countryId);
+                        await _offlineFirstService.CopyNetworkToLocalReconciliationAsync(countryId);
                         
                         // Completed
                         try { await _offlineFirstService.SetSyncStatusAsync("Completed"); } catch { }

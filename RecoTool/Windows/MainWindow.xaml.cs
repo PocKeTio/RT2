@@ -636,6 +636,54 @@ namespace RecoTool.Windows
                     return false;
                 }
 
+                // 0) Vérifier que la version du ZIP AMBRE local correspond à la version réseau
+                bool zipOk = false;
+                try { zipOk = await _offlineFirstService.IsLocalAmbreZipInSyncWithNetworkAsync(countryId); } catch { zipOk = false; }
+                if (!zipOk)
+                {
+                    // Tenter une mise à jour automatique depuis le réseau
+                    try
+                    {
+                        await _offlineFirstService.CopyNetworkToLocalAmbreAsync(countryId);
+                        zipOk = await _offlineFirstService.IsLocalAmbreZipInSyncWithNetworkAsync(countryId);
+                    }
+                    catch { zipOk = false; }
+
+                    if (!zipOk)
+                    {
+                        // Bloquer l'initialisation tant que la version locale ne correspond pas
+                        IsOffline = true;
+                        OperationalDataStatus = "OFFLINE";
+                        SetReferentialState("AMBRE désynchronisé", Brushes.Crimson, false);
+                        var ambreDiag = _offlineFirstService.GetAmbreZipDiagnostics(countryId);
+                        ShowError("Données AMBRE non à jour", "Le ZIP AMBRE local ne correspond pas à la version réseau. Veuillez réessayer plus tard ou vérifier l'accès au partage réseau.\n\nDétails:\n" + ambreDiag);
+                        return false;
+                    }
+                }
+
+                // 0.b) Vérifier également la version du ZIP DW local vs réseau
+                bool dwZipOk = false;
+                try { dwZipOk = await _offlineFirstService.IsLocalDwZipInSyncWithNetworkAsync(countryId); } catch { dwZipOk = false; }
+                if (!dwZipOk)
+                {
+                    try
+                    {
+                        await _offlineFirstService.CopyNetworkToLocalDwAsync(countryId);
+                        dwZipOk = await _offlineFirstService.IsLocalDwZipInSyncWithNetworkAsync(countryId);
+                    }
+                    catch { dwZipOk = false; }
+
+                    if (!dwZipOk)
+                    {
+                        IsOffline = true;
+                        OperationalDataStatus = "OFFLINE";
+                        SetReferentialState("DW désynchronisé", Brushes.Crimson, false);
+                        var dwDiag = _offlineFirstService.GetDwZipDiagnostics(countryId);
+                        ShowError("Données DW non à jour", "Le ZIP DW local ne correspond pas à la version réseau. Veuillez réessayer plus tard ou vérifier l'accès au partage réseau.\n\nDétails:\n" + dwDiag);
+                        return false;
+                    }
+                }
+
                 // 1) S'assurer que les instantanés locaux AMBRE et DW sont à jour
                 try { await _offlineFirstService.EnsureLocalSnapshotsUpToDateAsync(countryId); } catch { }
 
@@ -1113,6 +1161,7 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
         /// </summary>
         private void ShowError(string title, string message)
         {
+            try { System.Diagnostics.Debug.WriteLine($"[ERROR] {title}: {message}"); } catch { }
             MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Error);
         }
 

@@ -265,7 +265,6 @@ namespace RecoTool.Services
                                    g.GUARANTEE_ID,
                                   
                                   /* DWINGS Guarantee extended fields */
-                                  g.BOOKING AS G_BOOKING,
                                   g.NATURE AS G_NATURE,
                                   g.EVENT_STATUS AS G_EVENT_STATUS,
                                   g.EVENT_EFFECTIVEDATE AS G_EVENT_EFFECTIVEDATE,
@@ -289,13 +288,12 @@ namespace RecoTool.Services
                                   g.BRANCH_CODE AS G_BRANCH_CODE,
                                   g.BRANCH_NAME AS G_BRANCH_NAME,
                                   g.OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY AS G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY,
-                                  g.CANCELLATIONDATe AS G_CANCELLATIONDATE,
+                                  g.CANCELLATIONDATE AS G_CANCELLATIONDATE,
                                   g.CONTROLER AS G_CONTROLER,
                                   g.AUTOMATICBOOKOFF AS G_AUTOMATICBOOKOFF,
                                   g.NATUREOFDEAL AS G_NATUREOFDEAL,
                                   
                                   /* DWINGS Invoice extended fields */
-                                  dInv.BOOKING AS I_BOOKING,
                                   dInv.REQUESTED_INVOICE_AMOUNT AS I_REQUESTED_INVOICE_AMOUNT,
                                   dInv.SENDER_NAME AS I_SENDER_NAME,
                                   dInv.RECEIVER_NAME AS I_RECEIVER_NAME,

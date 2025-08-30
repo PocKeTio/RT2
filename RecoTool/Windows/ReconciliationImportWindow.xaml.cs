@@ -13,6 +13,7 @@ using RecoTool.Helpers;
 using RecoTool.Models;
 using OfflineFirstAccess.Data;
 using OfflineFirstAccess.Models;
+using System.Data.OleDb;
 
 namespace RecoTool.Windows
 {
@@ -419,6 +420,56 @@ namespace RecoTool.Windows
                 }
 
                 _cts.Token.ThrowIfCancellationRequested();
+
+                // Build DB lookup indices to resolve real IDs from natural keys (per sheet rules)
+                UpdateProgress(48, "Building database lookup indices...");
+                LogMessage("Building in-memory indices from T_Reconciliation for ID resolution...");
+                var receivableIndex = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // Event_Num -> ID
+                var pivotIndex = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // Rec(Num or Origin)+RawLabel+Event_Num+Operation_Date -> ID
+
+                if (_offlineFirstService == null)
+                    throw new InvalidOperationException("OfflineFirstService is not available.");
+                var connStrIdx = _offlineFirstService.GetCurrentLocalConnectionString();
+                using (var conn = new OleDbConnection(connStrIdx))
+                {
+                    await conn.OpenAsync();
+                    var sql = "SELECT ID, Event_Num, RawLabel, Reconciliation_Num, ReconciliationOrigin_Num, Operation_Date FROM [T_Reconciliation]";
+                    using (var cmd = new OleDbCommand(sql, conn))
+                    using (var reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            var id = reader["ID"]?.ToString();
+                            if (string.IsNullOrWhiteSpace(id)) continue;
+
+                            var ev = reader["Event_Num"];
+                            var evs = ev == null || ev is DBNull ? null : ev.ToString()?.Trim();
+                            if (!string.IsNullOrWhiteSpace(evs) && !receivableIndex.ContainsKey(evs))
+                                receivableIndex[evs] = id;
+
+                            var recNumDb = reader["Reconciliation_Num"];
+                            var recOriDb = reader["ReconciliationOrigin_Num"];
+                            var rawLabelDb = reader["RawLabel"];
+                            var opDb = reader["Operation_Date"];
+
+                            string left = null;
+                            var recNumStr = recNumDb == null || recNumDb is DBNull ? null : recNumDb.ToString()?.Trim();
+                            var recOriStr = recOriDb == null || recOriDb is DBNull ? null : recOriDb.ToString()?.Trim();
+                            left = !string.IsNullOrWhiteSpace(recNumStr) ? recNumStr : recOriStr;
+                            var rawLabelStr = rawLabelDb == null || rawLabelDb is DBNull ? null : rawLabelDb.ToString()?.Trim();
+                            var evStr = evs;
+                            var opStr = FormatDdMmYyyy(opDb);
+
+                            if (!string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(rawLabelStr) && !string.IsNullOrWhiteSpace(evStr) && !string.IsNullOrWhiteSpace(opStr))
+                            {
+                                var key = $"{left}|{rawLabelStr}|{evStr}|{opStr}";
+                                if (!pivotIndex.ContainsKey(key)) pivotIndex[key] = id;
+                            }
+                        }
+                    }
+                }
+                LogMessage($"Built DB indices: Receivable keys={receivableIndex.Count:N0}, Pivot keys={pivotIndex.Count:N0}");
+
                 UpdateProgress(50, "Transforming data...");
 
                 // Normalize and validate rows
@@ -428,6 +479,7 @@ namespace RecoTool.Windows
                 {
                     "Action", "KPI", "ReasonNonRisky", "IncidentType", "RiskyItem"
                 };
+                int resolvedPivot = 0, resolvedReceivable = 0, unresolved = 0;
                 foreach (var row in rawRows)
                 {
                     _cts.Token.ThrowIfCancellationRequested();
@@ -469,6 +521,43 @@ namespace RecoTool.Windows
                                 }
                             }
                         }
+                    }
+
+                    // Resolve real DB ID using indices and rules (Pivot vs Receivable)
+                    string TryResolveId(Dictionary<string, object> r)
+                    {
+                        string S2(object v)
+                        {
+                            var s = v?.ToString()?.Trim();
+                            return string.IsNullOrWhiteSpace(s) ? null : s;
+                        }
+
+                        var ev = r.TryGetValue("Event_Num", out var evv) ? S2(evv) : null;
+                        var recNum = r.TryGetValue("Reconciliation_Num", out var r1) ? S2(r1) : null;
+                        var recOri = r.TryGetValue("ReconciliationOrigin_Num", out var r2) ? S2(r2) : null;
+                        var rawLabel = r.TryGetValue("RawLabel", out var rl) ? S2(rl) : null;
+                        var op = r.TryGetValue("Operation_Date", out var od) ? FormatDdMmYyyy(od) : null;
+                        var left = !string.IsNullOrWhiteSpace(recNum) ? recNum : recOri;
+
+                        if (!string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(rawLabel) && !string.IsNullOrWhiteSpace(ev) && !string.IsNullOrWhiteSpace(op))
+                        {
+                            var key = $"{left}|{rawLabel}|{ev}|{op}";
+                            if (pivotIndex.TryGetValue(key, out var idp)) { resolvedPivot++; return idp; }
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(ev))
+                        {
+                            if (receivableIndex.TryGetValue(ev, out var idr)) { resolvedReceivable++; return idr; }
+                        }
+
+                        unresolved++;
+                        return null;
+                    }
+
+                    var resolvedId = TryResolveId(rec);
+                    if (!string.IsNullOrWhiteSpace(resolvedId))
+                    {
+                        rec["ID"] = resolvedId;
                     }
 
                     // Minimal metadata (do not rely on OfflineFirst flow here)

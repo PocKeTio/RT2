@@ -204,5 +204,137 @@ namespace RecoTool.Services
         }
 
 
+        /// <summary>
+        /// Recrée une base AMBRE vide localement si le réseau ne contient pas encore la base/ZIP,
+        /// puis publie un ZIP initial vers le réseau pour initialiser le pays donné.
+        /// Utilise les helpers de template existants et les APIs d'OfflineFirstService pour la publication ZIP.
+        /// </summary>
+        /// <param name="offlineFirstService">Service offline-first (résolution des chemins et publication ZIP)</param>
+        /// <param name="countryId">Code pays (ex: "ES")</param>
+        /// <returns>Un rapport de (re)création</returns>
+        public async Task<RecreationReport> RecreateAmbreAsync(OfflineFirstService offlineFirstService, string countryId)
+        {
+            if (offlineFirstService == null) throw new ArgumentNullException(nameof(offlineFirstService));
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentNullException(nameof(countryId));
+
+            var report = new RecreationReport
+            {
+                TargetDirectory = null
+            };
+
+            // 1) Vérifier si une base/ZIP AMBRE existe déjà côté réseau: si oui, ne rien faire
+            try
+            {
+                await offlineFirstService.CopyNetworkToLocalAmbreAsync(countryId);
+                report.Logs.Add($"AMBRE: contenu réseau déjà présent pour {countryId}, aucune recréation nécessaire.");
+                return FinalizeReport(report);
+            }
+            catch (FileNotFoundException)
+            {
+                // attendu: absence côté réseau -> on va créer localement puis publier
+                report.Logs.Add($"AMBRE: aucun contenu réseau détecté pour {countryId}. Création locale d'une base vide...");
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Cas typique: changements locaux non synchronisés bloquent le rafraîchissement.
+                // Dans ce cas, ne pas tenter de recréer/publier pour éviter un écrasement accidentel.
+                report.Errors.Add($"AMBRE: rafraîchissement bloqué ({ex.Message}). Annulation de la recréation/publish.");
+                return FinalizeReport(report);
+            }
+            catch (Exception ex)
+            {
+                // Autre erreur imprévue -> arrêter et signaler plutôt que de risquer une publication incorrecte
+                report.Errors.Add($"AMBRE: erreur lors de la détection réseau ({ex.Message}). Annulation de la recréation.");
+                return FinalizeReport(report);
+            }
+
+            // 2) Créer la base AMBRE locale vide avec le schéma T_Data_Ambre
+            string ambreLocalPath = offlineFirstService.GetLocalAmbreDatabasePath(countryId);
+            if (string.IsNullOrWhiteSpace(ambreLocalPath))
+            {
+                report.Errors.Add("AMBRE: chemin local introuvable (GetLocalAmbreDatabasePath a renvoyé null/empty)");
+                return FinalizeReport(report);
+            }
+            try
+            {
+                var dir = Path.GetDirectoryName(ambreLocalPath);
+                if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
+
+                bool created = await DatabaseTemplateFactory.CreateCustomTemplateAsync(
+                    ambreLocalPath,
+                    builder =>
+                    {
+                        // Conserver les tables système par défaut (ChangeLog/SyncLocks/Sessions)
+                        // Définir uniquement la table métier AMBRE requise
+                        builder.AddTable("T_Data_Ambre")
+                               .WithPrimaryKey("ID", typeof(string))
+                               .WithColumn("Account_ID", typeof(string), "TEXT(50)")
+                               .WithColumn("CCY", typeof(string), "TEXT(3)")
+                               .WithColumn("Country", typeof(string), "TEXT(255)")
+                               .WithColumn("Event_Num", typeof(string), "TEXT(50)")
+                               .WithColumn("Folder", typeof(string), "TEXT(255)")
+                               .WithColumn("Pivot_MbawIDFromLabel", typeof(string), "TEXT(255)")
+                               .WithColumn("Pivot_TransactionCodesFromLabel", typeof(string), "TEXT(255)")
+                               .WithColumn("Pivot_TRNFromLabel", typeof(string), "TEXT(255)")
+                               .WithColumn("RawLabel", typeof(string), "TEXT(255)")
+                               .WithColumn("Receivable_DWRefFromAmbre", typeof(string), "TEXT(255)")
+                               .WithColumn("LocalSignedAmount", typeof(double), "DOUBLE", false)
+                               .WithColumn("Operation_Date", typeof(DateTime), "DATETIME")
+                               .WithColumn("Reconciliation_Num", typeof(string), "TEXT(255)")
+                               .WithColumn("Receivable_InvoiceFromAmbre", typeof(string), "TEXT(255)")
+                               .WithColumn("ReconciliationOrigin_Num", typeof(string), "TEXT(255)")
+                               .WithColumn("SignedAmount", typeof(double), "DOUBLE", false)
+                               .WithColumn("Value_Date", typeof(DateTime), "DATETIME")
+                               // Champs BaseEntity
+                               .WithColumn("CreationDate", typeof(DateTime), "DATETIME")
+                               .WithColumn("DeleteDate", typeof(DateTime), "DATETIME")
+                               .WithColumn("ModifiedBy", typeof(string), "TEXT(100)")
+                               .WithColumn("LastModified", typeof(DateTime), "DATETIME")
+                               .WithColumn("Version", typeof(long), "LONG", false)
+                               .EndTable();
+                    });
+
+                if (!created)
+                {
+                    report.Errors.Add($"AMBRE: échec de création locale de la base vide ({Path.GetFileName(ambreLocalPath)})");
+                    return FinalizeReport(report);
+                }
+
+                report.AmbrePath = ambreLocalPath;
+                report.Logs.Add($"AMBRE: base locale vide créée -> {ambreLocalPath}");
+            }
+            catch (Exception ex)
+            {
+                report.Errors.Add($"AMBRE: exception lors de la création locale ({ex.Message})");
+                return FinalizeReport(report);
+            }
+
+            // 3) Publier la base locale en ZIP vers le réseau
+            try
+            {
+                await offlineFirstService.CopyLocalToNetworkAmbreAsync(countryId);
+                report.Logs.Add($"AMBRE: ZIP initial publié vers le réseau pour {countryId}.");
+            }
+            catch (Exception ex)
+            {
+                report.Errors.Add($"AMBRE: publication ZIP vers réseau échouée ({ex.Message})");
+                return FinalizeReport(report);
+            }
+
+            // 4) Optionnel: réaligner le local depuis le ZIP réseau (cache/local DB) pour cohérence avec l'enforcement ZIP
+            try
+            {
+                await offlineFirstService.CopyNetworkToLocalAmbreAsync(countryId);
+                report.Logs.Add("AMBRE: local réaligné depuis le ZIP réseau.");
+            }
+            catch (Exception ex)
+            {
+                // Non-bloquant
+                report.Logs.Add($"AMBRE: réalignement local post-publication non effectué ({ex.Message}).");
+            }
+
+            return FinalizeReport(report);
+        }
+
     }
 }

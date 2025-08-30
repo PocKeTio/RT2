@@ -4333,12 +4333,12 @@ namespace RecoTool.Services
                     if (needZipCopy)
                     {
                         string tmpZip = localZipPath + ".tmp_copy";
-                        File.Copy(networkZipPath, tmpZip, true);
+                        await Task.Run(() => File.Copy(networkZipPath, tmpZip, true));
                         try { await FileReplaceWithRetriesAsync(tmpZip, localZipPath, localZipPath + ".bak", maxAttempts: 5, initialDelayMs: 250); }
                         catch
                         {
                             try { if (File.Exists(localZipPath)) File.Delete(localZipPath); } catch { }
-                            File.Move(tmpZip, localZipPath);
+                            await Task.Run(() => File.Move(tmpZip, localZipPath));
                         }
                         try { var bak = localZipPath + ".bak"; if (File.Exists(bak)) File.Delete(bak); } catch { }
 
@@ -4373,8 +4373,11 @@ namespace RecoTool.Services
             string tempLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.tmp_{Guid.NewGuid():N}");
             string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
 
-            File.Copy(networkDbPath, tempLocal, true);
-            if (File.Exists(localDbPath)) await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300); else File.Move(tempLocal, localDbPath);
+            await Task.Run(() => File.Copy(networkDbPath, tempLocal, true));
+            if (File.Exists(localDbPath))
+                await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300);
+            else
+                await Task.Run(() => File.Move(tempLocal, localDbPath));
 
             System.Diagnostics.Debug.WriteLine($"AMBRE: base réseau copiée vers local pour {countryId} -> {localDbPath}");
             try { await SetLastSyncAnchorAsync(countryId, DateTime.UtcNow); }
@@ -4413,8 +4416,11 @@ namespace RecoTool.Services
             string tempLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.tmp_{Guid.NewGuid():N}");
             string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
 
-            File.Copy(networkDbPath, tempLocal, true);
-            if (File.Exists(localDbPath)) await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300); else File.Move(tempLocal, localDbPath);
+            await Task.Run(() => File.Copy(networkDbPath, tempLocal, true));
+            if (File.Exists(localDbPath))
+                await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300);
+            else
+                await Task.Run(() => File.Move(tempLocal, localDbPath));
 
             System.Diagnostics.Debug.WriteLine($"RECON: base réseau copiée vers local pour {countryId} -> {localDbPath}");
             // Après un rafraîchissement complet local <- réseau, initialiser/mettre à jour l'ancre de synchronisation
@@ -4475,8 +4481,11 @@ namespace RecoTool.Services
             string tempLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.tmp_{Guid.NewGuid():N}");
             string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
 
-            File.Copy(networkDbPath, tempLocal, true);
-            if (File.Exists(localDbPath)) await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300); else File.Move(tempLocal, localDbPath);
+            await Task.Run(() => File.Copy(networkDbPath, tempLocal, true));
+            if (File.Exists(localDbPath))
+                await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300);
+            else
+                await Task.Run(() => File.Move(tempLocal, localDbPath));
 
             System.Diagnostics.Debug.WriteLine($"DW: base réseau copiée vers local pour {countryId} -> {localDbPath}");
         }

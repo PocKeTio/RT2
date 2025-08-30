@@ -344,41 +344,59 @@ namespace OfflineFirstAccess.Data
                             {
                                 // Optimized Upsert logic: Try UPDATE first, then INSERT.
                                 // Use deterministic ordering to avoid OleDb positional parameter mismatch
-                                var setKeys = record.Keys.Where(k => k != _config.PrimaryKeyColumn)
-                                                        .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
-                                                        .ToList();
+                                var hasSchema = colTypes != null && colTypes.Count > 0;
+                                var setKeys = record.Keys
+                                                    .Where(k => !string.Equals(k, _config.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase)
+                                                                && (!hasSchema || colTypes.ContainsKey(k)))
+                                                    .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+                                                    .ToList();
                                 var updateSetClause = string.Join(", ", setKeys.Select(k => $"[{k}] = @{k}"));
                                 var updateSql = $"UPDATE [{tableName}] SET {updateSetClause} WHERE [{_config.PrimaryKeyColumn}] = @id";
                                 int rowsAffected;
 
-                                using (var updateCommand = new OleDbCommand(updateSql, connection, transaction))
+                                if (setKeys.Count > 0)
                                 {
-                                    foreach (var key in setKeys)
+                                    using (var updateCommand = new OleDbCommand(updateSql, connection, transaction))
                                     {
-                                        OleDbType? expected = null;
-                                        if (colTypes != null && colTypes.TryGetValue(key, out var t)) expected = t;
-                                        updateCommand.Parameters.Add(CreateParameter($"@{key}", record[key], expected));
+                                        foreach (var key in setKeys)
+                                        {
+                                            OleDbType? expected = null;
+                                            if (colTypes != null && colTypes.TryGetValue(key, out var t)) expected = t;
+                                            updateCommand.Parameters.Add(CreateParameter($"@{key}", record[key], expected));
+                                        }
+                                        OleDbType? pkType2 = null;
+                                        if (colTypes != null && colTypes.TryGetValue(_config.PrimaryKeyColumn, out var pkt2)) pkType2 = pkt2;
+                                        updateCommand.Parameters.Add(CreateParameter("@id", idValue, pkType2));
+                                        try { LogManager.Debug($"APPLY UPDATE: Table={tableName} SQL={updateSql} SetKeys=[{string.Join(",", setKeys)}] Params: {BuildParamsDebug(updateCommand.Parameters)}"); } catch { }
+                                        try
+                                        {
+                                            rowsAffected = await updateCommand.ExecuteNonQueryAsync();
+                                            try { LogManager.Debug($"APPLY UPDATE result: Table={tableName} ID={idValue} RowsAffected={rowsAffected}"); } catch { }
+                                        }
+                                        catch (OleDbException ex)
+                                        {
+                                            var dbg = BuildParamsDebug(updateCommand.Parameters);
+                                            throw new InvalidOperationException($"UPDATE failed on table '{tableName}'. SQL: {updateSql}. Params: {dbg}. Error: {ex.Message}", ex);
+                                        }
                                     }
-                                    OleDbType? pkType2 = null;
-                                    if (colTypes != null && colTypes.TryGetValue(_config.PrimaryKeyColumn, out var pkt2)) pkType2 = pkt2;
-                                    updateCommand.Parameters.Add(CreateParameter("@id", idValue, pkType2));
-                                    try { LogManager.Debug($"APPLY UPDATE: Table={tableName} SQL={updateSql} SetKeys=[{string.Join(",", setKeys)}] Params: {BuildParamsDebug(updateCommand.Parameters)}"); } catch { }
-                                    try
-                                    {
-                                        rowsAffected = await updateCommand.ExecuteNonQueryAsync();
-                                        try { LogManager.Debug($"APPLY UPDATE result: Table={tableName} ID={idValue} RowsAffected={rowsAffected}"); } catch { }
-                                    }
-                                    catch (OleDbException ex)
-                                    {
-                                        var dbg = BuildParamsDebug(updateCommand.Parameters);
-                                        throw new InvalidOperationException($"UPDATE failed on table '{tableName}'. SQL: {updateSql}. Params: {dbg}. Error: {ex.Message}", ex);
-                                    }
+                                }
+                                else
+                                {
+                                    // No known columns to update; force insert path
+                                    rowsAffected = 0;
                                 }
 
                                 if (rowsAffected == 0)
                                 {
                                     // If no rows were updated, the record doesn't exist. Insert it.
-                                    var allKeys = record.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
+                                    var allKeys = record.Keys
+                                                        .Where(k => !hasSchema || colTypes.ContainsKey(k))
+                                                        .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+                                                        .ToList();
+                                    if (!allKeys.Contains(_config.PrimaryKeyColumn))
+                                    {
+                                        allKeys.Insert(0, _config.PrimaryKeyColumn);
+                                    }
                                     var insertColumns = string.Join(", ", allKeys.Select(k => $"[{k}]"));
                                     var insertValues = string.Join(", ", allKeys.Select(k => $"@{k}"));
                                     var insertSql = $"INSERT INTO [{tableName}] ({insertColumns}) VALUES ({insertValues})";
@@ -388,7 +406,16 @@ namespace OfflineFirstAccess.Data
                                         {
                                             OleDbType? expected = null;
                                             if (colTypes != null && colTypes.TryGetValue(key, out var t)) expected = t;
-                                            insertCommand.Parameters.Add(CreateParameter($"@{key}", record[key], expected));
+                                            object valueForParam;
+                                            if (string.Equals(key, _config.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase) && !record.ContainsKey(key))
+                                            {
+                                                valueForParam = idValue;
+                                            }
+                                            else
+                                            {
+                                                valueForParam = record[key];
+                                            }
+                                            insertCommand.Parameters.Add(CreateParameter($"@{key}", valueForParam, expected));
                                         }
                                         try { LogManager.Debug($"APPLY INSERT: Table={tableName} SQL={insertSql} Keys=[{string.Join(",", allKeys)}] Params: {BuildParamsDebug(insertCommand.Parameters)}"); } catch { }
                                         try

@@ -288,6 +288,12 @@ namespace RecoTool.Windows
                     Assign("Pivot KPI", "KPI", false);
                     Assign("Pivot RISKY ITEM", "RiskyItem", false);
                     Assign("Pivot REASON NON RISKY", "ReasonNonRisky", false);
+                    // Pivot ID components
+                    Assign("Pivot RawLabel", "RawLabel", false);
+                    Assign("Pivot Event_Num", "Event_Num", false);
+                    Assign("Pivot Operation_Date", "Operation_Date", false);
+                    Assign("Pivot Reconciliation_Num", "Reconciliation_Num", false);
+                    Assign("Pivot ReconciliationOrigin_Num", "ReconciliationOrigin_Num", false);
 
                     // Receivable fields
                     Assign("Receivable Comment", "Comments", true);
@@ -297,6 +303,8 @@ namespace RecoTool.Windows
                     Assign("Receivable LAST CLAIM", "LastClaimDate", true);
                     Assign("Receivable RISKY ITEM", "RiskyItem", true);
                     Assign("Receivable REASON NON RISKY", "ReasonNonRisky", true);
+                    // Receivable ID component
+                    Assign("Receivable Event_Num", "Event_Num", true);
                 }
 
                 _cts.Token.ThrowIfCancellationRequested();
@@ -304,6 +312,24 @@ namespace RecoTool.Windows
                 LogMessage($"Pivot start row: {pivotStartRow}, Receivable start row: {receivableStartRow}");
 
                 var allById = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
+                // Helpers to normalize values for ID composition
+                string S(object v)
+                {
+                    var s = v?.ToString()?.Trim();
+                    return string.IsNullOrWhiteSpace(s) ? null : s;
+                }
+                string FormatDdMmYyyy(object v)
+                {
+                    try
+                    {
+                        if (v == null) return null;
+                        if (v is DateTime dt) return dt.ToString("dd/MM/yyyy");
+                        if (v is double d) return DateTime.FromOADate(d).ToString("dd/MM/yyyy");
+                        if (DateTime.TryParse(v.ToString(), out var parsed)) return parsed.ToString("dd/MM/yyyy");
+                    }
+                    catch { }
+                    return null;
+                }
                 int totalRows = 0;
                 using (var dataExcel = new ExcelHelper())
                 {
@@ -313,8 +339,21 @@ namespace RecoTool.Windows
                     var pivotRows = dataExcel.ReadSheetByColumns("PIVOT", pivotLetterToDest, pivotStartRow, idColumnLetter: "A");
                     foreach (var row in pivotRows)
                     {
-                        var id = row.TryGetValue("ID", out var idv) ? idv?.ToString() : null;
+                        // Compute ID for PIVOT: Reconciliation_Num (or ReconciliationOrigin_Num) + RawLabel + Event_Num + Operation_Date (dd/MM/yyyy)
+                        var recNum = row.TryGetValue("Reconciliation_Num", out var v1) ? S(v1) : null;
+                        var recOriginNum = row.TryGetValue("ReconciliationOrigin_Num", out var v2) ? S(v2) : null;
+                        var rawLabel = row.TryGetValue("RawLabel", out var v3) ? S(v3) : null;
+                        var eventNum = row.TryGetValue("Event_Num", out var v4) ? S(v4) : null;
+                        var opDate = row.TryGetValue("Operation_Date", out var v5) ? FormatDdMmYyyy(v5) : null;
+                        var left = !string.IsNullOrWhiteSpace(recNum) ? recNum : recOriginNum;
+                        var id = (!string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(rawLabel) && !string.IsNullOrWhiteSpace(eventNum) && !string.IsNullOrWhiteSpace(opDate))
+                            ? $"{left}|{rawLabel}|{eventNum}|{opDate}"
+                            : (row.TryGetValue("ID", out var idv) ? idv?.ToString() : null);
                         if (string.IsNullOrWhiteSpace(id)) continue;
+                        // For PIVOT: if duplicate ID appears, keep only the first line
+                        if (allById.ContainsKey(id))
+                            continue;
+                        row["ID"] = id;
 
                         if (!allById.TryGetValue(id, out var agg))
                         {
@@ -341,8 +380,12 @@ namespace RecoTool.Windows
                     var recvRows = dataExcel.ReadSheetByColumns("RECEIVABLE", recvLetterToDest, receivableStartRow, idColumnLetter: "A");
                     foreach (var row in recvRows)
                     {
-                        var id = row.TryGetValue("ID", out var idv) ? idv?.ToString() : null;
+                        // Compute ID for RECEIVABLE: Event_Num
+                        var id = row.TryGetValue("Event_Num", out var ev) ? S(ev) : null;
+                        if (string.IsNullOrWhiteSpace(id))
+                            id = row.TryGetValue("ID", out var idv) ? idv?.ToString() : null; // fallback to column A
                         if (string.IsNullOrWhiteSpace(id)) continue;
+                        row["ID"] = id;
 
                         if (!allById.TryGetValue(id, out var agg))
                         {

@@ -28,6 +28,86 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Configure la structure AMBRE (table T_Data_Ambre) sur un builder fourni.
+        /// </summary>
+        internal static void ConfigureAmbre(DatabaseTemplateBuilder builder)
+        {
+            // Conserver les tables système par défaut (ChangeLog/SyncLocks/Sessions)
+            builder.AddTable("T_Data_Ambre")
+                   .WithPrimaryKey("ID", typeof(string))
+                   .WithColumn("Account_ID", typeof(string), "TEXT(50)")
+                   .WithColumn("CCY", typeof(string), "TEXT(3)")
+                   .WithColumn("Country", typeof(string), "TEXT(255)")
+                   .WithColumn("Event_Num", typeof(string), "TEXT(50)")
+                   .WithColumn("Folder", typeof(string), "TEXT(255)")
+                   .WithColumn("Pivot_MbawIDFromLabel", typeof(string), "TEXT(255)")
+                   .WithColumn("Pivot_TransactionCodesFromLabel", typeof(string), "TEXT(255)")
+                   .WithColumn("Pivot_TRNFromLabel", typeof(string), "TEXT(255)")
+                   .WithColumn("RawLabel", typeof(string), "TEXT(255)")
+                   .WithColumn("Receivable_DWRefFromAmbre", typeof(string), "TEXT(255)")
+                   .WithColumn("LocalSignedAmount", typeof(double), "DOUBLE", false)
+                   .WithColumn("Operation_Date", typeof(DateTime), "DATETIME")
+                   .WithColumn("Reconciliation_Num", typeof(string), "TEXT(255)")
+                   .WithColumn("Receivable_InvoiceFromAmbre", typeof(string), "TEXT(255)")
+                   .WithColumn("ReconciliationOrigin_Num", typeof(string), "TEXT(255)")
+                   .WithColumn("SignedAmount", typeof(double), "DOUBLE", false)
+                   .WithColumn("Value_Date", typeof(DateTime), "DATETIME")
+                   // Champs BaseEntity
+                   .WithColumn("CreationDate", typeof(DateTime), "DATETIME")
+                   .WithColumn("DeleteDate", typeof(DateTime), "DATETIME")
+                   .WithColumn("ModifiedBy", typeof(string), "TEXT(100)")
+                   .WithColumn("LastModified", typeof(DateTime), "DATETIME")
+                   .WithColumn("Version", typeof(long), "LONG", false)
+                   .EndTable();
+        }
+
+        /// <summary>
+        /// Configure la structure RECONCILIATION (table T_Reconciliation) sur un builder fourni.
+        /// </summary>
+        internal static void ConfigureReconciliation(DatabaseTemplateBuilder builder)
+        {
+            // Conserver les tables système par défaut (ChangeLog/SyncLocks/Sessions)
+            builder.AddTable("T_Reconciliation")
+                   .WithPrimaryKey("ID", typeof(string))
+                   .WithColumn("DWINGS_GuaranteeID", typeof(string), "TEXT(255)")
+                   .WithColumn("DWINGS_InvoiceID", typeof(string), "TEXT(255)")
+                   .WithColumn("DWINGS_CommissionID", typeof(string), "TEXT(255)")
+                   .WithColumn("Action", typeof(int), "LONG")
+                   .WithColumn("Assignee", typeof(string), "TEXT(255)")
+                   .WithColumn("Comments", typeof(string), "LONGTEXT")
+                   .WithColumn("InternalInvoiceReference", typeof(string), "TEXT(255)")
+                   .WithColumn("FirstClaimDate", typeof(DateTime), "DATETIME")
+                   .WithColumn("LastClaimDate", typeof(DateTime), "DATETIME")
+                   .WithColumn("ToRemind", typeof(bool))
+                   .WithColumn("ToRemindDate", typeof(DateTime), "DATETIME")
+                   .WithColumn("ACK", typeof(bool))
+                   .WithColumn("SwiftCode", typeof(string), "TEXT(255)")
+                   .WithColumn("PaymentReference", typeof(string), "TEXT(255)")
+                   .WithColumn("MbawData", typeof(string), "LONGTEXT")
+                   .WithColumn("SpiritData", typeof(string), "LONGTEXT")
+                   .WithColumn("KPI", typeof(int), "LONG")
+                   .WithColumn("IncidentType", typeof(int), "LONG")
+                   .WithColumn("RiskyItem", typeof(bool))
+                   .WithColumn("ReasonNonRisky", typeof(int), "LONG")
+                   .WithColumn("PendingTrigger", typeof(bool))
+                   .WithColumn("PendingPricing", typeof(bool))
+                   .WithColumn("PendingToMatch", typeof(bool))
+                   .WithColumn("IsTransitory", typeof(bool))
+                   .WithColumn("IsManualOutgoing", typeof(bool))
+                   .WithColumn("IsAdjustment", typeof(bool))
+                   .WithColumn("TriggerDate", typeof(DateTime), "DATETIME")
+                   .WithColumn("ReissuanceCount", typeof(int), "LONG")
+                   .WithColumn("TriggerStatus", typeof(int), "LONG")
+                   // Champs BaseEntity
+                   .WithColumn("CreationDate", typeof(DateTime), "DATETIME")
+                   .WithColumn("DeleteDate", typeof(DateTime), "DATETIME")
+                   .WithColumn("ModifiedBy", typeof(string), "TEXT(100)")
+                   .WithColumn("LastModified", typeof(DateTime), "DATETIME")
+                   .WithColumn("Version", typeof(long), "LONG", false)
+                   .EndTable();
+        }
+
+        /// <summary>
         /// (Re)crée uniquement la base de données DWINGS (unifiée)
         /// dans le répertoire spécifié. Le fichier est nommé: "{dwDatabasePrefix}{country}.accdb".
         /// </summary>
@@ -132,49 +212,7 @@ namespace RecoTool.Services
 
                 bool created = await DatabaseTemplateFactory.CreateCustomTemplateAsync(
                     reconLocalPath,
-                    builder =>
-                    {
-                        // Conserver les tables système par défaut (ChangeLog/SyncLocks/Sessions)
-                        // Définir la table métier RECONCILIATION
-                        builder.AddTable("T_Reconciliation")
-                               .WithPrimaryKey("ID", typeof(string))
-                               .WithColumn("DWINGS_GuaranteeID", typeof(string), "TEXT(255)")
-                               .WithColumn("DWINGS_InvoiceID", typeof(string), "TEXT(255)")
-                               .WithColumn("DWINGS_CommissionID", typeof(string), "TEXT(255)")
-                               .WithColumn("Action", typeof(int), "LONG")
-                               .WithColumn("Assignee", typeof(string), "TEXT(255)")
-                               .WithColumn("Comments", typeof(string), "LONGTEXT")
-                               .WithColumn("InternalInvoiceReference", typeof(string), "TEXT(255)")
-                               .WithColumn("FirstClaimDate", typeof(DateTime), "DATETIME")
-                               .WithColumn("LastClaimDate", typeof(DateTime), "DATETIME")
-                               .WithColumn("ToRemind", typeof(bool))
-                               .WithColumn("ToRemindDate", typeof(DateTime), "DATETIME")
-                               .WithColumn("ACK", typeof(bool))
-                               .WithColumn("SwiftCode", typeof(string), "TEXT(255)")
-                               .WithColumn("PaymentReference", typeof(string), "TEXT(255)")
-                               .WithColumn("MbawData", typeof(string), "LONGTEXT")
-                               .WithColumn("SpiritData", typeof(string), "LONGTEXT")
-                               .WithColumn("KPI", typeof(int), "LONG")
-                               .WithColumn("IncidentType", typeof(int), "LONG")
-                               .WithColumn("RiskyItem", typeof(bool))
-                               .WithColumn("ReasonNonRisky", typeof(int), "LONG")
-                               .WithColumn("PendingTrigger", typeof(bool))
-                               .WithColumn("PendingPricing", typeof(bool))
-                               .WithColumn("PendingToMatch", typeof(bool))
-                               .WithColumn("IsTransitory", typeof(bool))
-                               .WithColumn("IsManualOutgoing", typeof(bool))
-                               .WithColumn("IsAdjustment", typeof(bool))
-                               .WithColumn("TriggerDate", typeof(DateTime), "DATETIME")
-                               .WithColumn("ReissuanceCount", typeof(int), "LONG")
-                               .WithColumn("TriggerStatus", typeof(int), "LONG")
-                               // Champs BaseEntity
-                               .WithColumn("CreationDate", typeof(DateTime), "DATETIME")
-                               .WithColumn("DeleteDate", typeof(DateTime), "DATETIME")
-                               .WithColumn("ModifiedBy", typeof(string), "TEXT(100)")
-                               .WithColumn("LastModified", typeof(DateTime), "DATETIME")
-                               .WithColumn("Version", typeof(long), "LONG", false)
-                               .EndTable();
-                    });
+                    ConfigureReconciliation);
 
                 if (!created)
                 {
@@ -262,6 +300,99 @@ namespace RecoTool.Services
             return report;
         }
 
+        /// <summary>
+        /// Configure la structure DWINGS (tables T_DW_Guarantee et T_DW_Data) sur un builder fourni.
+        /// Réutilisable pour la création de fichier comme pour une lecture de configuration in-memory.
+        /// </summary>
+        internal static void ConfigureDwings(DatabaseTemplateBuilder builder)
+        {
+            // Retirer les tables système non pertinentes pour DWINGS
+            var cfg = builder.GetConfiguration();
+            cfg.Tables.RemoveAll(t =>
+                string.Equals(t.Name, "SyncLocks", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(t.Name, "Sessions", StringComparison.OrdinalIgnoreCase));
+
+            // T_DW_Guarantee
+            builder.AddTable("T_DW_Guarantee")
+                .WithPrimaryKey("GUARANTEE_ID", typeof(string))
+                .WithColumn("BOOKING", typeof(string))
+                .WithColumn("GUARANTEE_STATUS", typeof(string))
+                .WithColumn("NATURE", typeof(string))
+                .WithColumn("EVENT_STATUS", typeof(string))
+                .WithColumn("EVENT_EFFECTIVEDATE", typeof(DateTime))
+                .WithColumn("ISSUEDATE", typeof(DateTime))
+                .WithColumn("OFFICIALREF", typeof(string))
+                .WithColumn("UNDERTAKINGEVENT", typeof(string))
+                .WithColumn("PROCESS", typeof(string))
+                .WithColumn("EXPIRYDATETYPE", typeof(string))
+                .WithColumn("EXPIRYDATE", typeof(DateTime))
+                .WithColumn("PARTY_ID", typeof(string))
+                .WithColumn("PARTY_REF", typeof(string))
+                .WithColumn("SECONDARY_OBLIGOR", typeof(string))
+                .WithColumn("SECONDARY_OBLIGOR_NATURE", typeof(string))
+                .WithColumn("ROLE", typeof(string))
+                .WithColumn("COUNTRY", typeof(string))
+                .WithColumn("CENTRAL_PARTY_CODE", typeof(string))
+                .WithColumn("NAME1", typeof(string))
+                .WithColumn("NAME2", typeof(string))
+                .WithColumn("GROUPE", typeof(string))
+                .WithColumn("PREMIUM", typeof(bool))
+                .WithColumn("BRANCH_CODE", typeof(string))
+                .WithColumn("BRANCH_NAME", typeof(string))
+                .WithColumn("OUTSTANDING_AMOUNT", typeof(double))
+                .WithColumn("OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY", typeof(double))
+                .WithColumn("CURRENCYNAME", typeof(string))
+                .WithColumn("CANCELLATIONDATE", typeof(DateTime))
+                .WithColumn("CONTROLER", typeof(bool))
+                .WithColumn("AUTOMATICBOOKOFF", typeof(bool))
+                .WithColumn("NATUREOFDEAL", typeof(string))
+                .EndTable();
+
+            // T_DW_Data
+            builder.AddTable("T_DW_Data")
+                .WithPrimaryKey("BGPMT", typeof(string))
+                .WithColumn("INVOICE_ID", typeof(string))
+                .WithColumn("BOOKING", typeof(string))
+                .WithColumn("REQUESTED_INVOICE_AMOUNT", typeof(string))
+                .WithColumn("SENDER_NAME", typeof(string))
+                .WithColumn("RECEIVER_NAME", typeof(string))
+                .WithColumn("SENDER_REFERENCE", typeof(string))
+                .WithColumn("RECEIVER_REFERENCE", typeof(string))
+                .WithColumn("T_INVOICE_STATUS", typeof(string))
+                .WithColumn("BILLING_AMOUNT", typeof(string))
+                .WithColumn("BILLING_CURRENCY", typeof(string))
+                .WithColumn("START_DATE", typeof(string))
+                .WithColumn("END_DATE", typeof(string))
+                .WithColumn("FINAL_AMOUNT", typeof(string))
+                .WithColumn("T_COMMISSION_PERIOD_STATUS", typeof(string))
+                .WithColumn("BUSINESS_CASE_REFERENCE", typeof(string))
+                .WithColumn("BUSINESS_CASE_ID", typeof(string))
+                .WithColumn("POSTING_PERIODICITY", typeof(string))
+                .WithColumn("EVENT_ID", typeof(string))
+                .WithColumn("COMMENTS", typeof(string))
+                .WithColumn("SENDER_ACCOUNT_NUMBER", typeof(string))
+                .WithColumn("SENDER_ACCOUNT_BIC", typeof(string))
+                .WithColumn("RECEIVER_ACCOUNT_NUMBER", typeof(string))
+                .WithColumn("RECEIVER_ACCOUNT_BIC", typeof(string))
+                .WithColumn("REQUESTED_AMOUNT", typeof(string))
+                .WithColumn("EXECUTED_AMOUNT", typeof(string))
+                .WithColumn("REQUESTED_EXECUTION_DATE", typeof(string))
+                .WithColumn("T_PAYMENT_REQUEST_STATUS", typeof(string))
+                .WithColumn("DEBTOR_ACCOUNT_ID", typeof(string))
+                .WithColumn("CREDITOR_ACCOUNT_ID", typeof(string))
+                .WithColumn("MT_STATUS", typeof(string))
+                .WithColumn("REMINDER_NUMBER", typeof(string))
+                .WithColumn("ERROR_MESSAGE", typeof(string))
+                .WithColumn("DEBTOR_PARTY_ID", typeof(string))
+                .WithColumn("PAYMENT_METHOD", typeof(string))
+                .WithColumn("PAYMENT_TYPE", typeof(string))
+                .WithColumn("DEBTOR_PARTY_NAME", typeof(string))
+                .WithColumn("DEBTOR_ACCOUNT_NUMBER", typeof(string))
+                .WithColumn("CREDITOR_PARTY_ID", typeof(string))
+                .WithColumn("CREDITOR_ACCOUNT_NUMBER", typeof(string))
+                .EndTable();
+        }
+
 
         private async Task<bool> CreateDwingsUnifiedDatabaseAsync(string path, RecreationReport report)
         {
@@ -269,94 +400,7 @@ namespace RecoTool.Services
             {
                 bool ok = await DatabaseTemplateFactory.CreateCustomTemplateAsync(
                     path,
-                    builder =>
-                    {
-                        // Retirer les tables système non pertinentes pour DWINGS
-                        var cfg = builder.GetConfiguration();
-                        cfg.Tables.RemoveAll(t =>
-                            string.Equals(t.Name, "SyncLocks", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(t.Name, "Sessions", StringComparison.OrdinalIgnoreCase));
-
-                        // T_DW_Guarantee
-                        builder.AddTable("T_DW_Guarantee")
-                            .WithPrimaryKey("GUARANTEE_ID", typeof(string))
-                            .WithColumn("BOOKING", typeof(string))
-                            .WithColumn("GUARANTEE_STATUS", typeof(string))
-                            .WithColumn("NATURE", typeof(string))
-                            .WithColumn("EVENT_STATUS", typeof(string))
-                            .WithColumn("EVENT_EFFECTIVEDATE", typeof(DateTime))
-                            .WithColumn("ISSUEDATE", typeof(DateTime))
-                            .WithColumn("OFFICIALREF", typeof(string))
-                            .WithColumn("UNDERTAKINGEVENT", typeof(string))
-                            .WithColumn("PROCESS", typeof(string))
-                            .WithColumn("EXPIRYDATETYPE", typeof(string))
-                            .WithColumn("EXPIRYDATE", typeof(DateTime))
-                            .WithColumn("PARTY_ID", typeof(string))
-                            .WithColumn("PARTY_REF", typeof(string))
-                            .WithColumn("SECONDARY_OBLIGOR", typeof(string))
-                            .WithColumn("SECONDARY_OBLIGOR_NATURE", typeof(string))
-                            .WithColumn("ROLE", typeof(string))
-                            .WithColumn("COUNTRY", typeof(string))
-                            .WithColumn("CENTRAL_PARTY_CODE", typeof(string))
-                            .WithColumn("NAME1", typeof(string))
-                            .WithColumn("NAME2", typeof(string))
-                            .WithColumn("GROUPE", typeof(string))
-                            .WithColumn("PREMIUM", typeof(bool))
-                            .WithColumn("BRANCH_CODE", typeof(string))
-                            .WithColumn("BRANCH_NAME", typeof(string))
-                            .WithColumn("OUTSTANDING_AMOUNT", typeof(double))
-                            .WithColumn("OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY", typeof(double))
-                            .WithColumn("CURRENCYNAME", typeof(string))
-                            .WithColumn("CANCELLATIONDATE", typeof(DateTime))
-                            .WithColumn("CONTROLER", typeof(bool))
-                            .WithColumn("AUTOMATICBOOKOFF", typeof(bool))
-                            .WithColumn("NATUREOFDEAL", typeof(string))
-                            .EndTable();
-
-                        // T_DW_Data
-                        builder.AddTable("T_DW_Data")
-                            .WithPrimaryKey("BGPMT", typeof(string))
-                            .WithColumn("INVOICE_ID", typeof(string))
-                            .WithColumn("BOOKING", typeof(string))
-                            .WithColumn("REQUESTED_INVOICE_AMOUNT", typeof(string))
-                            .WithColumn("SENDER_NAME", typeof(string))
-                            .WithColumn("RECEIVER_NAME", typeof(string))
-                            .WithColumn("SENDER_REFERENCE", typeof(string))
-                            .WithColumn("RECEIVER_REFERENCE", typeof(string))
-                            .WithColumn("T_INVOICE_STATUS", typeof(string))
-                            .WithColumn("BILLING_AMOUNT", typeof(string))
-                            .WithColumn("BILLING_CURRENCY", typeof(string))
-                            .WithColumn("START_DATE", typeof(string))
-                            .WithColumn("END_DATE", typeof(string))
-                            .WithColumn("FINAL_AMOUNT", typeof(string))
-                            .WithColumn("T_COMMISSION_PERIOD_STATUS", typeof(string))
-                            .WithColumn("BUSINESS_CASE_REFERENCE", typeof(string))
-                            .WithColumn("BUSINESS_CASE_ID", typeof(string))
-                            .WithColumn("POSTING_PERIODICITY", typeof(string))
-                            .WithColumn("EVENT_ID", typeof(string))
-                            .WithColumn("COMMENTS", typeof(string))
-                            .WithColumn("SENDER_ACCOUNT_NUMBER", typeof(string))
-                            .WithColumn("SENDER_ACCOUNT_BIC", typeof(string))
-                            .WithColumn("RECEIVER_ACCOUNT_NUMBER", typeof(string))
-                            .WithColumn("RECEIVER_ACCOUNT_BIC", typeof(string))
-                            .WithColumn("REQUESTED_AMOUNT", typeof(string))
-                            .WithColumn("EXECUTED_AMOUNT", typeof(string))
-                            .WithColumn("REQUESTED_EXECUTION_DATE", typeof(string))
-                            .WithColumn("T_PAYMENT_REQUEST_STATUS", typeof(string))
-                            .WithColumn("DEBTOR_ACCOUNT_ID", typeof(string))
-                            .WithColumn("CREDITOR_ACCOUNT_ID", typeof(string))
-                            .WithColumn("MT_STATUS", typeof(string))
-                            .WithColumn("REMINDER_NUMBER", typeof(string))
-                            .WithColumn("ERROR_MESSAGE", typeof(string))
-                            .WithColumn("DEBTOR_PARTY_ID", typeof(string))
-                            .WithColumn("PAYMENT_METHOD", typeof(string))
-                            .WithColumn("PAYMENT_TYPE", typeof(string))
-                            .WithColumn("DEBTOR_PARTY_NAME", typeof(string))
-                            .WithColumn("DEBTOR_ACCOUNT_NUMBER", typeof(string))
-                            .WithColumn("CREDITOR_PARTY_ID", typeof(string))
-                            .WithColumn("CREDITOR_ACCOUNT_NUMBER", typeof(string))
-                            .EndTable();
-                    });
+                    ConfigureDwings);
 
                 if (!ok) report.Errors.Add($"DWINGS unifiée: échec de création ({Path.GetFileName(path)})");
                 else report.Logs.Add($"DWINGS unifiée créée: {path}");
@@ -428,37 +472,7 @@ namespace RecoTool.Services
 
                 bool created = await DatabaseTemplateFactory.CreateCustomTemplateAsync(
                     ambreLocalPath,
-                    builder =>
-                    {
-                        // Conserver les tables système par défaut (ChangeLog/SyncLocks/Sessions)
-                        // Définir uniquement la table métier AMBRE requise
-                        builder.AddTable("T_Data_Ambre")
-                               .WithPrimaryKey("ID", typeof(string))
-                               .WithColumn("Account_ID", typeof(string), "TEXT(50)")
-                               .WithColumn("CCY", typeof(string), "TEXT(3)")
-                               .WithColumn("Country", typeof(string), "TEXT(255)")
-                               .WithColumn("Event_Num", typeof(string), "TEXT(50)")
-                               .WithColumn("Folder", typeof(string), "TEXT(255)")
-                               .WithColumn("Pivot_MbawIDFromLabel", typeof(string), "TEXT(255)")
-                               .WithColumn("Pivot_TransactionCodesFromLabel", typeof(string), "TEXT(255)")
-                               .WithColumn("Pivot_TRNFromLabel", typeof(string), "TEXT(255)")
-                               .WithColumn("RawLabel", typeof(string), "TEXT(255)")
-                               .WithColumn("Receivable_DWRefFromAmbre", typeof(string), "TEXT(255)")
-                               .WithColumn("LocalSignedAmount", typeof(double), "DOUBLE", false)
-                               .WithColumn("Operation_Date", typeof(DateTime), "DATETIME")
-                               .WithColumn("Reconciliation_Num", typeof(string), "TEXT(255)")
-                               .WithColumn("Receivable_InvoiceFromAmbre", typeof(string), "TEXT(255)")
-                               .WithColumn("ReconciliationOrigin_Num", typeof(string), "TEXT(255)")
-                               .WithColumn("SignedAmount", typeof(double), "DOUBLE", false)
-                               .WithColumn("Value_Date", typeof(DateTime), "DATETIME")
-                               // Champs BaseEntity
-                               .WithColumn("CreationDate", typeof(DateTime), "DATETIME")
-                               .WithColumn("DeleteDate", typeof(DateTime), "DATETIME")
-                               .WithColumn("ModifiedBy", typeof(string), "TEXT(100)")
-                               .WithColumn("LastModified", typeof(DateTime), "DATETIME")
-                               .WithColumn("Version", typeof(long), "LONG", false)
-                               .EndTable();
-                    });
+                    ConfigureAmbre);
 
                 if (!created)
                 {

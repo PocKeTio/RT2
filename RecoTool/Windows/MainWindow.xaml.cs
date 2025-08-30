@@ -6,15 +6,13 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Controls.Primitives;
-using System.Configuration;
 using System.ComponentModel;
 using RecoTool.Models;
 using RecoTool.Services;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using System.Windows.Media;
 using System.IO;
 using System.Windows.Media.Imaging;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace RecoTool.Windows
 {
@@ -33,7 +31,7 @@ namespace RecoTool.Windows
         private bool _isChangingCountrySelection;
         private bool _isCountryInitializing;
 
-        // La DI va appeler ce constructeur en lui fournissant IConfiguration et votre service
+        // La DI appelle ce constructeur en fournissant les services nécessaires (ici OfflineFirstService)
         public MainWindow(
             OfflineFirstService offlineService)
         {

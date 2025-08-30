@@ -68,6 +68,18 @@ namespace RecoTool.Services
                 try
                 {
                     File.Replace(sourceFileName, destinationFileName, destinationBackupFileName);
+                    // Cleanup policy: we don't keep local .bak backups after a successful atomic replace
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(destinationBackupFileName) && File.Exists(destinationBackupFileName))
+                        {
+                            File.Delete(destinationBackupFileName);
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore cleanup failures; leaving a .bak is acceptable but undesirable
+                    }
                     return;
                 }
                 catch (IOException ioex)
@@ -4044,6 +4056,19 @@ namespace RecoTool.Services
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"DW: échec copie réseau->local pour {countryId}: {ex.Message}"); }
 
+            // 3.b) Optional: schema verification (Immediate Window only)
+            try
+            {
+                if (RecoTool.Properties.Settings.Default.EnableSchemaVerification)
+                {
+                    await VerifyDatabaseSchemaAsync(countryId);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SchemaVerification] Unexpected error for {countryId}: {ex.Message}");
+            }
+
             onProgress?.Invoke(80, "Initialisation pays terminée");
             return true;
         }
@@ -4081,6 +4106,141 @@ namespace RecoTool.Services
                 // En cas d'autre erreur, considérer la base comme verrouillée par précaution
                 return true;
             }
+        }
+
+        /// <summary>
+        /// Vérifie les schémas des bases locales (DWINGS, AMBRE, RECONCILIATION) pour un pays donné.
+        /// Compare uniquement la présence des colonnes attendues et loggue les manquants dans la fenêtre Immediate.
+        /// Aucune interaction UI; non bloquant autant que possible.
+        /// </summary>
+        /// <param name="countryId">Code pays (ex: "ES")</param>
+        private async Task VerifyDatabaseSchemaAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) return;
+
+            System.Diagnostics.Debug.WriteLine($"[SchemaVerification] Start for {countryId}");
+
+            // Helpers locaux
+            bool TableExists(OleDbConnection conn, string tableName)
+            {
+                try
+                {
+                    var schema = conn.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new object[] { null, null, null, "TABLE" });
+                    return schema != null && schema.Rows.OfType<System.Data.DataRow>()
+                        .Any(r => string.Equals(Convert.ToString(r["TABLE_NAME"]), tableName, StringComparison.OrdinalIgnoreCase));
+                }
+                catch { return false; }
+            }
+
+            HashSet<string> GetActualColumns(OleDbConnection conn, string tableName)
+            {
+                var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    var schema = conn.GetOleDbSchemaTable(OleDbSchemaGuid.Columns, new object[] { null, null, tableName, null });
+                    if (schema != null)
+                    {
+                        foreach (System.Data.DataRow row in schema.Rows)
+                        {
+                            var colName = Convert.ToString(row["COLUMN_NAME"]);
+                            if (!string.IsNullOrEmpty(colName)) set.Add(colName);
+                        }
+                    }
+                }
+                catch { }
+                return set;
+            }
+
+            // Construit dynamiquement les schémas attendus via les configureActions existantes
+            Dictionary<string, HashSet<string>> BuildExpected(OfflineFirstAccess.Helpers.DatabaseTemplateBuilder builder, params string[] onlyTheseTables)
+            {
+                var dict = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+                var cfg = builder.GetConfiguration();
+                var filter = (onlyTheseTables != null && onlyTheseTables.Length > 0);
+                foreach (var table in cfg.Tables)
+                {
+                    if (filter && !onlyTheseTables.Contains(table.Name, StringComparer.OrdinalIgnoreCase))
+                        continue;
+                    var cols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    if (table.Columns != null)
+                    {
+                        foreach (var c in table.Columns)
+                            if (!string.IsNullOrEmpty(c.Name)) cols.Add(c.Name);
+                    }
+                    dict[table.Name] = cols;
+                }
+                return dict;
+            }
+
+            Func<string> newTmp = () => Path.Combine(Path.GetTempPath(), $"schema_{Guid.NewGuid():N}.accdb");
+
+            // DWINGS: la configuration retire certaines tables système; ne vérifier que les tables métier
+            var dwBuilder = new OfflineFirstAccess.Helpers.DatabaseTemplateBuilder(newTmp());
+            DatabaseRecreationService.ConfigureDwings(dwBuilder);
+            var expectedDw = BuildExpected(dwBuilder, "T_DW_Guarantee", "T_DW_Data");
+
+            // AMBRE: filtrer uniquement la table métier
+            var ambreBuilder = new OfflineFirstAccess.Helpers.DatabaseTemplateBuilder(newTmp());
+            DatabaseRecreationService.ConfigureAmbre(ambreBuilder);
+            var expectedAmbre = BuildExpected(ambreBuilder, "T_Data_Ambre");
+
+            // RECONCILIATION: filtrer uniquement la table métier
+            var reconBuilder = new OfflineFirstAccess.Helpers.DatabaseTemplateBuilder(newTmp());
+            DatabaseRecreationService.ConfigureReconciliation(reconBuilder);
+            var expectedRecon = BuildExpected(reconBuilder, "T_Reconciliation");
+
+            async Task VerifyOneAsync(string dbLabel, string dbPath, Dictionary<string, HashSet<string>> expected)
+            {
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(dbPath) || !File.Exists(dbPath))
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[SchemaVerification] {dbLabel} for {countryId}: local DB not found -> {dbPath}");
+                        return;
+                    }
+
+                    using (var conn = new OleDbConnection($"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={dbPath};"))
+                    {
+                        await conn.OpenAsync();
+
+                        foreach (var kvp in expected)
+                        {
+                            var table = kvp.Key;
+                            var expectedCols = kvp.Value;
+
+                            if (!TableExists(conn, table))
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[SchemaVerification] {dbLabel} for {countryId}: missing table '{table}'");
+                                continue;
+                            }
+
+                            var actualCols = GetActualColumns(conn, table);
+                            var missing = expectedCols.Except(actualCols, StringComparer.OrdinalIgnoreCase).ToList();
+                            if (missing.Count > 0)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[SchemaVerification] {dbLabel} for {countryId}: table '{table}' missing {missing.Count} column(s): {string.Join(", ", missing)}");
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[SchemaVerification] {dbLabel} for {countryId}: table '{table}' OK");
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SchemaVerification] {dbLabel} for {countryId}: error -> {ex.Message}");
+                }
+            }
+
+            // DWINGS
+            await VerifyOneAsync("DWINGS", GetLocalDwDbPath(countryId), expectedDw);
+            // AMBRE
+            await VerifyOneAsync("AMBRE", GetLocalAmbreDbPath(countryId), expectedAmbre);
+            // RECONCILIATION
+            await VerifyOneAsync("RECONCILIATION", GetLocalReconciliationDbPath(countryId), expectedRecon);
+
+            System.Diagnostics.Debug.WriteLine($"[SchemaVerification] End for {countryId}");
         }
 
         /// <summary>
@@ -4131,32 +4291,8 @@ namespace RecoTool.Services
                 System.Diagnostics.Debug.WriteLine($"Avertissement: impossible de vérifier le verrou de la base réseau ({ex.Message}). Poursuite de la copie.");
             }
 
-            // Sauvegarde journalière côté serveur dans un répertoire Saved/ (best-effort)
-            try
-            {
-                if (File.Exists(networkDbPath))
-                {
-                    string savedDir = Path.Combine(remoteDir, "Saved");
-                    if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
-
-                    // Sauvegarde quotidienne: créer un fichier par jour et ne pas dupliquer si déjà présent
-                    string dayStamp = DateTime.UtcNow.ToString("yyyy-MM-dd");
-                    string dailyBackupPath = Path.Combine(savedDir, $"{countryPrefix}{countryId}_{dayStamp}.accdb");
-                    if (!File.Exists(dailyBackupPath))
-                    {
-                        File.Copy(networkDbPath, dailyBackupPath, true);
-                        System.Diagnostics.Debug.WriteLine($"Daily backup created: {dailyBackupPath}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Avertissement: sauvegarde journalière échouée ({ex.Message}). Poursuite de la publication.");
-            }
-
             // Chemins temporaires et sauvegarde
             string tempPath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}.accdb.tmp_{Guid.NewGuid():N}");
-            string backupPath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}.accdb.bak");
 
             // Compact & Repair local DB to a temporary file before publishing (best-effort)
             string sourceForPublish = localDbPath;
@@ -4177,15 +4313,12 @@ namespace RecoTool.Services
             // Copier vers un fichier temporaire sur le même volume réseau
             File.Copy(sourceForPublish, tempPath, true);
 
-            // Remplacer atomiquement la base réseau (ou déplacer si inexistant)
+            // Remplacer le fichier réseau sans créer de backup réseau
             if (File.Exists(networkDbPath))
             {
-                await FileReplaceWithRetriesAsync(tempPath, networkDbPath, backupPath, maxAttempts: 6, initialDelayMs: 500);
+                try { File.Delete(networkDbPath); } catch { }
             }
-            else
-            {
-                File.Move(tempPath, networkDbPath);
-            }
+            File.Move(tempPath, networkDbPath);
 
             System.Diagnostics.Debug.WriteLine($"Base locale publiée vers le réseau pour {countryId} -> {networkDbPath}");
 
@@ -4491,7 +4624,7 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// Publie la base AMBRE locale vers le réseau (File.Replace) avec sauvegarde quotidienne Saved/ best-effort.
+        /// Publie la base AMBRE locale vers le réseau.
         /// </summary>
         public async Task CopyLocalToNetworkAmbreAsync(string countryId)
         {
@@ -4505,27 +4638,7 @@ namespace RecoTool.Services
             if (string.IsNullOrWhiteSpace(remoteDir)) throw new InvalidOperationException("Répertoire réseau AMBRE invalide");
             if (!Directory.Exists(remoteDir)) Directory.CreateDirectory(remoteDir);
 
-            // Backup quotidienne Saved/ du ZIP réseau existant
-            try
-            {
-                if (File.Exists(networkZipPath))
-                {
-                    string savedDir = Path.Combine(remoteDir, "Saved");
-                    if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
-                    string baseName = Path.GetFileNameWithoutExtension(networkZipPath);
-                    string dayStamp = DateTime.UtcNow.ToString("yyyy-MM-dd");
-                    string dailyBackupPath = Path.Combine(savedDir, $"{baseName}_{dayStamp}.zip");
-                    if (!File.Exists(dailyBackupPath))
-                    {
-                        File.Copy(networkZipPath, dailyBackupPath, true);
-                        System.Diagnostics.Debug.WriteLine($"AMBRE: Daily ZIP backup created: {dailyBackupPath}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"AMBRE: sauvegarde journalière ZIP échouée ({ex.Message}). Poursuite de la publication.");
-            }
+            // Pas de sauvegarde réseau
 
             // Compact local puis créer un ZIP temporaire local
             string sourceForZip = localDbPath;
@@ -4557,9 +4670,9 @@ namespace RecoTool.Services
 
             // Copier le ZIP temporaire vers le réseau de façon atomique
             string tempRemote = Path.Combine(remoteDir, $"{Path.GetFileNameWithoutExtension(networkZipPath)}.tmp_{Guid.NewGuid():N}.zip");
-            string backupZip = Path.Combine(remoteDir, $"{Path.GetFileNameWithoutExtension(networkZipPath)}.bak");
             File.Copy(localTempZip, tempRemote, true);
-            if (File.Exists(networkZipPath)) await FileReplaceWithRetriesAsync(tempRemote, networkZipPath, backupZip, maxAttempts: 6, initialDelayMs: 400); else File.Move(tempRemote, networkZipPath);
+            if (File.Exists(networkZipPath)) { try { File.Delete(networkZipPath); } catch { } }
+            File.Move(tempRemote, networkZipPath);
             System.Diagnostics.Debug.WriteLine($"AMBRE: archive ZIP publiée vers réseau pour {countryId} -> {networkZipPath}");
 
             // Nettoyage local temporaire
@@ -4568,7 +4681,7 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// Publie la base RECONCILIATION locale vers le réseau (File.Replace) avec sauvegarde quotidienne Saved/ best-effort.
+        /// Publie la base RECONCILIATION locale vers le réseau.
         /// </summary>
         public async Task CopyLocalToNetworkReconciliationAsync(string countryId)
         {
@@ -4595,32 +4708,11 @@ namespace RecoTool.Services
                 System.Diagnostics.Debug.WriteLine($"RECON: avertissement vérification verrou échouée ({ex.Message}). Poursuite.");
             }
 
-            // Backup quotidienne Saved/
-            try
-            {
-                if (File.Exists(networkDbPath))
-                {
-                    string savedDir = Path.Combine(remoteDir, "Saved");
-                    if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
-                    string baseName = Path.GetFileNameWithoutExtension(networkDbPath);
-                    string dayStamp = DateTime.UtcNow.ToString("yyyy-MM-dd");
-                    string dailyBackupPath = Path.Combine(savedDir, $"{baseName}_{dayStamp}.accdb");
-                    if (!File.Exists(dailyBackupPath))
-                    {
-                        File.Copy(networkDbPath, dailyBackupPath, true);
-                        System.Diagnostics.Debug.WriteLine($"RECON: Daily backup created: {dailyBackupPath}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"RECON: sauvegarde journalière échouée ({ex.Message}). Poursuite de la publication.");
-            }
+            // Pas de sauvegarde réseau
 
             // Compact & Replace atomique
             string baseNameForTemp = Path.GetFileNameWithoutExtension(networkDbPath);
             string tempPath = Path.Combine(remoteDir, $"{baseNameForTemp}.accdb.tmp_{Guid.NewGuid():N}");
-            string backupPath = Path.Combine(remoteDir, $"{baseNameForTemp}.accdb.bak");
 
             string sourceForPublish = localDbPath;
             string compactTempLocal = null;
@@ -4635,7 +4727,8 @@ namespace RecoTool.Services
             }
 
             File.Copy(sourceForPublish, tempPath, true);
-            if (File.Exists(networkDbPath)) await FileReplaceWithRetriesAsync(tempPath, networkDbPath, backupPath, maxAttempts: 6, initialDelayMs: 400); else File.Move(tempPath, networkDbPath);
+            if (File.Exists(networkDbPath)) { try { File.Delete(networkDbPath); } catch { } }
+            File.Move(tempPath, networkDbPath);
             System.Diagnostics.Debug.WriteLine($"RECON: base locale publiée vers réseau pour {countryId} -> {networkDbPath}");
             try { if (!string.IsNullOrEmpty(compactTempLocal) && File.Exists(compactTempLocal)) File.Delete(compactTempLocal); } catch { }
         }

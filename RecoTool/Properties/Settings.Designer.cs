@@ -58,5 +58,17 @@ namespace RecoTool.Properties {
                 this["RecreateDwingsDatabasesAtStartup"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("True")]
+        public bool EnableSchemaVerification {
+            get {
+                return ((bool)(this["EnableSchemaVerification"]));
+            }
+            set {
+                this["EnableSchemaVerification"] = value;
+            }
+        }
     }
 }

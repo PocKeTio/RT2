@@ -1,6 +1,5 @@
 using System;
 using System.Windows;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using RecoTool.Services;
 using RecoTool.Windows;

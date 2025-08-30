@@ -424,6 +424,10 @@ namespace RecoTool.Windows
                 // Normalize and validate rows
                 var toApply = new List<Dictionary<string, object>>(rawRows.Count);
                 int processed = 0;
+                var mappingKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "Action", "KPI", "ReasonNonRisky", "IncidentType", "RiskyItem"
+                };
                 foreach (var row in rawRows)
                 {
                     _cts.Token.ThrowIfCancellationRequested();
@@ -446,6 +450,25 @@ namespace RecoTool.Windows
 
                         object norm = NormalizeValueForReconciliation(key, kv.Value);
                         rec[key] = norm;
+
+                        // Warn for unmapped textual values for enum/boolean mapping keys
+                        if (mappingKeys.Contains(key))
+                        {
+                            var rawStr = kv.Value?.ToString()?.Trim();
+                            if (!string.IsNullOrWhiteSpace(rawStr))
+                            {
+                                bool looksNumeric = int.TryParse(rawStr, out _);
+                                bool looksBool = rawStr.Equals("1") || rawStr.Equals("0") ||
+                                                 rawStr.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                                                 rawStr.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+                                                 rawStr.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+                                                 rawStr.Equals("no", StringComparison.OrdinalIgnoreCase);
+                                if (Equals(norm, DBNull.Value) && !(looksNumeric || looksBool))
+                                {
+                                    LogMessage($"Unmapped label for {key}: '{rawStr}' -> NULL", isError: false);
+                                }
+                            }
+                        }
                     }
 
                     // Minimal metadata (do not rely on OfflineFirst flow here)
@@ -467,7 +490,7 @@ namespace RecoTool.Windows
                     throw new InvalidOperationException("No valid rows to import (all missing IDs).");
 
                 UpdateProgress(92, "Connecting to database...");
-                LogMessage("Preparing database upsert into T_Reconciliation...");
+                LogMessage("Preparing database update into T_Reconciliation (no inserts)...");
 
                 // Build data provider using local connection string
                 if (_offlineFirstService == null)
@@ -484,15 +507,44 @@ namespace RecoTool.Windows
 
                 var provider = await AccessDataProvider.CreateAsync(connStr, syncCfg);
 
+                // Enforce update-only: filter to existing IDs and set LastModified to ensure update path
+                var idList = toApply
+                    .Select(r => r.TryGetValue("ID", out var v) ? v?.ToString() : null)
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                var existingRecords = await provider.GetRecordsByIds("T_Reconciliation", idList);
+                var existingIds = new HashSet<string>(
+                    existingRecords
+                        .Select(rec => rec.TryGetValue("ID", out var v) ? v?.ToString() : null)
+                        .Where(s => !string.IsNullOrWhiteSpace(s)),
+                    StringComparer.OrdinalIgnoreCase);
+
+                var beforeCount = toApply.Count;
+                toApply = toApply
+                    .Where(r => existingIds.Contains(r["ID"]?.ToString()))
+                    .ToList();
+                var dropped = beforeCount - toApply.Count;
+
+                // Ensure at least one updatable field by setting LastModified; this also timestamps the update
+                var now = DateTime.Now;
+                foreach (var rec in toApply)
+                {
+                    rec["LastModified"] = now;
+                }
+
+                LogMessage($"Update-only: {toApply.Count:N0} existing IDs; skipped {dropped:N0} non-existing IDs (no inserts).");
+
                 _cts.Token.ThrowIfCancellationRequested();
-                UpdateProgress(95, "Applying changes (upsert)...");
+                UpdateProgress(95, "Applying changes (update-only)...");
 
                 await provider.ApplyChangesAsync("T_Reconciliation", toApply);
 
                 UpdateProgress(100, "Completed");
-                LogMessage($"Import completed. Upserted rows: {toApply.Count:N0}");
+                LogMessage($"Import completed. Updated rows: {toApply.Count:N0}");
 
-                MessageBox.Show($"Import completed successfully. Rows processed: {toApply.Count:N0}", "Information", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show($"Import completed successfully. Rows updated: {toApply.Count:N0}", "Information", MessageBoxButton.OK, MessageBoxImage.Information);
                 DialogResult = true;
             }
             catch (OperationCanceledException)
@@ -513,6 +565,100 @@ namespace RecoTool.Windows
             }
         }
 
+        // Build once: mappings from labels (enum names or descriptions) to integer IDs
+        private static Dictionary<string, int> _actionLabelToId;
+        private static Dictionary<string, int> _kpiLabelToId;
+        private static Dictionary<string, int> _riskReasonLabelToId;
+        private static Dictionary<string, int> _incidentLabelToId;
+
+        private static void EnsureLabelMapsBuilt()
+        {
+            if (_actionLabelToId != null) return;
+
+            string N(string s)
+            {
+                if (string.IsNullOrWhiteSpace(s)) return null;
+                var up = s.Trim().ToUpperInvariant();
+                up = up.Replace(" ", string.Empty)
+                       .Replace("-", string.Empty)
+                       .Replace("_", string.Empty)
+                       .Replace("/", string.Empty);
+                return up;
+            }
+
+            _actionLabelToId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var name in Enum.GetNames(typeof(ActionType)))
+            {
+                var value = (int)Enum.Parse(typeof(ActionType), name);
+                var key = N(name);
+                if (key != null && !_actionLabelToId.ContainsKey(key)) _actionLabelToId[key] = value;
+
+                // Description attribute
+                try
+                {
+                    var fi = typeof(ActionType).GetField(name);
+                    var attrs = (DescriptionAttribute[])fi.GetCustomAttributes(typeof(DescriptionAttribute), false);
+                    var desc = attrs != null && attrs.Length > 0 ? attrs[0].Description : null;
+                    var dk = N(desc);
+                    if (dk != null && !_actionLabelToId.ContainsKey(dk)) _actionLabelToId[dk] = value;
+                }
+                catch { }
+            }
+
+            _kpiLabelToId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var name in Enum.GetNames(typeof(KPIType)))
+            {
+                var value = (int)Enum.Parse(typeof(KPIType), name);
+                var key = N(name);
+                if (key != null && !_kpiLabelToId.ContainsKey(key)) _kpiLabelToId[key] = value;
+
+                // Friendly label via EnumHelper
+                try
+                {
+                    var friendly = EnumHelper.GetKPIName(value);
+                    var fk = N(friendly);
+                    if (fk != null && !_kpiLabelToId.ContainsKey(fk)) _kpiLabelToId[fk] = value;
+                }
+                catch { }
+            }
+
+            _riskReasonLabelToId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var name in Enum.GetNames(typeof(Risky)))
+            {
+                var value = (int)Enum.Parse(typeof(Risky), name);
+                var key = N(name);
+                if (key != null && !_riskReasonLabelToId.ContainsKey(key)) _riskReasonLabelToId[key] = value;
+
+                try
+                {
+                    var fi = typeof(Risky).GetField(name);
+                    var attrs = (DescriptionAttribute[])fi.GetCustomAttributes(typeof(DescriptionAttribute), false);
+                    var desc = attrs != null && attrs.Length > 0 ? attrs[0].Description : null;
+                    var dk = N(desc);
+                    if (dk != null && !_riskReasonLabelToId.ContainsKey(dk)) _riskReasonLabelToId[dk] = value;
+                }
+                catch { }
+            }
+
+            // Optional: Incident type mapping (for completeness)
+            _incidentLabelToId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var name in Enum.GetNames(typeof(INC)))
+            {
+                var value = (int)Enum.Parse(typeof(INC), name);
+                var key = N(name);
+                if (key != null && !_incidentLabelToId.ContainsKey(key)) _incidentLabelToId[key] = value;
+                try
+                {
+                    var fi = typeof(INC).GetField(name);
+                    var attrs = (DescriptionAttribute[])fi.GetCustomAttributes(typeof(DescriptionAttribute), false);
+                    var desc = attrs != null && attrs.Length > 0 ? attrs[0].Description : null;
+                    var dk = N(desc);
+                    if (dk != null && !_incidentLabelToId.ContainsKey(dk)) _incidentLabelToId[dk] = value;
+                }
+                catch { }
+            }
+        }
+
         private static object NormalizeValueForReconciliation(string key, object value)
         {
             if (value == null) return DBNull.Value;
@@ -528,13 +674,14 @@ namespace RecoTool.Windows
 
             bool IsBoolKey(string k) =>
                 k.Equals("ToRemind", StringComparison.OrdinalIgnoreCase) ||
-                k.Equals("ACK", StringComparison.OrdinalIgnoreCase);
+                k.Equals("ACK", StringComparison.OrdinalIgnoreCase) ||
+                k.Equals("RiskyItem", StringComparison.OrdinalIgnoreCase);
 
             bool IsIntKey(string k) =>
                 k.Equals("Action", StringComparison.OrdinalIgnoreCase) ||
                 k.Equals("KPI", StringComparison.OrdinalIgnoreCase) ||
                 k.Equals("IncidentType", StringComparison.OrdinalIgnoreCase) ||
-                k.Equals("RiskyItem", StringComparison.OrdinalIgnoreCase);
+                k.Equals("ReasonNonRisky", StringComparison.OrdinalIgnoreCase);
 
             try
             {
@@ -557,7 +704,27 @@ namespace RecoTool.Windows
                 {
                     if (value is int i) return i;
                     if (value is double d) return (int)Math.Round(d);
-                    if (int.TryParse(value.ToString(), out var p)) return p;
+                    var s = value.ToString().Trim();
+                    if (int.TryParse(s, out var p)) return p;
+
+                    // Attempt text -> ID resolution from enums
+                    EnsureLabelMapsBuilt();
+                    string N(string t)
+                    {
+                        if (string.IsNullOrWhiteSpace(t)) return null;
+                        var up = t.Trim().ToUpperInvariant();
+                        up = up.Replace(" ", string.Empty).Replace("-", string.Empty).Replace("_", string.Empty).Replace("/", string.Empty);
+                        return up;
+                    }
+                    var nk = N(s);
+                    if (nk != null)
+                    {
+                        if (key.Equals("Action", StringComparison.OrdinalIgnoreCase) && _actionLabelToId.TryGetValue(nk, out var aid)) return aid;
+                        if (key.Equals("KPI", StringComparison.OrdinalIgnoreCase) && _kpiLabelToId.TryGetValue(nk, out var kid)) return kid;
+                        if (key.Equals("ReasonNonRisky", StringComparison.OrdinalIgnoreCase) && _riskReasonLabelToId.TryGetValue(nk, out var rid)) return rid;
+                        if (key.Equals("IncidentType", StringComparison.OrdinalIgnoreCase) && _incidentLabelToId.TryGetValue(nk, out var iid)) return iid;
+                    }
+
                     return DBNull.Value;
                 }
 

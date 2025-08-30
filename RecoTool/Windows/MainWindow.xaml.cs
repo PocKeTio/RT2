@@ -759,6 +759,46 @@ namespace RecoTool.Windows
                     ShowWarning("Recréation DWINGS", $"Échec de la recréation des bases DWINGS: {ex.Message}");
                 }
 
+                // Vérifier/initialiser la base de Réconciliation (RECON)
+                try
+                {
+                    onProgress?.Invoke(92, "Vérifications RECON...");
+                    try
+                    {
+                        // Tenter d'aligner la base locale depuis le réseau si elle existe déjà
+                        await _offlineFirstService.CopyNetworkToLocalReconciliationAsync(countryId);
+                        onProgress?.Invoke(92, "RECON OK");
+                    }
+                    catch (System.IO.FileNotFoundException)
+                    {
+                        // Si la base réseau est absente, créer localement et publier vers le réseau
+                        onProgress?.Invoke(92, "Initialisation RECON (création réseau)...");
+                        var recreationService = new DatabaseRecreationService();
+                        var report = await recreationService.RecreateReconciliationAsync(_offlineFirstService, countryId);
+                        if (!(report?.Success ?? false))
+                        {
+                            var details = string.Join("\n", report?.Errors ?? new List<string>());
+                            ShowWarning("Initialisation Réconciliation", string.IsNullOrWhiteSpace(details)
+                                ? "La création de la base de réconciliation a rencontré des erreurs. Veuillez vérifier les journaux."
+                                : details);
+                        }
+                        else
+                        {
+                            onProgress?.Invoke(92, "RECON créée");
+                        }
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // Des changements locaux non synchronisés peuvent bloquer le refresh réseau->local.
+                        // Dans ce cas, ne pas bloquer l'initialisation: la base locale existe et sera poussée plus tard.
+                    }
+                    catch (Exception)
+                    {
+                        // Best-effort: ne pas bloquer le flux si indisponibilité passagère du réseau
+                    }
+                }
+                catch { }
+
                 // 1) S'assurer que les instantanés locaux AMBRE et DW sont à jour
                 try { await _offlineFirstService.EnsureLocalSnapshotsUpToDateAsync(countryId, onProgress); } catch { }
 

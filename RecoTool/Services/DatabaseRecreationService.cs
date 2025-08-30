@@ -73,6 +73,172 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Recrée une base RECONCILIATION vide localement si le réseau ne contient pas encore la base,
+        /// puis publie vers le réseau et réaligne le local à partir du réseau, pour le pays indiqué.
+        /// </summary>
+        /// <param name="offlineFirstService">Service offline-first</param>
+        /// <param name="countryId">Code pays (ex: "ES")</param>
+        public async Task<RecreationReport> RecreateReconciliationAsync(OfflineFirstService offlineFirstService, string countryId)
+        {
+            if (offlineFirstService == null) throw new ArgumentNullException(nameof(offlineFirstService));
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentNullException(nameof(countryId));
+
+            var report = new RecreationReport();
+
+            // 1) Détection: si le réseau possède déjà la base, se contenter de copier en local et sortir
+            try
+            {
+                await offlineFirstService.CopyNetworkToLocalReconciliationAsync(countryId);
+                report.Logs.Add($"RECON: contenu réseau déjà présent pour {countryId}, aucune recréation nécessaire.");
+                return FinalizeReport(report);
+            }
+            catch (FileNotFoundException)
+            {
+                // attendu: aucune base côté réseau -> on va créer localement
+                report.Logs.Add($"RECON: aucun contenu réseau détecté pour {countryId}. Création locale d'une base vide...");
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Cas typique: changements locaux non synchronisés bloquent le rafraîchissement
+                report.Errors.Add($"RECON: rafraîchissement bloqué ({ex.Message}). Annulation de la recréation/publish.");
+                return FinalizeReport(report);
+            }
+            catch (Exception ex)
+            {
+                report.Errors.Add($"RECON: erreur lors de la détection réseau ({ex.Message}). Annulation de la recréation.");
+                return FinalizeReport(report);
+            }
+
+            // 2) Créer la base RECON locale vide avec le schéma T_Reconciliation
+            string connStr = null;
+            string reconLocalPath = null;
+            try
+            {
+                connStr = offlineFirstService.GetCountryConnectionString(countryId);
+                reconLocalPath = GetDataSourceFromConnectionString(connStr);
+            }
+            catch { /* handled below */ }
+
+            if (string.IsNullOrWhiteSpace(reconLocalPath))
+            {
+                report.Errors.Add("RECON: chemin local introuvable (Data Source manquant dans la chaîne de connexion)");
+                return FinalizeReport(report);
+            }
+
+            try
+            {
+                var dir = Path.GetDirectoryName(reconLocalPath);
+                if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
+
+                bool created = await DatabaseTemplateFactory.CreateCustomTemplateAsync(
+                    reconLocalPath,
+                    builder =>
+                    {
+                        // Conserver les tables système par défaut (ChangeLog/SyncLocks/Sessions)
+                        // Définir la table métier RECONCILIATION
+                        builder.AddTable("T_Reconciliation")
+                               .WithPrimaryKey("ID", typeof(string))
+                               .WithColumn("DWINGS_GuaranteeID", typeof(string), "TEXT(255)")
+                               .WithColumn("DWINGS_InvoiceID", typeof(string), "TEXT(255)")
+                               .WithColumn("DWINGS_CommissionID", typeof(string), "TEXT(255)")
+                               .WithColumn("Action", typeof(int), "LONG")
+                               .WithColumn("Assignee", typeof(string), "TEXT(255)")
+                               .WithColumn("Comments", typeof(string), "LONGTEXT")
+                               .WithColumn("InternalInvoiceReference", typeof(string), "TEXT(255)")
+                               .WithColumn("FirstClaimDate", typeof(DateTime), "DATETIME")
+                               .WithColumn("LastClaimDate", typeof(DateTime), "DATETIME")
+                               .WithColumn("ToRemind", typeof(bool))
+                               .WithColumn("ToRemindDate", typeof(DateTime), "DATETIME")
+                               .WithColumn("ACK", typeof(bool))
+                               .WithColumn("SwiftCode", typeof(string), "TEXT(255)")
+                               .WithColumn("PaymentReference", typeof(string), "TEXT(255)")
+                               .WithColumn("MbawData", typeof(string), "LONGTEXT")
+                               .WithColumn("SpiritData", typeof(string), "LONGTEXT")
+                               .WithColumn("KPI", typeof(int), "LONG")
+                               .WithColumn("IncidentType", typeof(int), "LONG")
+                               .WithColumn("RiskyItem", typeof(bool))
+                               .WithColumn("ReasonNonRisky", typeof(int), "LONG")
+                               .WithColumn("PendingTrigger", typeof(bool))
+                               .WithColumn("PendingPricing", typeof(bool))
+                               .WithColumn("PendingToMatch", typeof(bool))
+                               .WithColumn("IsTransitory", typeof(bool))
+                               .WithColumn("IsManualOutgoing", typeof(bool))
+                               .WithColumn("IsAdjustment", typeof(bool))
+                               .WithColumn("TriggerDate", typeof(DateTime), "DATETIME")
+                               .WithColumn("ReissuanceCount", typeof(int), "LONG")
+                               .WithColumn("TriggerStatus", typeof(int), "LONG")
+                               // Champs BaseEntity
+                               .WithColumn("CreationDate", typeof(DateTime), "DATETIME")
+                               .WithColumn("DeleteDate", typeof(DateTime), "DATETIME")
+                               .WithColumn("ModifiedBy", typeof(string), "TEXT(100)")
+                               .WithColumn("LastModified", typeof(DateTime), "DATETIME")
+                               .WithColumn("Version", typeof(long), "LONG", false)
+                               .EndTable();
+                    });
+
+                if (!created)
+                {
+                    report.Errors.Add($"RECON: échec de création locale de la base vide ({Path.GetFileName(reconLocalPath)})");
+                    return FinalizeReport(report);
+                }
+
+                report.ReconciliationPath = reconLocalPath;
+                report.Logs.Add($"RECON: base locale vide créée -> {reconLocalPath}");
+            }
+            catch (Exception ex)
+            {
+                report.Errors.Add($"RECON: exception lors de la création locale ({ex.Message})");
+                return FinalizeReport(report);
+            }
+
+            // 3) Publier la base locale vers le réseau
+            try
+            {
+                await offlineFirstService.CopyLocalToNetworkReconciliationAsync(countryId);
+                report.Logs.Add($"RECON: base publiée vers le réseau pour {countryId}.");
+            }
+            catch (Exception ex)
+            {
+                report.Errors.Add($"RECON: publication vers réseau échouée ({ex.Message})");
+                return FinalizeReport(report);
+            }
+
+            // 4) Optionnel: réaligner le local depuis le réseau
+            try
+            {
+                await offlineFirstService.CopyNetworkToLocalReconciliationAsync(countryId);
+                report.Logs.Add("RECON: local réaligné depuis la base réseau.");
+            }
+            catch (Exception ex)
+            {
+                // Non-bloquant
+                report.Logs.Add($"RECON: réalignement local post-publication non effectué ({ex.Message}).");
+            }
+
+            return FinalizeReport(report);
+        }
+
+        private string GetDataSourceFromConnectionString(string connectionString)
+        {
+            if (string.IsNullOrWhiteSpace(connectionString)) return null;
+            try
+            {
+                var parts = connectionString.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var part in parts)
+                {
+                    var idx = part.IndexOf('=');
+                    if (idx <= 0) continue;
+                    var key = part.Substring(0, idx).Trim();
+                    var value = part.Substring(idx + 1).Trim();
+                    if (key.Equals("Data Source", StringComparison.OrdinalIgnoreCase))
+                        return value.Trim('"');
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>
         /// Méthode statique utilitaire (obsolète): un code pays est désormais requis pour les bases DWINGS.
         /// </summary>
         public static Task<RecreationReport> RecreateAll(string directory)

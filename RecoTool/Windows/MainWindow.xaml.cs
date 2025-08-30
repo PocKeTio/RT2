@@ -667,13 +667,33 @@ namespace RecoTool.Windows
 
                     if (!zipOk)
                     {
-                        // Bloquer l'initialisation tant que la version locale ne correspond pas
-                        IsOffline = true;
-                        OperationalDataStatus = "OFFLINE";
-                        SetReferentialState("AMBRE désynchronisé", Brushes.Crimson, false);
-                        var ambreDiag = _offlineFirstService.GetAmbreZipDiagnostics(countryId);
-                        ShowError("Données AMBRE non à jour", "Le ZIP AMBRE local ne correspond pas à la version réseau. Veuillez réessayer plus tard ou vérifier l'accès au partage réseau.\n\nDétails:\n" + ambreDiag);
-                        return false;
+                        // Tentative d'initialisation AMBRE si le contenu réseau est absent
+                        try
+                        {
+                            onProgress?.Invoke(85, "Initialisation AMBRE (création réseau)...");
+                            var recreationService = new DatabaseRecreationService();
+                            var report = await recreationService.RecreateAmbreAsync(_offlineFirstService, countryId);
+                            if (!(report?.Success ?? false))
+                            {
+                                var details = string.Join("\n", report?.Errors ?? new List<string>());
+                                if (!string.IsNullOrWhiteSpace(details))
+                                    ShowWarning("Initialisation AMBRE", details);
+                            }
+                            // Re-vérifier l'alignement ZIP après (éventuelle) création/publish
+                            zipOk = await _offlineFirstService.IsLocalAmbreZipInSyncWithNetworkAsync(countryId);
+                        }
+                        catch { zipOk = false; }
+
+                        if (!zipOk)
+                        {
+                            // Bloquer l'initialisation tant que la version locale ne correspond pas
+                            IsOffline = true;
+                            OperationalDataStatus = "OFFLINE";
+                            SetReferentialState("AMBRE désynchronisé", Brushes.Crimson, false);
+                            var ambreDiag = _offlineFirstService.GetAmbreZipDiagnostics(countryId);
+                            ShowError("Données AMBRE non à jour", "Le ZIP AMBRE local ne correspond pas à la version réseau. Veuillez réessayer plus tard ou vérifier l'accès au partage réseau.\n\nDétails:\n" + ambreDiag);
+                            return false;
+                        }
                     }
                 }
                 onProgress?.Invoke(86, "AMBRE OK");

@@ -263,8 +263,7 @@ namespace RecoTool.Services
                                    dInv.INVOICE_ID AS INVOICE_ID,
                                    NULL AS COMMISSION_ID,
                                    g.GUARANTEE_ID,
-                                  
-                                  /* DWINGS Guarantee extended fields */
+
                                   g.NATURE AS G_NATURE,
                                   g.EVENT_STATUS AS G_EVENT_STATUS,
                                   g.EVENT_EFFECTIVEDATE AS G_EVENT_EFFECTIVEDATE,
@@ -292,8 +291,7 @@ namespace RecoTool.Services
                                   g.CONTROLER AS G_CONTROLER,
                                   g.AUTOMATICBOOKOFF AS G_AUTOMATICBOOKOFF,
                                   g.NATUREOFDEAL AS G_NATUREOFDEAL,
-                                  
-                                  /* DWINGS Invoice extended fields */
+
                                   dInv.REQUESTED_INVOICE_AMOUNT AS I_REQUESTED_INVOICE_AMOUNT,
                                   dInv.SENDER_NAME AS I_SENDER_NAME,
                                   dInv.RECEIVER_NAME AS I_RECEIVER_NAME,
@@ -335,13 +333,7 @@ namespace RecoTool.Services
                            FROM (({ambreJoin} 
                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
                            LEFT JOIN {dwDataJoinInv} ON r.DWINGS_InvoiceID = dInv.INVOICE_ID)
-                           LEFT JOIN {dwGuaranteeJoin} ON (
-                               r.DWINGS_GuaranteeID = g.GUARANTEE_ID
-                               OR (
-                                   dInv.BUSINESS_CASE_REFERENCE IS NOT NULL AND dInv.BUSINESS_CASE_REFERENCE <> ''
-                                   AND dInv.BUSINESS_CASE_REFERENCE = g.GUARANTEE_ID
-                               )
-                           )
+                           LEFT JOIN {dwGuaranteeJoin} ON  g.GUARANTEE_ID = r.DWINGS_GuaranteeID
                            WHERE 1=1";
 
             if (!string.IsNullOrEmpty(filterSql))

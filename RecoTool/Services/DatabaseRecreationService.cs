@@ -1,18 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
 using OfflineFirstAccess.Helpers;
-using OfflineFirstAccess.Models;
 
 namespace RecoTool.Services
 {
     /// <summary>
-    /// Service unique pour (re)créer les bases Access attendues par l'application
-    /// dans un répertoire donné: Ambre.accdb, Reconciliation.accdb, Lock.accdb,
-    /// et 2 bases DWINGS distinctes: "{DWDatabasePrefix} GUARANTEE.accdb" (T_DW_Guarantee)
-    /// et "{DWDatabasePrefix} INVOICE.accdb" (T_DW_Data).
+    /// Service pour (re)créer uniquement la base DWINGS unifiée dans un répertoire donné.
+    /// Le fichier créé est "{DWDatabasePrefix}{country}.accdb" et contient
+    /// les tables T_DW_Guarantee et T_DW_Data.
     /// S'appuie sur les générateurs de templates Access existants (ADOX/EmptyTemplate/OleDb).
     /// </summary>
     public class DatabaseRecreationService
@@ -22,10 +19,8 @@ namespace RecoTool.Services
             public bool Success { get; set; }
             public string TargetDirectory { get; set; }
             public string AmbrePath { get; set; }
-            // Legacy single DWINGS file (kept for compatibility; now split into two files)
+            // DWINGS unifiée: fichier unique par pays
             public string DwingsPath { get; set; }
-            public string DwingsGuaranteePath { get; set; }
-            public string DwingsInvoicePath { get; set; }
             public string ReconciliationPath { get; set; }
             public string LockPath { get; set; }
             public List<string> Errors { get; set; } = new List<string>();
@@ -33,13 +28,12 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// (Re)crée les bases de données Access (Ambre, Reconciliation, Lock) et DWINGS scindé en 2 fichiers
-        /// dans le répertoire spécifié. Les fichiers sont nommés:
-        /// Ambre.accdb, Reconciliation.accdb, Lock.accdb, "{dwDatabasePrefix}{country}_GUARANTEE.accdb", "{dwDatabasePrefix}{country}_INVOICE.accdb".
+        /// (Re)crée uniquement la base de données DWINGS (unifiée)
+        /// dans le répertoire spécifié. Le fichier est nommé: "{dwDatabasePrefix}{country}.accdb".
         /// </summary>
         /// <param name="directory">Répertoire cible</param>
-        /// <param name="dwDatabasePrefix">Préfixe commun aux 2 bases DWINGS (ex: "DWINGS" ou "Dwings")</param>
-        /// <param name="country">Code pays (ex: "ES") à concaténer dans le nom des bases DWINGS</param>
+        /// <param name="dwDatabasePrefix">Préfixe commun pour la base DWINGS (ex: "DWINGS" ou "Dwings")</param>
+        /// <param name="country">Code pays (ex: "ES") à concaténer dans le nom de la base DWINGS</param>
         public async Task<RecreationReport> RecreateAllAsync(string directory, string dwDatabasePrefix, string country)
         {
             if (string.IsNullOrWhiteSpace(directory))
@@ -64,46 +58,15 @@ namespace RecoTool.Services
                 return FinalizeReport(report);
             }
 
-            var ambrePath = Path.Combine(directory, "Ambre.accdb");
-            var reconciliationPath = Path.Combine(directory, "Reconciliation.accdb");
-            var lockPath = Path.Combine(directory, "Lock.accdb");
             var cc = country.Trim();
-            var dwingsGuaranteePath = Path.Combine(directory, $"{dwDatabasePrefix}{cc}_GUARANTEE.accdb");
-            var dwingsInvoicePath = Path.Combine(directory, $"{dwDatabasePrefix}{cc}_INVOICE.accdb");
+            var dwingsPath = Path.Combine(directory, $"{dwDatabasePrefix}{cc}.accdb");
 
-            report.AmbrePath = ambrePath;
-            report.ReconciliationPath = reconciliationPath;
-            report.LockPath = lockPath;
-            report.DwingsGuaranteePath = dwingsGuaranteePath;
-            report.DwingsInvoicePath = dwingsInvoicePath;
+            report.DwingsPath = dwingsPath;
 
-            // Ambre
-            if (!await CreateAmbreDatabaseAsync(ambrePath, report))
+            // DWINGS (unifiée)
+            if (!await CreateDwingsUnifiedDatabaseAsync(dwingsPath, report))
             {
-                LogManager.Error($"Echec de création de {ambrePath}", null);
-            }
-
-            // Reconciliation
-            if (!await CreateReconciliationDatabaseAsync(reconciliationPath, report))
-            {
-                LogManager.Error($"Echec de création de {reconciliationPath}", null);
-            }
-
-            // DWINGS (split in 2)
-            if (!await CreateDwingsGuaranteeDatabaseAsync(dwingsGuaranteePath, report))
-            {
-                LogManager.Error($"Echec de création de {dwingsGuaranteePath}", null);
-            }
-
-            if (!await CreateDwingsInvoiceDatabaseAsync(dwingsInvoicePath, report))
-            {
-                LogManager.Error($"Echec de création de {dwingsInvoicePath}", null);
-            }
-
-            // Lock
-            if (!await CreateLockDatabaseAsync(lockPath, report))
-            {
-                LogManager.Error($"Echec de création de {lockPath}", null);
+                LogManager.Error($"Echec de création de {dwingsPath}", null);
             }
 
             return FinalizeReport(report);
@@ -133,62 +96,8 @@ namespace RecoTool.Services
             return report;
         }
 
-        private async Task<bool> CreateAmbreDatabaseAsync(string path, RecreationReport report)
-        {
-            try
-            {
-                // Partir de la config par défaut puis filtrer aux tables utiles pour Ambre
-                bool ok = await DatabaseTemplateGenerator.CreateCustomTemplateAsync(
-                    path,
-                    config =>
-                    {
-                        // Tables à conserver: système + Ambre + paramètres
-                        var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            "SyncLocks", "Sessions", "ChangeLog", "T_ConfigParameters", "T_Data_Ambre"
-                        };
-                        config.Tables = config.Tables.Where(t => keep.Contains(t.Name)).ToList();
-                    });
 
-                if (!ok) report.Errors.Add($"Ambre: échec de création ({Path.GetFileName(path)})");
-                else report.Logs.Add($"Ambre créé: {path}");
-                return ok;
-            }
-            catch (Exception ex)
-            {
-                report.Errors.Add($"Ambre: exception {ex.Message}");
-                return false;
-            }
-        }
-
-        private async Task<bool> CreateReconciliationDatabaseAsync(string path, RecreationReport report)
-        {
-            try
-            {
-                // Partir de la config par défaut puis filtrer aux tables utiles pour Reconciliation
-                bool ok = await DatabaseTemplateGenerator.CreateCustomTemplateAsync(
-                    path,
-                    config =>
-                    {
-                        var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            "SyncLocks", "Sessions", "ChangeLog", "T_ConfigParameters", "T_Reconciliation"
-                        };
-                        config.Tables = config.Tables.Where(t => keep.Contains(t.Name)).ToList();
-                    });
-
-                if (!ok) report.Errors.Add($"Reconciliation: échec de création ({Path.GetFileName(path)})");
-                else report.Logs.Add($"Reconciliation créé: {path}");
-                return ok;
-            }
-            catch (Exception ex)
-            {
-                report.Errors.Add($"Reconciliation: exception {ex.Message}");
-                return false;
-            }
-        }
-
-        private async Task<bool> CreateDwingsGuaranteeDatabaseAsync(string path, RecreationReport report)
+        private async Task<bool> CreateDwingsUnifiedDatabaseAsync(string path, RecreationReport report)
         {
             try
             {
@@ -196,6 +105,12 @@ namespace RecoTool.Services
                     path,
                     builder =>
                     {
+                        // Retirer les tables système non pertinentes pour DWINGS
+                        var cfg = builder.GetConfiguration();
+                        cfg.Tables.RemoveAll(t =>
+                            string.Equals(t.Name, "SyncLocks", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(t.Name, "Sessions", StringComparison.OrdinalIgnoreCase));
+
                         // T_DW_Guarantee
                         builder.AddTable("T_DW_Guarantee")
                             .WithPrimaryKey("GUARANTEE_ID", typeof(string))
@@ -231,27 +146,7 @@ namespace RecoTool.Services
                             .WithColumn("AUTOMATICBOOKOFF", typeof(bool))
                             .WithColumn("NATUREOFDEAL", typeof(string))
                             .EndTable();
-                    });
 
-                if (!ok) report.Errors.Add($"DWINGS GUARANTEE: échec de création ({Path.GetFileName(path)})");
-                else report.Logs.Add($"DWINGS GUARANTEE créé: {path}");
-                return ok;
-            }
-            catch (Exception ex)
-            {
-                report.Errors.Add($"DWINGS GUARANTEE: exception {ex.Message}");
-                return false;
-            }
-        }
-
-        private async Task<bool> CreateDwingsInvoiceDatabaseAsync(string path, RecreationReport report)
-        {
-            try
-            {
-                bool ok = await DatabaseTemplateFactory.CreateCustomTemplateAsync(
-                    path,
-                    builder =>
-                    {
                         // T_DW_Data
                         builder.AddTable("T_DW_Data")
                             .WithPrimaryKey("BGPMT", typeof(string))
@@ -297,42 +192,17 @@ namespace RecoTool.Services
                             .EndTable();
                     });
 
-                if (!ok) report.Errors.Add($"DWINGS INVOICE: échec de création ({Path.GetFileName(path)})");
-                else report.Logs.Add($"DWINGS INVOICE créé: {path}");
+                if (!ok) report.Errors.Add($"DWINGS unifiée: échec de création ({Path.GetFileName(path)})");
+                else report.Logs.Add($"DWINGS unifiée créée: {path}");
                 return ok;
             }
             catch (Exception ex)
             {
-                report.Errors.Add($"DWINGS INVOICE: exception {ex.Message}");
+                report.Errors.Add($"DWINGS unifiée: exception {ex.Message}");
                 return false;
             }
         }
 
-        private async Task<bool> CreateLockDatabaseAsync(string path, RecreationReport report)
-        {
-            try
-            {
-                bool ok = await DatabaseTemplateGenerator.CreateCustomTemplateAsync(
-                    path,
-                    config =>
-                    {
-                        // Démarre avec la config par défaut puis ne garde que SyncLocks & Sessions
-                        var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            "SyncLocks", "Sessions"
-                        };
-                        config.Tables = config.Tables.Where(t => keep.Contains(t.Name)).ToList();
-                    });
 
-                if (!ok) report.Errors.Add($"Lock: échec de création ({Path.GetFileName(path)})");
-                else report.Logs.Add($"Lock créé: {path}");
-                return ok;
-            }
-            catch (Exception ex)
-            {
-                report.Errors.Add($"Lock: exception {ex.Message}");
-                return false;
-            }
-        }
     }
 }

@@ -548,7 +548,21 @@ namespace RecoTool.Windows
                     progressWindow.Show();
                     progressWindow.UpdateProgress("Préparation...", 5);
 
-                    var ok = await UpdateServicesForCountry(newCountryId);
+                    // Créer un callback de progression pour relayer les mises à jour vers la ProgressWindow
+                    Action<int, string> onProgress = (progress, message) =>
+                    {
+                        try
+                        {
+                            Dispatcher.Invoke(() =>
+                            {
+                                var pct = Math.Max(0, Math.Min(99, progress)); // réserver 100% pour la fin
+                                progressWindow.UpdateProgress(message ?? "En cours...", pct);
+                            });
+                        }
+                        catch { /* best-effort UI update */ }
+                    };
+
+                    var ok = await UpdateServicesForCountry(newCountryId, onProgress);
                     if (!ok)
                     {
                         // Fermer la fenêtre avant retour à l'état précédent
@@ -617,7 +631,7 @@ namespace RecoTool.Windows
         /// <summary>
         /// Met à jour les services avec la chaîne de connexion du pays sélectionné
         /// </summary>
-        private async Task<bool> UpdateServicesForCountry(string countryId)
+        private async Task<bool> UpdateServicesForCountry(string countryId, Action<int, string> onProgress = null)
         {
             try
             {
@@ -627,7 +641,7 @@ namespace RecoTool.Windows
                 _isCountryInitializing = true;
 
                 // Mettre à jour OfflineFirstService avec le nouveau pays
-                var setOk = await _offlineFirstService.SetCurrentCountryAsync(countryId);
+                var setOk = await _offlineFirstService.SetCurrentCountryAsync(countryId, suppressPush: false, onProgress: onProgress);
                 if (!setOk)
                 {
                     // Echec de préparation de la base locale/réseau pour ce pays
@@ -638,12 +652,14 @@ namespace RecoTool.Windows
 
                 // 0) Vérifier que la version du ZIP AMBRE local correspond à la version réseau
                 bool zipOk = false;
+                onProgress?.Invoke(82, "Vérifications AMBRE (ZIP)");
                 try { zipOk = await _offlineFirstService.IsLocalAmbreZipInSyncWithNetworkAsync(countryId); } catch { zipOk = false; }
                 if (!zipOk)
                 {
                     // Tenter une mise à jour automatique depuis le réseau
                     try
                     {
+                        onProgress?.Invoke(84, "Mise à jour AMBRE depuis le réseau...");
                         await _offlineFirstService.CopyNetworkToLocalAmbreAsync(countryId);
                         zipOk = await _offlineFirstService.IsLocalAmbreZipInSyncWithNetworkAsync(countryId);
                     }
@@ -660,14 +676,17 @@ namespace RecoTool.Windows
                         return false;
                     }
                 }
+                onProgress?.Invoke(86, "AMBRE OK");
 
                 // 0.b) Vérifier également la version du ZIP DW local vs réseau
                 bool dwZipOk = false;
+                onProgress?.Invoke(87, "Vérifications DW (ZIP)");
                 try { dwZipOk = await _offlineFirstService.IsLocalDwZipInSyncWithNetworkAsync(countryId); } catch { dwZipOk = false; }
                 if (!dwZipOk)
                 {
                     try
                     {
+                        onProgress?.Invoke(88, "Mise à jour DW depuis le réseau...");
                         await _offlineFirstService.CopyNetworkToLocalDwAsync(countryId);
                         dwZipOk = await _offlineFirstService.IsLocalDwZipInSyncWithNetworkAsync(countryId);
                     }
@@ -683,14 +702,51 @@ namespace RecoTool.Windows
                         return false;
                     }
                 }
+                onProgress?.Invoke(90, "DW OK");
+
+                // Optional: Recreate DWINGS databases at startup if the flag is enabled
+                try
+                {
+                    var settings = RecoTool.Properties.Settings.Default;
+                    if (settings != null && settings.RecreateDwingsDatabasesAtStartup)
+                    {
+                        onProgress?.Invoke(91, "Recréation des bases DWINGS...");
+                        // Obtain target directory and DW prefix from OfflineFirstService parameters
+                        var dataDirectory = _offlineFirstService.GetParameter("DataDirectory");
+                        var dwPrefix = _offlineFirstService.GetParameter("DWDatabasePrefix");
+                        if (string.IsNullOrWhiteSpace(dwPrefix))
+                            dwPrefix = _offlineFirstService.GetParameter("CountryDatabasePrefix") ?? "DB_";
+
+                        // Execute recreation (non-blocking to the rest of init; we warn on failure but continue)
+                        var recreationService = new DatabaseRecreationService();
+                        var report = await recreationService.RecreateAllAsync(dataDirectory, dwPrefix, countryId);
+                        if (!report.Success)
+                        {
+                            var details = string.Join("\n", report.Errors ?? new List<string>());
+                            ShowWarning("Recréation DWINGS", string.IsNullOrWhiteSpace(details)
+                                ? "La recréation des bases DWINGS a rencontré des erreurs. Veuillez vérifier les journaux."
+                                : ("La recréation des bases DWINGS a rencontré des erreurs:\n" + details));
+                        }
+                        else
+                        {
+                            onProgress?.Invoke(92, "DWINGS recréées");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Best-effort: do not block country initialization on recreation failure
+                    ShowWarning("Recréation DWINGS", $"Échec de la recréation des bases DWINGS: {ex.Message}");
+                }
 
                 // 1) S'assurer que les instantanés locaux AMBRE et DW sont à jour
-                try { await _offlineFirstService.EnsureLocalSnapshotsUpToDateAsync(countryId); } catch { }
+                try { await _offlineFirstService.EnsureLocalSnapshotsUpToDateAsync(countryId, onProgress); } catch { }
 
                 // 2) Déclencher un push granulair en arrière-plan (ne bloque pas l'UI)
                 try { _ = _offlineFirstService.PushReconciliationIfPendingAsync(countryId); } catch { }
 
                 // Récupérer la nouvelle chaîne de connexion
+                onProgress?.Invoke(96, "Initialisation des services...");
                 var connectionString = _offlineFirstService.GetCountryConnectionString(countryId);
                 var user = Environment.UserName;
 
@@ -700,6 +756,7 @@ namespace RecoTool.Windows
                 IsOffline = false; // services prêts -> ONLINE
                 OperationalDataStatus = "ONLINE";
                 SetReferentialState("OK", Brushes.DarkGreen, true);
+                onProgress?.Invoke(99, "Finalisation...");
                 return true;
             }
             catch (Exception ex)

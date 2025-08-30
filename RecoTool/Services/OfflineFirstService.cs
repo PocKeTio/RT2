@@ -323,7 +323,15 @@ namespace RecoTool.Services
         /// S'assure que les instantanés locaux AMBRE et DW sont à jour versus le réseau.
         /// Copie réseau -> local si différence détectée. Lecture seule; sans lock global.
         /// </summary>
-        public async Task EnsureLocalSnapshotsUpToDateAsync(string countryId)
+        public Task EnsureLocalSnapshotsUpToDateAsync(string countryId)
+        {
+            return EnsureLocalSnapshotsUpToDateAsync(countryId, null);
+        }
+
+        /// <summary>
+        /// Variante avec reporting de progression.
+        /// </summary>
+        public async Task EnsureLocalSnapshotsUpToDateAsync(string countryId, Action<int, string> onProgress)
         {
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId requis", nameof(countryId));
             // Safety: only operate on the currently selected country to avoid cross-country copies
@@ -331,6 +339,8 @@ namespace RecoTool.Services
             {
                 return;
             }
+
+            onProgress?.Invoke(0, "Vérification des instantanés locaux...");
 
             // Helper local pour comparer et copier si besoin
             async Task CopyIfDifferentAsync(string networkPath, string localPath)
@@ -367,6 +377,7 @@ namespace RecoTool.Services
             // AMBRE (préférez ZIP si présent)
             try
             {
+                onProgress?.Invoke(10, "AMBRE: vérification ZIP/copie...");
                 var netAmbreZip = GetNetworkAmbreZipPath(countryId);
                 var locAmbreDb = GetLocalAmbreDbPath(countryId);
                 if (!string.IsNullOrWhiteSpace(netAmbreZip) && File.Exists(netAmbreZip))
@@ -377,12 +388,16 @@ namespace RecoTool.Services
                         var copied = await CopyZipIfDifferentAsync(netAmbreZip, locZip);
                         if (copied)
                         {
+                            onProgress?.Invoke(25, "AMBRE: extraction en cours...");
                             await ExtractAmbreZipToLocalAsync(countryId, locZip, locAmbreDb);
+                            onProgress?.Invoke(35, "AMBRE: prêt");
                         }
                         else if (!File.Exists(locAmbreDb))
                         {
                             // Première extraction
+                            onProgress?.Invoke(25, "AMBRE: première extraction...");
                             await ExtractAmbreZipToLocalAsync(countryId, locZip, locAmbreDb);
+                            onProgress?.Invoke(35, "AMBRE: prêt");
                         }
                     }
                     catch { }
@@ -392,6 +407,7 @@ namespace RecoTool.Services
                     // Fallback: copie brute .accdb si aucun ZIP AMBRE côté réseau
                     var netAmbre = GetNetworkAmbreDbPath(countryId);
                     await CopyIfDifferentAsync(netAmbre, locAmbreDb);
+                    onProgress?.Invoke(40, "AMBRE: prêt");
                 }
             }
             catch { }
@@ -399,6 +415,7 @@ namespace RecoTool.Services
             // DWINGS (préférez ZIP si présent)
             try
             {
+                onProgress?.Invoke(55, "DW: vérification ZIP/copie...");
                 var netDwZip = GetNetworkDwZipPath(countryId);
                 var locDwDb = GetLocalDwDbPath(countryId);
                 if (!string.IsNullOrWhiteSpace(netDwZip) && File.Exists(netDwZip))
@@ -409,12 +426,16 @@ namespace RecoTool.Services
                         var copied = await CopyZipIfDifferentAsync(netDwZip, locZip);
                         if (copied)
                         {
+                            onProgress?.Invoke(70, "DW: extraction en cours...");
                             await ExtractDwZipToLocalAsync(countryId, locZip, locDwDb);
+                            onProgress?.Invoke(85, "DW: prêt");
                         }
                         else if (!File.Exists(locDwDb))
                         {
                             // Première extraction si DB absente
+                            onProgress?.Invoke(70, "DW: première extraction...");
                             await ExtractDwZipToLocalAsync(countryId, locZip, locDwDb);
+                            onProgress?.Invoke(85, "DW: prêt");
                         }
                     }
                     catch { }
@@ -424,9 +445,12 @@ namespace RecoTool.Services
                     var netDw = GetNetworkDwDbPath(countryId);
                     var locDw = GetLocalDwDbPath(countryId);
                     await CopyIfDifferentAsync(netDw, locDw);
+                    onProgress?.Invoke(90, "DW: prêt");
                 }
             }
             catch { }
+
+            onProgress?.Invoke(100, "Instantanés locaux à jour");
         }
 
         /// <summary>
@@ -750,7 +774,7 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// Returns network path for Ambre ZIP for a country. Uses same prefix logic as Ambre DB and appends _AMBRE.zip
+        /// Returns network path for Ambre ZIP for a country. Uses same prefix logic as Ambre DB and appends .zip
         /// </summary>
         private string GetNetworkAmbreZipPath(string countryId)
         {
@@ -759,11 +783,11 @@ namespace RecoTool.Services
             string prefix = GetCentralConfig("AmbreDatabasePrefix");
             if (string.IsNullOrWhiteSpace(prefix)) prefix = GetCentralConfig("CountryDatabasePrefix");
             if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
-            return Path.Combine(remoteDir, $"{prefix}{countryId}_AMBRE.zip");
+            return Path.Combine(remoteDir, $"{prefix}{countryId}.zip");
         }
 
         /// <summary>
-        /// Returns local cached ZIP path for Ambre content. Uses same prefix logic and appends _AMBRE.zip
+        /// Returns local cached ZIP path for Ambre content. Uses same prefix logic and appends .zip
         /// </summary>
         private string GetLocalAmbreZipCachePath(string countryId)
         {
@@ -771,7 +795,7 @@ namespace RecoTool.Services
             string prefix = GetCentralConfig("AmbreDatabasePrefix");
             if (string.IsNullOrWhiteSpace(prefix)) prefix = GetCentralConfig("CountryDatabasePrefix");
             if (string.IsNullOrWhiteSpace(prefix)) prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
-            return Path.Combine(dataDirectory, $"{prefix}{countryId}_AMBRE.zip");
+            return Path.Combine(dataDirectory, $"{prefix}{countryId}.zip");
         }
 
         /// <summary>
@@ -999,9 +1023,16 @@ namespace RecoTool.Services
             if (!Directory.Exists(dataDirectory)) Directory.CreateDirectory(dataDirectory);
             using (var archive = ZipFile.OpenRead(localZipPath))
             {
-                var accdbEntry = archive.Entries
-                    .OrderByDescending(e => e.Length)
-                    .FirstOrDefault(e => e.FullName.EndsWith(".accdb", StringComparison.OrdinalIgnoreCase));
+                // Prefer explicit DW_Data.accdb if present (new unified DW format)
+                var accdbEntry = archive.Entries.FirstOrDefault(e => string.Equals(Path.GetFileName(e.FullName), "DW_Data.accdb", StringComparison.OrdinalIgnoreCase));
+                if (accdbEntry == null)
+                {
+                    // Fallback: pick the largest .accdb (legacy zips with multiple databases)
+                    accdbEntry = archive.Entries
+                        .Where(e => e.FullName.EndsWith(".accdb", StringComparison.OrdinalIgnoreCase))
+                        .OrderByDescending(e => e.Length)
+                        .FirstOrDefault();
+                }
                 if (accdbEntry == null)
                 {
                     System.Diagnostics.Debug.WriteLine($"DW: Aucun .accdb dans l'archive {localZipPath}");
@@ -3928,12 +3959,23 @@ namespace RecoTool.Services
         /// Règle: s'il existe des changements locaux non synchronisés, on les pousse d'abord vers le réseau,
         /// puis on recopie toutes les bases pertinentes (Reconciliation, Ambre, DW) du réseau vers le local.
         /// </summary>
-        public async Task<bool> SetCurrentCountryAsync(string countryId, bool suppressPush = false)
+        public Task<bool> SetCurrentCountryAsync(string countryId, bool suppressPush = false)
+        {
+            return SetCurrentCountryAsync(countryId, suppressPush, null);
+        }
+
+        /// <summary>
+        /// Variante avec reporting de progression.
+        /// </summary>
+        public async Task<bool> SetCurrentCountryAsync(string countryId, bool suppressPush, Action<int, string> onProgress)
         {
             if (string.IsNullOrWhiteSpace(countryId))
                 return false;
 
+            onProgress?.Invoke(0, "Initialisation du pays...");
+
             // 1) Initialiser/assurer la base locale principale (et positionner _currentCountryId)
+            onProgress?.Invoke(10, "Préparation de la base locale...");
             var initialized = await InitializeLocalDatabaseAsync(countryId);
             if (!initialized)
                 return false;
@@ -3946,6 +3988,7 @@ namespace RecoTool.Services
             {
                 _syncService = new SynchronizationService();
             }
+            onProgress?.Invoke(30, "Configuration de synchronisation initialisée");
 
             // 1.b) Positionner également l'objet Country courant depuis les référentiels
             try
@@ -3956,16 +3999,19 @@ namespace RecoTool.Services
             {
                 _currentCountry = null; // si échec de chargement, rester prudent
             }
+            onProgress?.Invoke(35, "Référentiels pays chargés");
 
             // 2) Pousser d'éventuels changements locaux en attente (sauf si suppression demandée)
             if (!suppressPush)
             {
                 try
                 {
+                    onProgress?.Invoke(40, "Vérification des changements locaux en attente...");
                     var pending = await GetUnsyncedChangeCountAsync(countryId);
                     if (pending > 0)
                     {
                         System.Diagnostics.Debug.WriteLine($"[{nameof(SetCurrentCountryAsync)}] Pending changes detected ({pending}) for {countryId}. Pushing to network (background)...");
+                        onProgress?.Invoke(45, "Push en arrière-plan des changements...");
                         _ = PushReconciliationIfPendingAsync(countryId);
                     }
                 }
@@ -3977,15 +4023,28 @@ namespace RecoTool.Services
             }
 
             // 3) Après le push, rafraîchir toutes les bases locales depuis le réseau (best-effort)
-            try { await CopyNetworkToLocalReconciliationAsync(countryId); }
+            try
+            {
+                onProgress?.Invoke(50, "Mise à jour locale: RECON...");
+                await CopyNetworkToLocalReconciliationAsync(countryId);
+            }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"RECON: échec copie réseau->local pour {countryId}: {ex.Message}"); }
 
-            try { await CopyNetworkToLocalAmbreAsync(countryId); }
+            try
+            {
+                onProgress?.Invoke(60, "Mise à jour locale: AMBRE...");
+                await CopyNetworkToLocalAmbreAsync(countryId);
+            }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"AMBRE: échec copie réseau->local pour {countryId}: {ex.Message}"); }
 
-            try { await CopyNetworkToLocalDwAsync(countryId); }
+            try
+            {
+                onProgress?.Invoke(70, "Mise à jour locale: DW...");
+                await CopyNetworkToLocalDwAsync(countryId);
+            }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"DW: échec copie réseau->local pour {countryId}: {ex.Message}"); }
 
+            onProgress?.Invoke(80, "Initialisation pays terminée");
             return true;
         }
         

@@ -46,5 +46,17 @@ namespace RecoTool.Properties {
                 this["AppIcon"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("True")]
+        public bool RecreateDwingsDatabasesAtStartup {
+            get {
+                return ((bool)(this["RecreateDwingsDatabasesAtStartup"]));
+            }
+            set {
+                this["RecreateDwingsDatabasesAtStartup"] = value;
+            }
+        }
     }
 }

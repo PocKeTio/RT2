@@ -472,8 +472,26 @@ namespace RecoTool.Helpers
         {
             if (_workbook != null)
             {
-                _workbook.Close(false);
-                _workbook = null;
+                try
+                {
+                    _workbook.Close(false);
+                }
+                catch
+                {
+                    // ignore, best-effort close
+                }
+                finally
+                {
+                    try
+                    {
+                        System.Runtime.InteropServices.Marshal.ReleaseComObject(_workbook);
+                    }
+                    catch
+                    {
+                        // ignore, best-effort release
+                    }
+                    _workbook = null;
+                }
             }
         }
 

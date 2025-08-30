@@ -340,20 +340,10 @@ namespace RecoTool.Windows
                     var pivotRows = dataExcel.ReadSheetByColumns("PIVOT", pivotLetterToDest, pivotStartRow, idColumnLetter: "A");
                     foreach (var row in pivotRows)
                     {
-                        // Compute ID for PIVOT: Reconciliation_Num (or ReconciliationOrigin_Num) + RawLabel + Event_Num + Operation_Date (dd/MM/yyyy)
-                        var recNum = row.TryGetValue("Reconciliation_Num", out var v1) ? S(v1) : null;
-                        var recOriginNum = row.TryGetValue("ReconciliationOrigin_Num", out var v2) ? S(v2) : null;
-                        var rawLabel = row.TryGetValue("RawLabel", out var v3) ? S(v3) : null;
-                        var eventNum = row.TryGetValue("Event_Num", out var v4) ? S(v4) : null;
-                        var opDate = row.TryGetValue("Operation_Date", out var v5) ? FormatDdMmYyyy(v5) : null;
-                        var left = !string.IsNullOrWhiteSpace(recNum) ? recNum : recOriginNum;
-                        var id = (!string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(rawLabel) && !string.IsNullOrWhiteSpace(eventNum) && !string.IsNullOrWhiteSpace(opDate))
-                            ? $"{left}|{rawLabel}|{eventNum}|{opDate}"
-                            : (row.TryGetValue("ID", out var idv) ? idv?.ToString() : null);
+                        // ID is ALWAYS column A. Do not recompute. Deduplicate identical A values (keep first).
+                        var id = row.TryGetValue("ID", out var idv) ? idv?.ToString()?.Trim() : null;
                         if (string.IsNullOrWhiteSpace(id)) continue;
-                        // For PIVOT: if duplicate ID appears, keep only the first line
-                        if (allById.ContainsKey(id))
-                            continue;
+                        if (allById.ContainsKey(id)) continue; // duplicate natural key from Excel -> skip
                         row["ID"] = id;
 
                         if (!allById.TryGetValue(id, out var agg))
@@ -381,10 +371,10 @@ namespace RecoTool.Windows
                     var recvRows = dataExcel.ReadSheetByColumns("RECEIVABLE", recvLetterToDest, receivableStartRow, idColumnLetter: "A");
                     foreach (var row in recvRows)
                     {
-                        // Compute ID for RECEIVABLE: Event_Num
-                        var id = row.TryGetValue("Event_Num", out var ev) ? S(ev) : null;
+                        // ID is ALWAYS column A. For receivable, this contains Event_Num.
+                        var id = row.TryGetValue("ID", out var idv) ? idv?.ToString()?.Trim() : null;
                         if (string.IsNullOrWhiteSpace(id))
-                            id = row.TryGetValue("ID", out var idv) ? idv?.ToString() : null; // fallback to column A
+                            id = row.TryGetValue("Event_Num", out var ev) ? S(ev) : null; // fallback if A is missing
                         if (string.IsNullOrWhiteSpace(id)) continue;
                         row["ID"] = id;
 
@@ -421,11 +411,22 @@ namespace RecoTool.Windows
 
                 _cts.Token.ThrowIfCancellationRequested();
 
-                // Build DB lookup indices to resolve real IDs from natural keys (per sheet rules)
+                // Build DB lookup indices to resolve real IDs from Excel column A values (per sheet rules)
                 UpdateProgress(48, "Building database lookup indices...");
                 LogMessage("Building in-memory indices from T_Reconciliation for ID resolution...");
-                var receivableIndex = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // Event_Num -> ID
-                var pivotIndex = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // Rec(Num or Origin)+RawLabel+Event_Num+Operation_Date -> ID
+                var receivableIndex = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // Event_Num (Excel A in Receivable) -> DB ID
+                var pivotIndex = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // Excel A for Pivot (concat) -> DB ID
+
+                string Nk(string s)
+                {
+                    if (string.IsNullOrWhiteSpace(s)) return null;
+                    var up = s.Trim().ToUpperInvariant();
+                    // light normalization: remove spaces and pipes to accept minor formatting diffs; keep date slashes
+                    up = up.Replace(" ", string.Empty)
+                           .Replace("|", string.Empty)
+                           .Replace("\t", string.Empty);
+                    return up;
+                }
 
                 if (_offlineFirstService == null)
                     throw new InvalidOperationException("OfflineFirstService is not available.");
@@ -444,8 +445,12 @@ namespace RecoTool.Windows
 
                             var ev = reader["Event_Num"];
                             var evs = ev == null || ev is DBNull ? null : ev.ToString()?.Trim();
-                            if (!string.IsNullOrWhiteSpace(evs) && !receivableIndex.ContainsKey(evs))
-                                receivableIndex[evs] = id;
+                            if (!string.IsNullOrWhiteSpace(evs))
+                            {
+                                if (!receivableIndex.ContainsKey(evs)) receivableIndex[evs] = id;            // exact
+                                var ek = Nk(evs);
+                                if (ek != null && !receivableIndex.ContainsKey(ek)) receivableIndex[ek] = id;  // normalized
+                            }
 
                             var recNumDb = reader["Reconciliation_Num"];
                             var recOriDb = reader["ReconciliationOrigin_Num"];
@@ -462,8 +467,17 @@ namespace RecoTool.Windows
 
                             if (!string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(rawLabelStr) && !string.IsNullOrWhiteSpace(evStr) && !string.IsNullOrWhiteSpace(opStr))
                             {
-                                var key = $"{left}|{rawLabelStr}|{evStr}|{opStr}";
-                                if (!pivotIndex.ContainsKey(key)) pivotIndex[key] = id;
+                                // Store multiple acceptable representations of the Excel column A value
+                                var keyPipe = $"{left}|{rawLabelStr}|{evStr}|{opStr}";          // with pipes
+                                var keyConcat = $"{left}{rawLabelStr}{evStr}{opStr}";            // pure concatenation
+                                var k1 = keyPipe;
+                                var k2 = keyConcat;
+                                var k1n = Nk(keyPipe);
+                                var k2n = Nk(keyConcat);
+                                if (!pivotIndex.ContainsKey(k1)) pivotIndex[k1] = id;
+                                if (!pivotIndex.ContainsKey(k2)) pivotIndex[k2] = id;
+                                if (k1n != null && !pivotIndex.ContainsKey(k1n)) pivotIndex[k1n] = id;
+                                if (k2n != null && !pivotIndex.ContainsKey(k2n)) pivotIndex[k2n] = id;
                             }
                         }
                     }
@@ -523,32 +537,20 @@ namespace RecoTool.Windows
                         }
                     }
 
-                    // Resolve real DB ID using indices and rules (Pivot vs Receivable)
+                    // Resolve real DB ID using Excel column A value against indices (Pivot vs Receivable)
                     string TryResolveId(Dictionary<string, object> r)
                     {
-                        string S2(object v)
-                        {
-                            var s = v?.ToString()?.Trim();
-                            return string.IsNullOrWhiteSpace(s) ? null : s;
-                        }
+                        var excelId = r.TryGetValue("ID", out var iv) ? iv?.ToString()?.Trim() : null; // column A as read
+                        if (string.IsNullOrWhiteSpace(excelId)) { unresolved++; return null; }
 
-                        var ev = r.TryGetValue("Event_Num", out var evv) ? S2(evv) : null;
-                        var recNum = r.TryGetValue("Reconciliation_Num", out var r1) ? S2(r1) : null;
-                        var recOri = r.TryGetValue("ReconciliationOrigin_Num", out var r2) ? S2(r2) : null;
-                        var rawLabel = r.TryGetValue("RawLabel", out var rl) ? S2(rl) : null;
-                        var op = r.TryGetValue("Operation_Date", out var od) ? FormatDdMmYyyy(od) : null;
-                        var left = !string.IsNullOrWhiteSpace(recNum) ? recNum : recOri;
+                        // Try Receivable (Event_Num)
+                        if (receivableIndex.TryGetValue(excelId, out var idr)) { resolvedReceivable++; return idr; }
+                        var excelIdN = Nk(excelId);
+                        if (excelIdN != null && receivableIndex.TryGetValue(excelIdN, out idr)) { resolvedReceivable++; return idr; }
 
-                        if (!string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(rawLabel) && !string.IsNullOrWhiteSpace(ev) && !string.IsNullOrWhiteSpace(op))
-                        {
-                            var key = $"{left}|{rawLabel}|{ev}|{op}";
-                            if (pivotIndex.TryGetValue(key, out var idp)) { resolvedPivot++; return idp; }
-                        }
-
-                        if (!string.IsNullOrWhiteSpace(ev))
-                        {
-                            if (receivableIndex.TryGetValue(ev, out var idr)) { resolvedReceivable++; return idr; }
-                        }
+                        // Try Pivot (concat variants)
+                        if (pivotIndex.TryGetValue(excelId, out var idp)) { resolvedPivot++; return idp; }
+                        if (excelIdN != null && pivotIndex.TryGetValue(excelIdN, out idp)) { resolvedPivot++; return idp; }
 
                         unresolved++;
                         return null;
@@ -573,6 +575,8 @@ namespace RecoTool.Windows
                         UpdateProgress(pct, $"Transforming... {processed:N0}/{rawRows.Count:N0}");
                     }
                 }
+
+                LogMessage($"ID resolution summary: Pivot={resolvedPivot:N0}, Receivable={resolvedReceivable:N0}, Unresolved={unresolved:N0}");
 
                 _cts.Token.ThrowIfCancellationRequested();
                 if (toApply.Count == 0)

@@ -223,19 +223,32 @@ namespace RecoTool.Services
         /// <summary>
         /// Récupère les données jointes Ambre + Réconciliation
         /// </summary>
-        public async Task<List<ReconciliationViewData>> GetReconciliationViewAsync(string countryId, string filterSql = null)
+        public async Task<List<ReconciliationViewData>> GetReconciliationViewAsync(string countryId, string filterSql = null, bool dashboardOnly = false)
         {
             var swBuild = Stopwatch.StartNew();
             string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
             string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
             string dwEsc = string.IsNullOrEmpty(dwPath) ? null : dwPath.Replace("'", "''");
             string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
-            // Build JOIN targets: use IN 'path' subqueries when external, otherwise direct tables
-            string dwDataJoinInv = string.IsNullOrEmpty(dwEsc) ? "T_DW_Data AS dInv" : $"(SELECT * FROM [{dwEsc}].T_DW_Data) AS dInv";
-            string dwGuaranteeJoin = string.IsNullOrEmpty(dwEsc) ? "T_DW_Guarantee AS g" : $"(SELECT * FROM [{dwEsc}].T_DW_Guarantee) AS g";
+
             string ambreJoin = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre AS a" : $"(SELECT * FROM [{ambreEsc}].T_Data_Ambre) AS a";
 
-            var query = $@"SELECT 
+            string query;
+            if (dashboardOnly)
+            {
+                query = $@"SELECT a.ID, a.Account_ID, a.CCY, a.SignedAmount, a.Operation_Date, a.Value_Date, a.CreationDate, a.DeleteDate,
+                                   r.Action, r.KPI, r.RiskyItem
+                            FROM {ambreJoin}
+                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID
+                            WHERE a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
+            }
+            else
+            {
+                // Build JOIN targets: use IN 'path' subqueries when external, otherwise direct tables
+                string dwDataJoinInv = string.IsNullOrEmpty(dwEsc) ? "T_DW_Data AS dInv" : $"(SELECT * FROM [{dwEsc}].T_DW_Data) AS dInv";
+                string dwGuaranteeJoin = string.IsNullOrEmpty(dwEsc) ? "T_DW_Guarantee AS g" : $"(SELECT * FROM [{dwEsc}].T_DW_Guarantee) AS g";
+
+                query = $@"SELECT
                                    a.*,
                                    r.DWINGS_GuaranteeID,
                                    r.DWINGS_InvoiceID,
@@ -332,11 +345,12 @@ namespace RecoTool.Services
                                   dInv.DEBTOR_ACCOUNT_NUMBER AS I_DEBTOR_ACCOUNT_NUMBER,
                                   dInv.CREDITOR_PARTY_ID AS I_CREDITOR_PARTY_ID,
                                   dInv.CREDITOR_ACCOUNT_NUMBER AS I_CREDITOR_ACCOUNT_NUMBER
-                           FROM (({ambreJoin} 
+                           FROM (({ambreJoin}
                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
                            LEFT JOIN {dwDataJoinInv} ON r.DWINGS_InvoiceID = dInv.INVOICE_ID)
                            LEFT JOIN {dwGuaranteeJoin} ON  g.GUARANTEE_ID = r.DWINGS_GuaranteeID
                            WHERE 1=1";
+            }
 
             if (!string.IsNullOrEmpty(filterSql))
             {
@@ -1299,8 +1313,8 @@ namespace RecoTool.Services
 
         private async Task<KpiDailySnapshotDto> BuildKpiDailySnapshotAsync(DateTime date, string countryId, string sourceVersion, CancellationToken ct)
         {
-            // Load the same data used by HomePage
-            var list = await GetReconciliationViewAsync(countryId);
+            // Load the same data used by HomePage (minimal fields)
+            var list = await GetReconciliationViewAsync(countryId, null, true);
 
             var currentCountry = _offlineFirstService?.CurrentCountry;
             string receivableId = currentCountry?.CNT_AmbreReceivable;

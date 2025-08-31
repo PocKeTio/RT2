@@ -894,6 +894,9 @@ namespace RecoTool.Windows
                 PivotAccountsCount = SafeGetInt(row, "PivotCount");
                 TotalPivotAmount = SafeGetDecimal(row, "PivotAmount");
 
+                // Charger les séries de graphiques depuis le snapshot
+                ApplySnapshotCharts(row);
+
                 _usingSnapshot = true;
                 StatusMessage = $"Snapshot loaded for {date:dd/MM/yyyy}.";
                 LastUpdateTime = DateTime.Now.ToString("HH:mm:ss");
@@ -905,6 +908,167 @@ namespace RecoTool.Windows
                 StatusMessage = "Snapshot load error";
                 System.Diagnostics.Debug.WriteLine($"TryLoadSnapshotAsync error: {ex.Message}");
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Utilise les données sérialisées du snapshot pour remplir les graphiques sans recharger la base.
+        /// </summary>
+        private void ApplySnapshotCharts(DataRow row)
+        {
+            try
+            {
+                _reconciliationViewData = new List<ReconciliationViewData>();
+
+                // KPI distribution
+                var kpiChart = FindName("KPIChart") as LiveCharts.Wpf.PieChart;
+                var kpiJson = row["KpiDistributionJson"]?.ToString();
+                if (kpiChart != null && !string.IsNullOrWhiteSpace(kpiJson))
+                {
+                    using var doc = JsonDocument.Parse(kpiJson);
+                    var sc = new SeriesCollection();
+                    foreach (var el in doc.RootElement.EnumerateArray())
+                    {
+                        var name = el.GetProperty("kpi").GetString();
+                        var count = el.GetProperty("count").GetInt32();
+                        sc.Add(new PieSeries
+                        {
+                            Title = $"{name} ({count})",
+                            Values = new ChartValues<int> { count },
+                            LabelPoint = cp => $"{count} ({cp.Participation:P})"
+                        });
+                    }
+                    kpiChart.Series = sc;
+                }
+                else if (kpiChart != null)
+                {
+                    kpiChart.Series = new SeriesCollection();
+                }
+
+                // Currency distribution
+                var ccyJson = row["CurrencyDistributionJson"]?.ToString();
+                if (!string.IsNullOrWhiteSpace(ccyJson))
+                {
+                    using var doc = JsonDocument.Parse(ccyJson);
+                    var sc = new SeriesCollection();
+                    foreach (var el in doc.RootElement.EnumerateArray())
+                    {
+                        var ccy = el.GetProperty("currency").GetString();
+                        var amount = el.GetProperty("amount").GetDouble();
+                        var count = el.GetProperty("count").GetInt32();
+                        sc.Add(new PieSeries
+                        {
+                            Title = $"{ccy} ({count})",
+                            Values = new ChartValues<double> { amount },
+                            LabelPoint = cp => $"{ccy}: {amount:N2} ({cp.Participation:P})"
+                        });
+                    }
+                    CurrencyDistributionSeries = sc;
+                }
+                else
+                {
+                    CurrencyDistributionSeries = new SeriesCollection();
+                }
+
+                // Action distribution
+                var actionJson = row["ActionDistributionJson"]?.ToString();
+                if (!string.IsNullOrWhiteSpace(actionJson))
+                {
+                    using var doc = JsonDocument.Parse(actionJson);
+                    var sc = new SeriesCollection();
+                    var labels = new List<string>();
+                    foreach (var el in doc.RootElement.EnumerateArray())
+                    {
+                        var name = el.GetProperty("action").GetString();
+                        var count = el.GetProperty("count").GetInt32();
+                        labels.Add(name);
+                        sc.Add(new ColumnSeries { Title = name, Values = new ChartValues<int> { count } });
+                    }
+                    ActionLabels = labels;
+                    ActionDistributionSeries = sc;
+                }
+                else
+                {
+                    ActionLabels = new List<string>();
+                    ActionDistributionSeries = new SeriesCollection();
+                }
+
+                // KPI × Risky
+                var riskJson = row["KpiRiskMatrixJson"]?.ToString();
+                if (!string.IsNullOrWhiteSpace(riskJson))
+                {
+                    using var doc = JsonDocument.Parse(riskJson);
+                    var labels = doc.RootElement.GetProperty("kpiLabels").EnumerateArray().Select(e => e.GetString()).ToList();
+                    var values = doc.RootElement.GetProperty("values").EnumerateArray().ToList();
+                    var riskyVals = new ChartValues<int>(values[0].EnumerateArray().Select(e => e.GetInt32()));
+                    var nonRiskyVals = new ChartValues<int>(values[1].EnumerateArray().Select(e => e.GetInt32()));
+                    KpiRiskLabels = labels;
+                    KpiRiskSeries = new SeriesCollection
+                    {
+                        new StackedColumnSeries { Title = "Risky", Values = riskyVals, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N0") },
+                        new StackedColumnSeries { Title = "Non-Risky", Values = nonRiskyVals, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N0") }
+                    };
+                }
+                else
+                {
+                    KpiRiskLabels = new List<string>();
+                    KpiRiskSeries = new SeriesCollection();
+                }
+
+                // Receivable vs Pivot by Action
+                var rpaJson = row["ReceivablePivotByActionJson"]?.ToString();
+                if (!string.IsNullOrWhiteSpace(rpaJson))
+                {
+                    using var doc = JsonDocument.Parse(rpaJson);
+                    var labels = doc.RootElement.GetProperty("labels").EnumerateArray().Select(e => e.GetString()).ToList();
+                    var recv = new ChartValues<int>(doc.RootElement.GetProperty("receivable").EnumerateArray().Select(e => e.GetInt32()));
+                    var piv = new ChartValues<int>(doc.RootElement.GetProperty("pivot").EnumerateArray().Select(e => e.GetInt32()));
+                    ReceivablePivotByActionLabels = labels;
+                    ReceivablePivotByActionSeries = new SeriesCollection
+                    {
+                        new StackedColumnSeries { Title = "Receivable", Values = recv, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N0") },
+                        new StackedColumnSeries { Title = "Pivot", Values = piv, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N0") }
+                    };
+                }
+                else
+                {
+                    ReceivablePivotByActionLabels = new List<string>();
+                    ReceivablePivotByActionSeries = new SeriesCollection();
+                }
+
+                // Deletion delay
+                var delayJson = row["DeletionDelayBucketsJson"]?.ToString();
+                if (!string.IsNullOrWhiteSpace(delayJson))
+                {
+                    using var doc = JsonDocument.Parse(delayJson);
+                    var labels = new List<string>();
+                    var vals = new ChartValues<double>();
+                    foreach (var el in doc.RootElement.EnumerateArray())
+                    {
+                        labels.Add(el.GetProperty("bucket").GetString());
+                        vals.Add(el.GetProperty("avgDays").GetDouble());
+                    }
+                    DeletionDelayLabels = labels;
+                    DeletionDelaySeries = new SeriesCollection
+                    {
+                        new ColumnSeries { Title = "Average duration (days)", Values = vals, DataLabels = true, LabelPoint = cp => (cp.Y > 0 ? cp.Y.ToString("N0") : string.Empty) }
+                    };
+                }
+                else
+                {
+                    DeletionDelayLabels = new List<string>();
+                    DeletionDelaySeries = new SeriesCollection();
+                }
+
+                // Charts not included in snapshot -> reset
+                ReceivableChartData = new ChartValues<double>();
+                PivotChartData = new ChartValues<double>();
+                NewDeletedDailySeries = new SeriesCollection();
+                NewDeletedDailyLabels = new List<string>();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"ApplySnapshotCharts error: {ex.Message}");
             }
         }
 
@@ -1470,8 +1634,8 @@ namespace RecoTool.Windows
                     return;
                 }
 
-                // Utiliser le service existant qui fait déjà la jointure DataAmbre + Reconciliation
-                var reconciliationViewData = await _reconciliationService.GetReconciliationViewAsync(_offlineFirstService.CurrentCountryId);
+                // Récupérer uniquement les colonnes nécessaires pour le dashboard
+                var reconciliationViewData = await _reconciliationService.GetReconciliationViewAsync(_offlineFirstService.CurrentCountryId, null, true);
                 _reconciliationViewData = reconciliationViewData ?? new List<ReconciliationViewData>();
 
                 // Analyser la répartition des comptes pour diagnostic

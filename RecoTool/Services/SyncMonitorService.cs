@@ -30,7 +30,7 @@ namespace RecoTool.Services
         private DateTime _lastForwardUtc = DateTime.MinValue;
         private DateTime _lastPeriodicPushUtc = DateTime.MinValue;
         private DateTime _lastRemoteReconCheckUtc = DateTime.MinValue;
-        private readonly ConcurrentDictionary<string, (long Length, DateTime WriteUtc)> _remoteReconFingerprint = new ConcurrentDictionary<string, (long, DateTime)>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, (long Length, DateTime LastWriteUtcDate)> _remoteReconFingerprint = new ConcurrentDictionary<string, (long, DateTime)>(StringComparer.OrdinalIgnoreCase);
 
         public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(3);
         public TimeSpan SuggestCooldown { get; set; } = TimeSpan.FromSeconds(15);
@@ -226,9 +226,9 @@ namespace RecoTool.Services
                                     if (File.Exists(remotePath))
                                     {
                                         var fi = new FileInfo(remotePath);
-                                        var current = (Length: fi.Length, WriteUtc: fi.LastWriteTimeUtc);
+                                        var current = (Length: fi.Length, LastWriteUtcDate: fi.LastWriteTimeUtc.Date);
                                         var previous = _remoteReconFingerprint.GetOrAdd(cid, (0L, DateTime.MinValue));
-                                        if (current.Length != previous.Length || current.WriteUtc != previous.WriteUtc)
+                                        if (current.Length != previous.Length || current.LastWriteUtcDate != previous.LastWriteUtcDate)
                                         {
                                             _remoteReconFingerprint[cid] = current;
                                             // Schedule a background sync (coalesced and debounced inside OfflineFirstService)

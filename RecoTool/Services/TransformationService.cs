@@ -27,33 +27,35 @@ namespace RecoTool.Services
         /// <returns>Valeur transformée</returns>
         public string ApplyTransformation(Dictionary<string, object> sourceData, AmbreTransform transform)
         {
+            var source = GetSourceValue(sourceData, transform?.AMB_Source);
+
             if (transform == null || string.IsNullOrEmpty(transform.AMB_TransformationFunction))
-                return GetSourceValue(sourceData, transform?.AMB_Source);
+                return source;
 
             switch (transform.AMB_TransformationFunction.ToUpper())
             {
                 case "GETBOOKINGNAMEFROMID":
-                    return GetBookingNameFromID(GetSourceValue(sourceData, transform.AMB_Source));
+                    return GetBookingNameFromID(source);
 
                 case "GETMBAWIDFROMLABEL":
-                    return GetMbawIDFromLabel(GetSourceValue(sourceData, transform.AMB_Source));
+                    return GetMbawIDFromLabel(source);
 
                 case "GETCODESFROMLABEL":
-                    return GetCodesFromLabel(GetSourceValue(sourceData, transform.AMB_Source));
+                    return GetCodesFromLabel(source);
 
                 case "GETTRNFROMLABEL":
                 case "GETTRN FROMLABEL": // support legacy with space
-                    return GetTRNFromLabel(GetSourceValue(sourceData, transform.AMB_Source));
+                    return GetTRNFromLabel(source);
 
                 case "EXTRACTFORRECEIVABLE":
-                    return ExtractForReceivable(GetSourceValue(sourceData, transform.AMB_Source));
+                    return ExtractForReceivable(source);
 
                 case "REMOVEZEROSFROMSTART":
-                    return RemoveZerosFromStart(GetSourceValue(sourceData, transform.AMB_Source));
+                    return RemoveZerosFromStart(source);
 
                 default:
                     // Si la fonction n'est pas reconnue, retourne la valeur source
-                    return GetSourceValue(sourceData, transform.AMB_Source);
+                    return source;
             }
         }
 

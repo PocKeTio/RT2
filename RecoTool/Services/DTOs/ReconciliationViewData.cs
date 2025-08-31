@@ -122,6 +122,8 @@ namespace RecoTool.Services
         public decimal? GUARANTEE_AMOUNT { get; set; }
         public string GUARANTEE_CURRENCY { get; set; }
         public string GUARANTEE_STATUS { get; set; }
+        // DWINGS guarantee type (raw code)
+        public string GUARANTEE_TYPE { get; set; }
 
         // DWINGS Guarantee extra fields (prefixed with G_ to avoid collisions)
         public string G_NATURE { get; set; }

@@ -987,7 +987,7 @@
                             <DataGridTextColumn Header="DW Syndicate" Binding="{Binding SYNDICATE}" Width="100"/>
                             <DataGridTextColumn Header="DW Currency" Binding="{Binding GUARANTEE_CURRENCY}" Width="80"/>
                             <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120"/>
-                            <DataGridTextColumn Header="Guarantee Type" Width="130" SortMemberPath="G_GUARANTEE_TYPE">
+                            <DataGridTextColumn Header="Guarantee Type" Width="130" SortMemberPath="GUARANTEE_TYPE">
                                 <DataGridTextColumn.Binding>
                                     <Binding Path="G_GUARANTEE_TYPE" Converter="{StaticResource GuaranteeTypeDisplayConverter}"/>
                                 </DataGridTextColumn.Binding>

@@ -201,7 +201,7 @@ namespace OfflineFirstAccess.Helpers
 
         public static void Warn(string v)
         {
-            throw new NotImplementedException();
+            Log(LogLevel.Warning, v, null);
         }
 
         /// <summary>

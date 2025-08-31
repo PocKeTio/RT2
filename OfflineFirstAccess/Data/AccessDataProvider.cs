@@ -25,49 +25,6 @@ namespace OfflineFirstAccess.Data
             _config = config;
         }
 
-        // Create explicitly-typed parameters to avoid Access type guessing problems
-        private static OleDbParameter CreateParameter(string name, object value)
-        {
-            if (value == null || value is DBNull)
-            {
-                var p = new OleDbParameter(name, OleDbType.Variant);
-                p.Value = DBNull.Value;
-                return p;
-            }
-
-            switch (value)
-            {
-                case DateTime dt:
-                    {
-                        var p = new OleDbParameter(name, OleDbType.DBTimeStamp);
-                        p.Value = dt;
-                        return p;
-                    }
-                case bool b:
-                    {
-                        var p = new OleDbParameter(name, OleDbType.Boolean);
-                        p.Value = b;
-                        return p;
-                    }
-                case string s:
-                    {
-                        var p = new OleDbParameter(name, OleDbType.VarWChar);
-                        p.Value = s;
-                        return p;
-                    }
-                case byte[] bytes:
-                    {
-                        var p = new OleDbParameter(name, OleDbType.Binary);
-                        p.Value = bytes;
-                        return p;
-                    }
-            }
-
-            // Numerics and others: let OleDb infer, but avoid OADate conversions
-            var def = new OleDbParameter(name, value);
-            return def;
-        }
-
         // Minimal mapping to match schemas storing dates as numeric OADate (fallback only)
         private static object MapValueForDb(object value)
         {
@@ -104,12 +61,30 @@ namespace OfflineFirstAccess.Data
             }
         }
 
-        // Create parameter with expected type based on schema and convert DateTime<->OADate if necessary
-        private static OleDbParameter CreateParameter(string name, object value, OleDbType? expectedType)
+        // Create parameter with optional expected type and convert DateTime<->OADate if necessary
+        private static OleDbParameter CreateParameter(string name, object value, OleDbType? expectedType = null)
         {
             if (!expectedType.HasValue)
             {
-                return CreateParameter(name, value);
+                if (value == null || value is DBNull)
+                {
+                    return new OleDbParameter(name, OleDbType.Variant) { Value = DBNull.Value };
+                }
+
+                switch (value)
+                {
+                    case DateTime dt:
+                        return new OleDbParameter(name, OleDbType.DBTimeStamp) { Value = dt };
+                    case bool b:
+                        return new OleDbParameter(name, OleDbType.Boolean) { Value = b };
+                    case string s:
+                        return new OleDbParameter(name, OleDbType.VarWChar) { Value = s };
+                    case byte[] bytes:
+                        return new OleDbParameter(name, OleDbType.Binary) { Value = bytes };
+                }
+
+                // Numerics and others: let OleDb infer, but avoid OADate conversions
+                return new OleDbParameter(name, value);
             }
 
             var targetType = expectedType.Value;
@@ -522,7 +497,7 @@ namespace OfflineFirstAccess.Data
                 await connection.OpenAsync();
                 var command = new OleDbCommand("SELECT ConfigValue FROM _SyncConfig WHERE ConfigKey = @Key", connection);
                 // _SyncConfig.ConfigKey is TEXT(255)
-                command.Parameters.Add(new OleDbParameter("@Key", OleDbType.VarWChar) { Value = key ?? (object)DBNull.Value });
+                command.Parameters.Add(CreateParameter("@Key", key, OleDbType.VarWChar));
                 var result = await command.ExecuteScalarAsync();
                 return result?.ToString();
             }
@@ -536,15 +511,15 @@ namespace OfflineFirstAccess.Data
                 
                 var updateCommand = new OleDbCommand("UPDATE _SyncConfig SET ConfigValue = @Value WHERE ConfigKey = @Key", connection);
                 // ConfigValue is MEMO (LongVarWChar), ConfigKey is TEXT(255)
-                updateCommand.Parameters.Add(new OleDbParameter("@Value", OleDbType.LongVarWChar) { Value = (object)value ?? DBNull.Value });
-                updateCommand.Parameters.Add(new OleDbParameter("@Key", OleDbType.VarWChar) { Value = key ?? (object)DBNull.Value });
+                updateCommand.Parameters.Add(CreateParameter("@Value", value, OleDbType.LongVarWChar));
+                updateCommand.Parameters.Add(CreateParameter("@Key", key, OleDbType.VarWChar));
                 int rowsAffected = await updateCommand.ExecuteNonQueryAsync();
 
                 if (rowsAffected == 0)
                 {
                     var insertCommand = new OleDbCommand("INSERT INTO _SyncConfig (ConfigKey, ConfigValue) VALUES (@Key, @Value)", connection);
-                    insertCommand.Parameters.Add(new OleDbParameter("@Key", OleDbType.VarWChar) { Value = key ?? (object)DBNull.Value });
-                    insertCommand.Parameters.Add(new OleDbParameter("@Value", OleDbType.LongVarWChar) { Value = (object)value ?? DBNull.Value });
+                    insertCommand.Parameters.Add(CreateParameter("@Key", key, OleDbType.VarWChar));
+                    insertCommand.Parameters.Add(CreateParameter("@Value", value, OleDbType.LongVarWChar));
                     await insertCommand.ExecuteNonQueryAsync();
                 }
             }

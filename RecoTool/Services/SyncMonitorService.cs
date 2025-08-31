@@ -4,6 +4,7 @@ using System.Timers;
 using System.IO;
 using System.Collections.Concurrent;
 using System.Threading;
+using OfflineFirstAccess.Helpers;
 
 namespace RecoTool.Services
 {
@@ -18,6 +19,7 @@ namespace RecoTool.Services
 
         private readonly object _gate = new object();
         private Timer _timer;
+        private ElapsedEventHandler _timerHandler;
         private Func<OfflineFirstService> _serviceProvider;
         private bool _lastLockActive;
         private bool _lastNetworkAvailable;
@@ -89,7 +91,8 @@ namespace RecoTool.Services
 
                 _timer = new Timer(PollInterval.TotalMilliseconds);
                 _timer.AutoReset = true;
-                _timer.Elapsed += OnTimerElapsed;
+                _timerHandler = async (_, e) => await OnTimerElapsed(e);
+                _timer.Elapsed += _timerHandler;
                 _timer.Start();
             }
         }
@@ -100,7 +103,11 @@ namespace RecoTool.Services
             {
                 if (_timer != null)
                 {
-                    _timer.Elapsed -= OnTimerElapsed;
+                    if (_timerHandler != null)
+                    {
+                        _timer.Elapsed -= _timerHandler;
+                        _timerHandler = null;
+                    }
                     _timer.Stop();
                     _timer.Dispose();
                     _timer = null;
@@ -108,7 +115,7 @@ namespace RecoTool.Services
             }
         }
 
-        private async void OnTimerElapsed(object sender, ElapsedEventArgs e)
+        private async Task OnTimerElapsed(ElapsedEventArgs e)
         {
             if (Interlocked.CompareExchange(ref _isTickRunning, 1, 0) == 1) return;
             try
@@ -118,7 +125,12 @@ namespace RecoTool.Services
 
                 // Check lock state
                 bool lockActive = false;
-                try { lockActive = await svc.IsGlobalLockActiveAsync(); } catch { lockActive = false; }
+                try { lockActive = await svc.IsGlobalLockActiveAsync(); }
+                catch (Exception ex)
+                {
+                    lockActive = false;
+                    LogManager.Warning("[SYNC-MONITOR] Unable to query global lock state", ex);
+                }
 
                 // Publish state change events
                 if (lockActive != _lastLockActive)
@@ -134,7 +146,12 @@ namespace RecoTool.Services
 
                 // Check network availability
                 bool networkAvailable = false;
-                try { networkAvailable = svc.IsNetworkSyncAvailable; } catch { networkAvailable = false; }
+                try { networkAvailable = svc.IsNetworkSyncAvailable; }
+                catch (Exception ex)
+                {
+                    networkAvailable = false;
+                    LogManager.Warning("[SYNC-MONITOR] Unable to query network availability", ex);
+                }
                 if (networkAvailable && !_lastNetworkAvailable)
                 {
                     _lastNetworkAvailable = true;
@@ -171,7 +188,10 @@ namespace RecoTool.Services
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    LogManager.Error("[SYNC-MONITOR] Periodic push failed", ex);
+                }
 
                 // Lightweight remote reconciliation DB change check (timestamp + length) every minute
                 try
@@ -187,8 +207,18 @@ namespace RecoTool.Services
                             {
                                 string remoteDir = null;
                                 string prefix = null;
-                                try { remoteDir = svc.GetParameter("CountryDatabaseDirectory"); } catch { remoteDir = null; }
-                                try { prefix = svc.GetParameter("CountryDatabasePrefix"); } catch { prefix = null; }
+                                try { remoteDir = svc.GetParameter("CountryDatabaseDirectory"); }
+                                catch (Exception ex)
+                                {
+                                    remoteDir = null;
+                                    LogManager.Warning("[SYNC-MONITOR] Failed to get CountryDatabaseDirectory", ex);
+                                }
+                                try { prefix = svc.GetParameter("CountryDatabasePrefix"); }
+                                catch (Exception ex)
+                                {
+                                    prefix = null;
+                                    LogManager.Warning("[SYNC-MONITOR] Failed to get CountryDatabasePrefix", ex);
+                                }
                                 if (string.IsNullOrWhiteSpace(prefix)) prefix = "DB_";
                                 if (!string.IsNullOrWhiteSpace(remoteDir))
                                 {
@@ -210,10 +240,16 @@ namespace RecoTool.Services
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    LogManager.Error("[SYNC-MONITOR] Remote reconciliation check failed", ex);
+                }
 
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogManager.Error("[SYNC-MONITOR] Timer tick failed", ex);
+            }
             finally
             {
                 Interlocked.Exchange(ref _isTickRunning, 0);

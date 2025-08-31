@@ -65,13 +65,11 @@ namespace RecoTool.Helpers
                     ? _workbook.Sheets[1]
                     : _workbook.Sheets[sheetName];
 
-                // Lire l'en-tête (ligne 1)
-                var headers = ReadRowHeaders(worksheet);
-                
-                // Créer le mapping des colonnes
+                // Déterminer la ligne d'en-tête (par défaut startRow - 1)
+                int headerRow = startRow - 1;
+                var headers = ReadRowHeaders(worksheet, headerRow);
                 var columnMapping = CreateColumnMapping(headers, importFields);
 
-                // Vérifier que tous les champs d'import sont bien mappés
                 if (importFields != null)
                 {
                     var expectedDestinations = importFields
@@ -85,10 +83,37 @@ namespace RecoTool.Helpers
                         .Where(d => !mappedDestinations.Contains(d))
                         .ToList();
 
+                    // Si des champs sont manquants, tenter une lecture avec en-tête en ligne 3
+                    if (missing.Any() && headerRow == 1 && worksheet.UsedRange.Rows.Count >= 3)
+                    {
+                        headerRow = 3;
+                        startRow = 4;
+                        headers = ReadRowHeaders(worksheet, headerRow);
+                        columnMapping = CreateColumnMapping(headers, importFields);
+                        mappedDestinations = new HashSet<string>(columnMapping.Values, StringComparer.OrdinalIgnoreCase);
+                        missing = expectedDestinations
+                            .Where(d => !mappedDestinations.Contains(d))
+                            .ToList();
+                    }
+
                     if (missing.Any())
                     {
                         var msg = $"Champs manquants dans le fichier Excel: {string.Join(", ", missing)}";
                         throw new Exception(msg);
+                    }
+                }
+                else if (headerRow == 1 && worksheet.UsedRange.Rows.Count >= 3)
+                {
+                    // Heuristique : choisir la ligne d'en-tête contenant le plus de valeurs
+                    var altHeaders = ReadRowHeaders(worksheet, 3);
+                    int count1 = headers.Count(h => !string.IsNullOrWhiteSpace(h));
+                    int count3 = altHeaders.Count(h => !string.IsNullOrWhiteSpace(h));
+                    if (count3 > count1)
+                    {
+                        headerRow = 3;
+                        startRow = 4;
+                        headers = altHeaders;
+                        columnMapping = CreateColumnMapping(headers, importFields);
                     }
                 }
 
@@ -160,9 +185,9 @@ namespace RecoTool.Helpers
         }
 
         /// <summary>
-        /// Lit les en-têtes de colonne (ligne 1)
+        /// Lit les en-têtes de colonne à partir d'une ligne spécifiée
         /// </summary>
-        private List<string> ReadRowHeaders(Worksheet worksheet)
+        private List<string> ReadRowHeaders(Worksheet worksheet, int headerRow = 1)
         {
             var headers = new List<string>();
             Range usedRange = null;
@@ -172,7 +197,7 @@ namespace RecoTool.Helpers
                 usedRange = worksheet.UsedRange;
                 var lastColumn = usedRange.Columns.Count;
 
-                headerRange = worksheet.Range[worksheet.Cells[1, 1], worksheet.Cells[1, lastColumn]];
+                headerRange = worksheet.Range[worksheet.Cells[headerRow, 1], worksheet.Cells[headerRow, lastColumn]];
                 object raw = headerRange.Value2;
 
                 if (raw is object[,] values)
@@ -295,7 +320,19 @@ namespace RecoTool.Helpers
                 throw new InvalidOperationException("Aucun fichier Excel ouvert.");
 
             var worksheet = _workbook.Sheets[1] as Worksheet;
-            return ReadRowHeaders(worksheet);
+
+            var headers1 = ReadRowHeaders(worksheet, 1);
+            List<string> headers3 = null;
+            int count1 = headers1.Count(h => !string.IsNullOrWhiteSpace(h));
+            if (worksheet.UsedRange.Rows.Count >= 3)
+            {
+                headers3 = ReadRowHeaders(worksheet, 3);
+                int count3 = headers3.Count(h => !string.IsNullOrWhiteSpace(h));
+                if (count3 > count1)
+                    headers1 = headers3;
+            }
+
+            return headers1;
         }
 
         /// <summary>
@@ -310,11 +347,25 @@ namespace RecoTool.Helpers
 
             var sampleData = new List<List<object>>();
             var worksheet = _workbook.Sheets[1] as Worksheet;
-            var lastColumn = worksheet.UsedRange.Columns.Count;
-            var lastRow = Math.Min(worksheet.UsedRange.Rows.Count, maxRows + 1); // +1 pour ignorer l'en-tête
+            var usedRange = worksheet.UsedRange;
+            int lastColumn = usedRange.Columns.Count;
+            int totalRows = usedRange.Rows.Count;
 
-            // Commencer à la ligne 2 pour ignorer l'en-tête
-            for (int row = 2; row <= lastRow; row++)
+            int headerRow = 1;
+            if (totalRows >= 3)
+            {
+                var headers1 = ReadRowHeaders(worksheet, 1);
+                var headers3 = ReadRowHeaders(worksheet, 3);
+                int count1 = headers1.Count(h => !string.IsNullOrWhiteSpace(h));
+                int count3 = headers3.Count(h => !string.IsNullOrWhiteSpace(h));
+                if (count3 > count1)
+                    headerRow = 3;
+            }
+
+            int startRow = headerRow + 1;
+            int lastRow = Math.Min(totalRows, startRow + maxRows - 1);
+
+            for (int row = startRow; row <= lastRow; row++)
             {
                 var rowData = new List<object>();
                 for (int col = 1; col <= lastColumn; col++)

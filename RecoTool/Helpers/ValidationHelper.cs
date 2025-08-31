@@ -117,7 +117,9 @@ namespace RecoTool.Helpers
         }
 
         /// <summary>
-        /// Valide le format d'un ID d'invoice (BGIYYYYMMXXXXXXX)
+        /// Valide le format d'un ID d'invoice :
+        /// BGI + année sur 4 chiffres + mois (01 à 12) + numéro sur 7 chiffres.
+        /// Exemple : BGI2024010000000
         /// </summary>
         /// <param name="invoiceId">ID d'invoice à valider</param>
         /// <returns>True si le format est valide</returns>
@@ -126,8 +128,8 @@ namespace RecoTool.Helpers
             if (string.IsNullOrEmpty(invoiceId))
                 return false;
 
-            // Pattern: BGI + année (4 chiffres) + mois (2 chiffres) + numéro (X chiffres)
-            return Regex.IsMatch(invoiceId, @"^BGI\d{6,}$");
+            // Pattern: BGI + année (4 chiffres) + mois (01-12) + numéro (7 chiffres)
+            return Regex.IsMatch(invoiceId, @"^BGI\d{4}(0[1-9]|1[0-2])\d{7}$");
         }
 
         /// <summary>

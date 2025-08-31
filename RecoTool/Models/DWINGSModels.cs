@@ -10,6 +10,7 @@ namespace RecoTool.Models
     {
         public string GUARANTEE_ID { get; set; }
         public string GUARANTEE_STATUS { get; set; }
+        public string GUARANTEE_TYPE { get; set; }
         public string NATURE { get; set; }
         public string EVENT_STATUS { get; set; }
         public DateTime? EVENT_EFFECTIVEDATE { get; set; }

@@ -260,9 +260,10 @@ namespace RecoTool.Services
                                     g.OUTSTANDING_AMOUNT AS GUARANTEE_AMOUNT,
                                     g.CURRENCYNAME AS GUARANTEE_CURRENCY,
                                     g.GUARANTEE_STATUS AS GUARANTEE_STATUS,
+                                    g.GUARANTEE_TYPE AS GUARANTEE_TYPE,
                                    dInv.INVOICE_ID AS INVOICE_ID,
-                                   NULL AS COMMISSION_ID,
-                                   g.GUARANTEE_ID,
+                                    NULL AS COMMISSION_ID,
+                                    g.GUARANTEE_ID,
 
                                   g.NATURE AS G_NATURE,
                                   g.EVENT_STATUS AS G_EVENT_STATUS,
@@ -291,6 +292,7 @@ namespace RecoTool.Services
                                   g.CONTROLER AS G_CONTROLER,
                                   g.AUTOMATICBOOKOFF AS G_AUTOMATICBOOKOFF,
                                   g.NATUREOFDEAL AS G_NATUREOFDEAL,
+                                  g.GUARANTEE_TYPE AS G_GUARANTEE_TYPE,
 
                                   dInv.REQUESTED_INVOICE_AMOUNT AS I_REQUESTED_INVOICE_AMOUNT,
                                   dInv.SENDER_NAME AS I_SENDER_NAME,

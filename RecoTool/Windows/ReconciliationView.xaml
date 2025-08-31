@@ -981,6 +981,7 @@
                             <DataGridTextColumn Header="DW Syndicate" Binding="{Binding SYNDICATE}" Width="100"/>
                             <DataGridTextColumn Header="DW Currency" Binding="{Binding GUARANTEE_CURRENCY}" Width="80"/>
                             <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120"/>
+                            <DataGridTextColumn Header="Guarantee Type" Binding="{Binding G_GUARANTEE_TYPE}" Width="130"/>
                             
                             <!-- DWINGS Guarantee extended fields -->
                             <DataGridTextColumn Header="G Booking" Binding="{Binding G_BOOKING}" Width="110"/>

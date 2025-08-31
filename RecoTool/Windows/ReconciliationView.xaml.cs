@@ -993,6 +993,7 @@ namespace RecoTool.Windows
             public string EventNum { get; set; }
             public string DwGuaranteeId { get; set; }
             public string DwCommissionId { get; set; }
+            public string GuaranteeType { get; set; }
         }
 
         private FilterPreset GetCurrentFilterPreset()
@@ -1014,7 +1015,8 @@ namespace RecoTool.Windows
                 RawLabel = _filterRawLabel,
                 EventNum = _filterEventNum,
                 DwGuaranteeId = _filterDwGuaranteeId,
-                DwCommissionId = _filterDwCommissionId
+                DwCommissionId = _filterDwCommissionId,
+                GuaranteeType = _filterGuaranteeType
             };
         }
 
@@ -1044,6 +1046,7 @@ namespace RecoTool.Windows
                 FilterEventNum = p.EventNum;
                 FilterDwGuaranteeId = p.DwGuaranteeId;
                 FilterDwCommissionId = p.DwCommissionId;
+                FilterGuaranteeType = p.GuaranteeType;
             }
             catch { }
         }
@@ -2818,6 +2821,16 @@ namespace RecoTool.Windows
         {
             string Esc(string s) => string.IsNullOrEmpty(s) ? s : s.Replace("'", "''");
             string DateLit(DateTime d) => "#" + d.ToString("yyyy-MM-dd") + "#"; // Access date literal
+            string MapUiToDb(string s)
+            {
+                switch ((s ?? string.Empty).Trim().ToUpperInvariant())
+                {
+                    case "REISSUANCE": return "REISSU";
+                    case "ISSUANCE": return "ISSU";
+                    case "ADVISING": return "NOTIF";
+                    default: return s;
+                }
+            }
 
             var parts = new List<string>();
             if (!string.IsNullOrWhiteSpace(FilterAccountId)) parts.Add($"Account_ID = '{Esc(FilterAccountId)}'");
@@ -2846,6 +2859,12 @@ namespace RecoTool.Windows
             {
                 var gs = Esc(FilterGuaranteeStatus);
                 parts.Add($"GUARANTEE_STATUS LIKE '%{gs}%'");
+            }
+            // Persist Guarantee Type filter from DW Guarantee (exact match to defined values)
+            if (!string.IsNullOrWhiteSpace(FilterGuaranteeType))
+            {
+                var gt = Esc(MapUiToDb(FilterGuaranteeType));
+                parts.Add($"GUARANTEE_TYPE = '{gt}'");
             }
             if (!string.IsNullOrWhiteSpace(FilterDwGuaranteeId)) parts.Add($"DWINGS_GuaranteeID LIKE '%{Esc(FilterDwGuaranteeId)}%'");
             if (!string.IsNullOrWhiteSpace(FilterDwCommissionId)) parts.Add($"DWINGS_CommissionID LIKE '%{Esc(FilterDwCommissionId)}%'");
@@ -2908,6 +2927,19 @@ namespace RecoTool.Windows
             // Restore Guarantee Status
             var gs = GetString(@"GUARANTEE_STATUS\s+LIKE\s+'%([^']*)%'");
             if (!string.IsNullOrWhiteSpace(gs)) FilterGuaranteeStatus = gs;
+            // Restore Guarantee Type (exact match)
+            string MapDbToUi(string s)
+            {
+                switch ((s ?? string.Empty).Trim().ToUpperInvariant())
+                {
+                    case "REISSU": return "REISSUANCE";
+                    case "ISSU": return "ISSUANCE";
+                    case "NOTIF": return "ADVISING";
+                    default: return s;
+                }
+            }
+            var gt = GetString(@"GUARANTEE_TYPE\s*=\s*'([^']*)'");
+            if (!string.IsNullOrWhiteSpace(gt)) FilterGuaranteeType = MapDbToUi(gt);
             var hasMatched = Regex.IsMatch(s, @"\(\(DWINGS_GuaranteeID\s+Is\s+Not\s+Null\s+AND\s+DWINGS_GuaranteeID\s+<>\s+''\)\s+OR\s+\(DWINGS_CommissionID\s+Is\s+Not\s+Null\s+AND\s+DWINGS_CommissionID\s+<>\s+''\)\)", RegexOptions.IgnoreCase);
             var hasUnmatched = Regex.IsMatch(s, @"\(\(DWINGS_GuaranteeID\s+Is\s+Null\s+OR\s+DWINGS_GuaranteeID\s+=\s+''\)\s+AND\s+\(DWINGS_CommissionID\s+Is\s+Null\s+OR\s+DWINGS_CommissionID\s+=\s+''\)\)", RegexOptions.IgnoreCase);
             _filterStatus = hasMatched ? "Matched" : hasUnmatched ? "Unmatched" : _filterStatus;

@@ -24,7 +24,8 @@ namespace RecoTool.Services
         #region Fields
 
         private readonly OfflineFirstService _offlineFirstService;
-        private readonly TransformationService _transformationService;
+        private TransformationService _transformationService;
+        private bool _initialized;
         private readonly string _currentUser;
 
         // Heuristic constants (centralized)
@@ -42,10 +43,14 @@ namespace RecoTool.Services
         {
             _offlineFirstService = offlineFirstService ?? throw new ArgumentNullException(nameof(offlineFirstService));
             _currentUser = Environment.UserName;
+        }
 
-            // Initialiser TransformationService avec les pays du service
-            var countries = _offlineFirstService.GetCountries().Result;
+        private async Task EnsureInitializedAsync()
+        {
+            if (_initialized) return;
+            var countries = await _offlineFirstService.GetCountries().ConfigureAwait(false);
             _transformationService = new TransformationService(countries);
+            _initialized = true;
         }
 
         /// <summary>
@@ -87,16 +92,17 @@ namespace RecoTool.Services
             var result = new ImportResult { CountryId = countryId, StartTime = DateTime.UtcNow };
             try
             {
+                await EnsureInitializedAsync().ConfigureAwait(false);
                 progressCallback?.Invoke(isMultiFile ? "Validating files..." : "Validating file...", 0);
                 var files = ValidateFiles(filePaths, isMultiFile, result);
                 if (result.Errors.Any()) return result;
 
                 progressCallback?.Invoke("Loading configurations...", 10);
-                var (country, importFields, transforms) = await LoadConfigurationsAsync(countryId, result);
+                var (country, importFields, transforms) = await LoadConfigurationsAsync(countryId, result).ConfigureAwait(false);
                 if (result.Errors.Any()) return result;
 
                 progressCallback?.Invoke("Preparing environment (single global lock: pre-sync, import, publish)...", 15);
-                var switched = await _offlineFirstService.SetCurrentCountryAsync(countryId, suppressPush: true);
+                var switched = await _offlineFirstService.SetCurrentCountryAsync(countryId, suppressPush: true).ConfigureAwait(false);
                 if (!switched)
                 {
                     result.Errors.Add($"Unable to initialize local database for {countryId}");
@@ -109,9 +115,9 @@ namespace RecoTool.Services
                     {
                         if (globalLock == null) return result;
 
-                        if (!await PrepareEnvironmentAsync(countryId, result)) return result;
+                        if (!await PrepareEnvironmentAsync(countryId, result).ConfigureAwait(false)) return result;
 
-                        var allRaw = await ReadExcelFilesAsync(files, importFields, isMultiFile, progressCallback);
+                        var allRaw = await ReadExcelFilesAsync(files, importFields, isMultiFile, progressCallback).ConfigureAwait(false);
                         if (!allRaw.Any())
                         {
                             result.Errors.Add(isMultiFile ? "No data found in the Excel files." : "No data found in the Excel file.");
@@ -141,14 +147,14 @@ namespace RecoTool.Services
                             return result;
                         }
 
-                        var valid = await TransformAndValidateAsync(filtered, transforms, country, result, progressCallback);
+                        var valid = await TransformAndValidateAsync(filtered, transforms, country, result, progressCallback).ConfigureAwait(false);
                         if (!valid.Any())
                         {
                             result.Errors.Add("No valid data after transformation and validation.");
                             return result;
                         }
 
-                        await SynchronizeAsync(valid, countryId, result, progressCallback);
+                        await SynchronizeAsync(valid, countryId, result, progressCallback).ConfigureAwait(false);
                     }
                 }
                 catch (Exception preCheckEx)

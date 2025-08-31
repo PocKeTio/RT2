@@ -101,6 +101,17 @@ namespace RecoTool.Services
             }
         }
 
+        private static async Task CopyFileAsync(string sourceFileName, string destinationFileName, bool overwrite, CancellationToken cancellationToken = default)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationFileName) ?? string.Empty);
+            var mode = overwrite ? FileMode.Create : FileMode.CreateNew;
+            using (var source = new FileStream(sourceFileName, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true))
+            using (var dest = new FileStream(destinationFileName, mode, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+            {
+                await source.CopyToAsync(dest, 81920, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         public sealed class SyncStateChangedEventArgs : EventArgs
         {
             public string CountryId { get; set; }
@@ -270,7 +281,7 @@ namespace RecoTool.Services
             {
                 try
                 {
-                    var pending = await GetUnsyncedChangeCountAsync(countryId);
+                    var pending = await GetUnsyncedChangeCountAsync(countryId).ConfigureAwait(false);
                     if (pending <= 0)
                     {
                         return; // nothing to do
@@ -285,12 +296,12 @@ namespace RecoTool.Services
 
             _lastBgSyncRequestUtc[countryId] = now;
 
-            // Fire-and-forget, but work is coalesced by _activeSyncs inside SynchronizeAsync
-            _ = Task.Run(async () =>
+            // Enqueue background sync work instead of spinning a separate thread
+            BackgroundTaskQueue.Instance.Enqueue(async () =>
             {
                 try
                 {
-                    await SynchronizeAsync(countryId, cancellationToken, null);
+                    await SynchronizeAsync(countryId, cancellationToken, null).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -370,9 +381,9 @@ namespace RecoTool.Services
                         Directory.CreateDirectory(Path.GetDirectoryName(localPath) ?? string.Empty);
                         // Copie atomique au mieux: copier vers temp puis replace
                         string tmp = localPath + ".tmp_copy";
-                        File.Copy(networkPath, tmp, true);
+                        await CopyFileAsync(networkPath, tmp, overwrite: true).ConfigureAwait(false);
                         // Remplace en conservant ACL; File.Replace nécessite un backup, sinon fallback move
-                        try { await FileReplaceWithRetriesAsync(tmp, localPath, localPath + ".bak", maxAttempts: 5, initialDelayMs: 200); }
+                        try { await FileReplaceWithRetriesAsync(tmp, localPath, localPath + ".bak", maxAttempts: 5, initialDelayMs: 200).ConfigureAwait(false); }
                         catch
                         {
                             try { if (File.Exists(localPath)) File.Delete(localPath); } catch { }
@@ -383,7 +394,7 @@ namespace RecoTool.Services
                     }
                 }
                 catch { /* best-effort */ }
-                await Task.CompletedTask;
+                await Task.CompletedTask.ConfigureAwait(false);
             }
 
             // AMBRE (préférez ZIP si présent)
@@ -4348,8 +4359,8 @@ namespace RecoTool.Services
                 string suffix = string.IsNullOrWhiteSpace(label) ? "PreImport" : label.Trim();
                 string backupPath = Path.Combine(savedDir, $"{baseName}_{suffix}_{timeStamp}.accdb");
 
-                // Copier via thread pool
-                await Task.Run(() => File.Copy(localDbPath, backupPath, true));
+                // Copier de manière asynchrone
+                await CopyFileAsync(localDbPath, backupPath, overwrite: true).ConfigureAwait(false);
                 System.Diagnostics.Debug.WriteLine($"RECON: sauvegarde locale créée: {backupPath}");
             }
             catch (Exception ex)
@@ -4466,7 +4477,7 @@ namespace RecoTool.Services
                     if (needZipCopy)
                     {
                         string tmpZip = localZipPath + ".tmp_copy";
-                        await Task.Run(() => File.Copy(networkZipPath, tmpZip, true));
+                        await CopyFileAsync(networkZipPath, tmpZip, overwrite: true).ConfigureAwait(false);
                         try { await FileReplaceWithRetriesAsync(tmpZip, localZipPath, localZipPath + ".bak", maxAttempts: 5, initialDelayMs: 250); }
                         catch
                         {
@@ -4506,7 +4517,7 @@ namespace RecoTool.Services
             string tempLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.tmp_{Guid.NewGuid():N}");
             string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
 
-            await Task.Run(() => File.Copy(networkDbPath, tempLocal, true));
+            await CopyFileAsync(networkDbPath, tempLocal, overwrite: true).ConfigureAwait(false);
             if (File.Exists(localDbPath))
                 await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300);
             else
@@ -4549,7 +4560,7 @@ namespace RecoTool.Services
             string tempLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.tmp_{Guid.NewGuid():N}");
             string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
 
-            await Task.Run(() => File.Copy(networkDbPath, tempLocal, true));
+            await CopyFileAsync(networkDbPath, tempLocal, overwrite: true).ConfigureAwait(false);
             if (File.Exists(localDbPath))
                 await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300);
             else
@@ -4614,7 +4625,7 @@ namespace RecoTool.Services
             string tempLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.tmp_{Guid.NewGuid():N}");
             string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
 
-            await Task.Run(() => File.Copy(networkDbPath, tempLocal, true));
+            await CopyFileAsync(networkDbPath, tempLocal, overwrite: true).ConfigureAwait(false);
             if (File.Exists(localDbPath))
                 await FileReplaceWithRetriesAsync(tempLocal, localDbPath, backupLocal, maxAttempts: 5, initialDelayMs: 300);
             else

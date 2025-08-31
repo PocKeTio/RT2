@@ -88,123 +88,36 @@ namespace RecoTool.Services
             try
             {
                 progressCallback?.Invoke(isMultiFile ? "Validating files..." : "Validating file...", 0);
-
-                // 1) Validation des fichiers
-                var files = (filePaths ?? Array.Empty<string>()).Where(p => !string.IsNullOrWhiteSpace(p)).Take(2).ToArray();
-                if (files.Length == 0)
-                {
-                    result.Errors.Add("No files provided");
-                    return result;
-                }
-                foreach (var fp in files)
-                {
-                    var errs = ValidationHelper.ValidateImportFile(fp);
-                    if (errs.Any())
-                    {
-                        if (isMultiFile)
-                            result.Errors.AddRange(errs.Select(e => $"{Path.GetFileName(fp)}: {e}"));
-                        else
-                            result.Errors.AddRange(errs);
-                    }
-                }
+                var files = ValidateFiles(filePaths, isMultiFile, result);
                 if (result.Errors.Any()) return result;
 
-                // 2) Chargement des configurations
                 progressCallback?.Invoke("Loading configurations...", 10);
-                var country = await LoadCountryConfiguration(countryId);
-                var importFields = await LoadImportFieldsConfiguration();
-                var transforms = await LoadTransformConfigurations();
-                if (country == null)
+                var (country, importFields, transforms) = await LoadConfigurationsAsync(countryId, result);
+                if (result.Errors.Any()) return result;
+
+                progressCallback?.Invoke("Preparing environment (single global lock: pre-sync, import, publish)...", 15);
+                var switched = await _offlineFirstService.SetCurrentCountryAsync(countryId, suppressPush: true);
+                if (!switched)
                 {
-                    result.Errors.Add($"Configuration not found for country: {countryId}");
+                    result.Errors.Add($"Unable to initialize local database for {countryId}");
                     return result;
                 }
 
-                // 3) Préparation + Import sous UN SEUL verrou global (préflight -> lecture -> apply/publish)
-                progressCallback?.Invoke("Preparing environment (single global lock: pre-sync, import, publish)...", 15);
                 try
                 {
-                    var switched = await _offlineFirstService.SetCurrentCountryAsync(countryId, suppressPush: true);
-                    if (!switched)
+                    using (var globalLock = await AcquireGlobalLockAsync(countryId, result))
                     {
-                        result.Errors.Add($"Unable to initialize local database for {countryId}");
-                        return result;
-                    }
+                        if (globalLock == null) return result;
 
-                    // Verrou global unique pour tout le processus d'import
-                    var lockWaitStart = DateTime.UtcNow;
-                    var lockTimeout = TimeSpan.FromMinutes(2);
-                    LogManager.Info($"Attempting to acquire global lock for {countryId} (full import) with {lockTimeout.TotalSeconds} sec wait...");
+                        if (!await PrepareEnvironmentAsync(countryId, result)) return result;
 
-                    var acquireTask = _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", TimeSpan.FromMinutes(30));
-                    var completed = await Task.WhenAny(acquireTask, Task.Delay(lockTimeout)) == acquireTask;
-                    if (!completed)
-                    {
-                        var waited = DateTime.UtcNow - lockWaitStart;
-                        var msg = $"Unable to obtain global lock for {countryId} within the allotted time ({lockTimeout.TotalSeconds} sec). Please try again.";
-                        LogManager.Error($"Timeout ({waited.TotalSeconds:F0}s) while waiting for global lock for {countryId}. Operation canceled.", null);
-                        result.Errors.Add(msg);
-                        return result;
-                    }
-
-                    using (var globalLock = await acquireTask)
-                    {
-                        if (globalLock == null)
-                        {
-                            result.Errors.Add($"Unable to acquire global lock for {countryId}");
-                            return result;
-                        }
-
-                        var waited = DateTime.UtcNow - lockWaitStart;
-                        LogManager.Info($"Global lock acquired for {countryId} after {waited.TotalSeconds:F0}s (full import)");
-
-                        // Préflight: pousser les changements locaux + refresh RECON local depuis réseau
-                        var unsyncedCount = await _offlineFirstService.GetUnsyncedChangeCountAsync(countryId);
-                        if (unsyncedCount > 0)
-                        {
-                            LogManager.Info($"{unsyncedCount} unsynced change(s) found. Pushing to network under global lock (reconciliation only)...");
-                            try { await _offlineFirstService.SetSyncStatusAsync("PreSync"); } catch { }
-                            try
-                            {
-                                var pushed = await _offlineFirstService.PushPendingChangesToNetworkAsync(countryId, assumeLockHeld: true);
-                                LogManager.Info($"Pushed {pushed} local change(s) to network.");
-                            }
-                            catch (Exception pushEx)
-                            {
-                                LogManager.Error("Error while pushing local reconciliation changes before import", pushEx);
-                                result.Errors.Add("Unable to push local reconciliation changes before import.");
-                                return result;
-                            }
-                        }
-
-                        try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
-                        await _offlineFirstService.CopyNetworkToLocalReconciliationAsync(countryId);
-
-                        // Lecture
-                        try { await _offlineFirstService.SetSyncStatusAsync("Importing"); } catch { }
-                        progressCallback?.Invoke(isMultiFile ? "Reading Excel files..." : "Reading Excel file...", 20);
-                        var allRaw = new List<Dictionary<string, object>>();
-                        for (int i = 0; i < files.Length; i++)
-                        {
-                            var fp = files[i];
-                            var baseStart = isMultiFile ? 20 + (i * 10) : 20;
-                            var raw = await ReadExcelFile(fp, importFields, p =>
-                            {
-                                int mapped = baseStart + (p * (isMultiFile ? 10 : 20) / 100);
-                                if (mapped > 40) mapped = 40;
-                                var label = isMultiFile ? $"Reading: {Path.GetFileName(fp)} ({p}%)" : $"Reading Excel file... ({p}%)";
-                                progressCallback?.Invoke(label, mapped);
-                            });
-                            allRaw.AddRange(raw);
-                        }
-                        progressCallback?.Invoke(isMultiFile ? "Excel files read complete" : "Excel file read complete", 40);
+                        var allRaw = await ReadExcelFilesAsync(files, importFields, isMultiFile, progressCallback);
                         if (!allRaw.Any())
                         {
                             result.Errors.Add(isMultiFile ? "No data found in the Excel files." : "No data found in the Excel file.");
                             return result;
                         }
 
-                        // Filtrer/comptes requis
                         var filtered = FilterRowsByCountryAccounts(allRaw, country);
                         if (!filtered.Any())
                         {
@@ -228,28 +141,14 @@ namespace RecoTool.Services
                             return result;
                         }
 
-                        // Transform + validate
-                        progressCallback?.Invoke("Transforming data...", 40);
-                        var transformed = await TransformData(filtered, transforms, country);
-                        progressCallback?.Invoke("Validating data...", 60);
-                        var val = ValidateTransformedData(transformed, country);
-                        result.ValidationErrors.AddRange(val.errors);
-                        var valid = val.validData;
+                        var valid = await TransformAndValidateAsync(filtered, transforms, country, result, progressCallback);
                         if (!valid.Any())
                         {
                             result.Errors.Add("No valid data after transformation and validation.");
                             return result;
                         }
 
-                        // Sync DB (sous verrou déjà détenu)
-                        progressCallback?.Invoke("Synchronizing with database...", 80);
-                        var syncResult = await SynchronizeWithDatabase(valid, countryId, performNetworkSync: true, assumeGlobalLockHeld: true);
-                        result.NewRecords = syncResult.newCount;
-                        result.UpdatedRecords = syncResult.updatedCount;
-                        result.DeletedRecords = syncResult.deletedCount;
-
-                        // Compter le nombre de lignes traitées
-                        result.ProcessedRecords = valid.Count;
+                        await SynchronizeAsync(valid, countryId, result, progressCallback);
                     }
                 }
                 catch (Exception preCheckEx)
@@ -290,7 +189,137 @@ namespace RecoTool.Services
             }
         }
 
-        
+
+
+        private string[] ValidateFiles(string[] filePaths, bool isMultiFile, ImportResult result)
+        {
+            var files = (filePaths ?? Array.Empty<string>()).Where(p => !string.IsNullOrWhiteSpace(p)).Take(2).ToArray();
+            if (files.Length == 0)
+            {
+                result.Errors.Add("No files provided");
+                return Array.Empty<string>();
+            }
+
+            foreach (var fp in files)
+            {
+                var errs = ValidationHelper.ValidateImportFile(fp);
+                if (errs.Any())
+                {
+                    if (isMultiFile)
+                        result.Errors.AddRange(errs.Select(e => $"{Path.GetFileName(fp)}: {e}"));
+                    else
+                        result.Errors.AddRange(errs);
+                }
+            }
+
+            return files;
+        }
+
+        private async Task<(Country country, List<AmbreImportField> importFields, List<AmbreTransform> transforms)> LoadConfigurationsAsync(string countryId, ImportResult result)
+        {
+            var country = await LoadCountryConfiguration(countryId);
+            var importFields = await LoadImportFieldsConfiguration();
+            var transforms = await LoadTransformConfigurations();
+            if (country == null)
+            {
+                result.Errors.Add($"Configuration not found for country: {countryId}");
+            }
+            return (country, importFields, transforms);
+        }
+
+        private async Task<IDisposable> AcquireGlobalLockAsync(string countryId, ImportResult result)
+        {
+            var lockWaitStart = DateTime.UtcNow;
+            var lockTimeout = TimeSpan.FromMinutes(2);
+            LogManager.Info($"Attempting to acquire global lock for {countryId} (full import) with {lockTimeout.TotalSeconds} sec wait...");
+
+            var acquireTask = _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", TimeSpan.FromMinutes(30));
+            var completed = await Task.WhenAny(acquireTask, Task.Delay(lockTimeout)) == acquireTask;
+            if (!completed)
+            {
+                var msg = $"Unable to obtain global lock for {countryId} within the allotted time ({lockTimeout.TotalSeconds} sec). Please try again.";
+                LogManager.Error($"Timeout ({(DateTime.UtcNow - lockWaitStart).TotalSeconds:F0}s) while waiting for global lock for {countryId}. Operation canceled.", null);
+                result.Errors.Add(msg);
+                return null;
+            }
+
+            var globalLock = await acquireTask;
+            if (globalLock == null)
+            {
+                result.Errors.Add($"Unable to acquire global lock for {countryId}");
+                return null;
+            }
+
+            LogManager.Info($"Global lock acquired for {countryId} after {(DateTime.UtcNow - lockWaitStart).TotalSeconds:F0}s (full import)");
+            return globalLock;
+        }
+
+        private async Task<bool> PrepareEnvironmentAsync(string countryId, ImportResult result)
+        {
+            var unsyncedCount = await _offlineFirstService.GetUnsyncedChangeCountAsync(countryId);
+            if (unsyncedCount > 0)
+            {
+                LogManager.Info($"{unsyncedCount} unsynced change(s) found. Pushing to network under global lock (reconciliation only)...");
+                try { await _offlineFirstService.SetSyncStatusAsync("PreSync"); } catch { }
+                try
+                {
+                    var pushed = await _offlineFirstService.PushPendingChangesToNetworkAsync(countryId, assumeLockHeld: true);
+                    LogManager.Info($"Pushed {pushed} local change(s) to network.");
+                }
+                catch (Exception pushEx)
+                {
+                    LogManager.Error("Error while pushing local reconciliation changes before import", pushEx);
+                    result.Errors.Add("Unable to push local reconciliation changes before import.");
+                    return false;
+                }
+            }
+
+            try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
+            await _offlineFirstService.CopyNetworkToLocalReconciliationAsync(countryId);
+            return true;
+        }
+
+        private async Task<List<Dictionary<string, object>>> ReadExcelFilesAsync(string[] files, IEnumerable<AmbreImportField> importFields, bool isMultiFile, Action<string, int> progressCallback)
+        {
+            try { await _offlineFirstService.SetSyncStatusAsync("Importing"); } catch { }
+            var allRaw = new List<Dictionary<string, object>>();
+            for (int i = 0; i < files.Length; i++)
+            {
+                var fp = files[i];
+                var baseStart = isMultiFile ? 20 + (i * 10) : 20;
+                var raw = await ReadExcelFile(fp, importFields, p =>
+                {
+                    int mapped = baseStart + (p * (isMultiFile ? 10 : 20) / 100);
+                    if (mapped > 40) mapped = 40;
+                    var label = isMultiFile ? $"Reading: {Path.GetFileName(fp)} ({p}%)" : $"Reading Excel file... ({p}%)";
+                    progressCallback?.Invoke(label, mapped);
+                });
+                allRaw.AddRange(raw);
+            }
+            progressCallback?.Invoke(isMultiFile ? "Excel files read complete" : "Excel file read complete", 40);
+            return allRaw;
+        }
+
+        private async Task<List<DataAmbre>> TransformAndValidateAsync(List<Dictionary<string, object>> filtered, IEnumerable<AmbreTransform> transforms, Country country, ImportResult result, Action<string, int> progressCallback)
+        {
+            progressCallback?.Invoke("Transforming data...", 40);
+            var transformed = await TransformData(filtered, transforms, country);
+            progressCallback?.Invoke("Validating data...", 60);
+            var val = ValidateTransformedData(transformed, country);
+            result.ValidationErrors.AddRange(val.errors);
+            return val.validData;
+        }
+
+        private async Task SynchronizeAsync(List<DataAmbre> valid, string countryId, ImportResult result, Action<string, int> progressCallback)
+        {
+            progressCallback?.Invoke("Synchronizing with database...", 80);
+            var syncResult = await SynchronizeWithDatabase(valid, countryId, performNetworkSync: true, assumeGlobalLockHeld: true);
+            result.NewRecords = syncResult.newCount;
+            result.UpdatedRecords = syncResult.updatedCount;
+            result.DeletedRecords = syncResult.deletedCount;
+            result.ProcessedRecords = valid.Count;
+        }
+
 
         /// <summary>
         /// Lit le fichier Excel en appliquant le mapping des champs

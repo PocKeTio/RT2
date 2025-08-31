@@ -252,7 +252,7 @@ namespace RecoTool.Windows
                 {
                     new ColumnSeries
                     {
-                        Title = "Durée moyenne (jours)",
+                        Title = "Average duration (days)",
                         Values = avgDaysValues,
                         DataLabels = true,
                         LabelPoint = cp => (cp.Y > 0 ? cp.Y.ToString("N0") : string.Empty)
@@ -261,7 +261,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de la mise à jour 'Durée avant réconciliation': {ex.Message}");
+                ShowError($"Error updating 'Duration before reconciliation': {ex.Message}");
                 DeletionDelaySeries = new SeriesCollection();
                 DeletionDelayLabels = new List<string>();
             }
@@ -315,13 +315,13 @@ namespace RecoTool.Windows
                 NewDeletedDailyLabels = labels;
                 NewDeletedDailySeries = new SeriesCollection
                 {
-                    new LineSeries { Title = "Nouveaux", Values = newPerDay, PointGeometry = null },
+                    new LineSeries { Title = "New", Values = newPerDay, PointGeometry = null },
                     new LineSeries { Title = "Deleted", Values = deletedPerDay, PointGeometry = null }
                 };
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de la mise à jour 'Nouveau vs Deleted (jour)': {ex.Message}");
+                ShowError($"Error updating 'New vs Deleted (day)': {ex.Message}");
                 NewDeletedDailySeries = new SeriesCollection();
                 NewDeletedDailyLabels = new List<string>();
             }
@@ -399,7 +399,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de la mise à jour Receivable vs Pivot par Action: {ex.Message}");
+                ShowError($"Error updating Receivable vs Pivot by Action: {ex.Message}");
                 ReceivablePivotByActionSeries = new SeriesCollection();
                 ReceivablePivotByActionLabels = new List<string>();
             }
@@ -452,7 +452,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de la mise à jour KPI × RiskyItem: {ex.Message}");
+                ShowError($"Error updating KPI × RiskyItem: {ex.Message}");
                 KpiRiskSeries = new SeriesCollection();
                 KpiRiskLabels = new List<string>();
             }
@@ -501,7 +501,7 @@ namespace RecoTool.Windows
             _currencyDistributionSeries = new SeriesCollection();
             _actionDistributionSeries = new SeriesCollection();
             _kpiRiskSeries = new SeriesCollection();
-            _statusMessage = "Prêt";
+            _statusMessage = "Ready";
             _lastUpdateTime = DateTime.Now.ToString("HH:mm:ss");
             
             // Initialiser les nouvelles propriétés de graphiques
@@ -834,7 +834,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors du chargement des données: {ex.Message}");
+                ShowError($"Error loading data: {ex.Message}");
             }
             finally
             {
@@ -902,8 +902,8 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 _usingSnapshot = false;
-                StatusMessage = "Erreur de chargement du snapshot";
-                System.Diagnostics.Debug.WriteLine($"Erreur TryLoadSnapshotAsync: {ex.Message}");
+                StatusMessage = "Snapshot load error";
+                System.Diagnostics.Debug.WriteLine($"TryLoadSnapshotAsync error: {ex.Message}");
                 return false;
             }
         }
@@ -1477,17 +1477,17 @@ namespace RecoTool.Windows
                 // Analyser la répartition des comptes pour diagnostic
                 AnalyzeAccountDistribution();
 
-                StatusMessage = $"Données chargées: {_reconciliationViewData.Count} lignes";
+                StatusMessage = $"Data loaded: {_reconciliationViewData.Count} rows";
                 LastUpdateTime = DateTime.Now.ToString("HH:mm:ss");
 
-                System.Diagnostics.Debug.WriteLine($"Données chargées via ReconciliationService: {_reconciliationViewData.Count} lignes pour {_offlineFirstService.CurrentCountryId}");
+                System.Diagnostics.Debug.WriteLine($"Data loaded via ReconciliationService: {_reconciliationViewData.Count} rows for {_offlineFirstService.CurrentCountryId}");
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Erreur lors du chargement des données: {ex.Message}");
-                StatusMessage = "Erreur de chargement des données";
+                System.Diagnostics.Debug.WriteLine($"Error loading data: {ex.Message}");
+                StatusMessage = "Data load error";
                 _reconciliationViewData = new List<ReconciliationViewData>();
-                throw new Exception($"Erreur lors du chargement des données de la base: {ex.Message}", ex);
+                throw new Exception($"Error loading database data: {ex.Message}", ex);
             }
         }
 
@@ -1517,7 +1517,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Erreur conversion DataAmbre: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"DataAmbre conversion error: {ex.Message}");
                 return null;
             }
         }
@@ -1553,7 +1553,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Erreur conversion Reconciliation: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Reconciliation conversion error: {ex.Message}");
                 return null;
             }
         }
@@ -1713,7 +1713,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de la mise à jour du graphique KPI: {ex.Message}");
+                ShowError($"Error updating KPI chart: {ex.Message}");
             }
         }
 
@@ -1766,7 +1766,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de la mise à jour du graphique devise: {ex.Message}");
+                ShowError($"Error updating currency chart: {ex.Message}");
             }
         }
 
@@ -1860,7 +1860,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de la mise à jour du graphique actions: {ex.Message}");
+                ShowError($"Error updating action chart: {ex.Message}");
             }
         }
 
@@ -1983,7 +1983,7 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 // Ne pas bloquer le dashboard si la génération des séries échoue
-                System.Diagnostics.Debug.WriteLine($"Erreur mini charts: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Mini charts error: {ex.Message}");
                 ReceivableChartData = new ChartValues<double>();
                 PivotChartData = new ChartValues<double>();
             }
@@ -2010,7 +2010,7 @@ namespace RecoTool.Windows
                                                               r.Account_ID != currentCountry.CNT_AmbrePivot).ToList();
 
                 // Log pour diagnostic
-                System.Diagnostics.Debug.WriteLine($"Répartition des comptes pour {currentCountry.CNT_Id}:");
+                System.Diagnostics.Debug.WriteLine($"Account distribution for {currentCountry.CNT_Id}:");
                 System.Diagnostics.Debug.WriteLine($"- Receivable ({currentCountry.CNT_AmbreReceivable}): {receivableData.Count} lignes, {receivableData.Sum(r => r.SignedAmount):N2}");
                 System.Diagnostics.Debug.WriteLine($"- Pivot ({currentCountry.CNT_AmbrePivot}): {pivotData.Count} lignes, {pivotData.Sum(r => r.SignedAmount):N2}");
                 if (otherData.Any())
@@ -2021,7 +2021,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Erreur lors de l'analyse de la répartition: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error analyzing distribution: {ex.Message}");
             }
         }
 
@@ -2039,13 +2039,13 @@ namespace RecoTool.Windows
                 var series = chartPoint.SeriesView as PieSeries;
                 if (series != null)
                 {
-                    MessageBox.Show($"Catégorie: {series.Title}\nValeur: {chartPoint.Y}", 
-                                   "Détail KPI", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show($"Category: {series.Title}\nValue: {chartPoint.Y}",
+                                   "KPI Detail", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de l'affichage du détail: {ex.Message}");
+                ShowError($"Error displaying detail: {ex.Message}");
             }
         }
 
@@ -2069,7 +2069,7 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 // Log silencieux - ne pas interrompre pour un TextBlock manquant
-                System.Diagnostics.Debug.WriteLine($"TextBlock '{name}' non trouvé: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"TextBlock '{name}' not found: {ex.Message}");
             }
         }
 
@@ -2085,7 +2085,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de la mise à jour des informations pays: {ex.Message}");
+                ShowError($"Error updating country info: {ex.Message}");
             }
         }
 
@@ -2104,7 +2104,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Indicateur de chargement non trouvé: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Loading indicator not found: {ex.Message}");
             }
         }
 
@@ -2115,7 +2115,7 @@ namespace RecoTool.Windows
         /// </summary>
         private void ShowError(string message)
         {
-            MessageBox.Show(message, "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
         /// <summary>
@@ -2147,7 +2147,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Erreur lors de l'ouverture de l'import: {ex.Message}", "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Error opening import: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -2163,7 +2163,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Erreur lors de l'ouverture des rapports: {ex.Message}", "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Error opening reports: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 

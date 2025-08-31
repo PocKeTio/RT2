@@ -766,9 +766,9 @@ namespace RecoTool.Windows
             }
             
             if (_validationResult?.IsValid == true)
-                parts.Add($"Validé ({_validationResult.RecordCount} lignes)");
+                parts.Add($"Validated ({_validationResult.RecordCount} rows)");
             
-            StatusSummaryText.Text = parts.Count > 0 ? string.Join(" | ", parts) : "Aucun fichier sélectionné";
+            StatusSummaryText.Text = parts.Count > 0 ? string.Join(" | ", parts) : "No file selected";
         }
 
         /// <summary>
@@ -801,11 +801,11 @@ namespace RecoTool.Windows
             try
             {
                 _cancellationTokenSource?.Cancel();
-                LogMessage("Annulation demandée...");
+                LogMessage("Cancellation requested...");
             }
             catch (Exception ex)
             {
-                LogMessage($"Erreur lors de l'annulation: {ex.Message}", true);
+                LogMessage($"Error during cancellation: {ex.Message}", true);
             }
         }
 

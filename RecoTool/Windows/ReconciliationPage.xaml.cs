@@ -72,7 +72,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowWarning($"Réconciliation post-import ignorée: {ex.Message}");
+                ShowWarning($"Post-import reconciliation ignored: {ex.Message}");
             }
             finally
             {
@@ -338,7 +338,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors du chargement des pays: {ex.Message}");
+                ShowError($"Error loading countries: {ex.Message}");
             }
         }
 
@@ -366,9 +366,9 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 if (ex is OperationCanceledException)
-                    ShowWarning("Chargement annulé.");
+                    ShowWarning("Load cancelled.");
                 else
-                    ShowError($"Erreur lors du chargement des données: {ex.Message}");
+                    ShowError($"Error loading data: {ex.Message}");
             }
             finally
             {
@@ -629,7 +629,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de la sélection du filtre: {ex.Message}");
+                ShowError($"Error selecting filter: {ex.Message}");
             }
         }
 
@@ -667,9 +667,9 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 if (ex is OperationCanceledException)
-                    ShowWarning("Chargement initial annulé.");
+                    ShowWarning("Initial load cancelled.");
                 else
-                    ShowError($"Erreur lors du chargement initial: {ex.Message}");
+                    ShowError($"Error during initial load: {ex.Message}");
             }
         }
 
@@ -736,7 +736,7 @@ namespace RecoTool.Windows
                     }
                     catch (Exception ex)
                     {
-                        ShowError($"Erreur lors de la réinitialisation du filtre: {ex.Message}");
+                        ShowError($"Error resetting filter: {ex.Message}");
                     }
                 }
             }
@@ -773,7 +773,7 @@ namespace RecoTool.Windows
                 }
                 catch (Exception ex)
                 {
-                    ShowError($"Erreur lors de la sélection de la vue: {ex.Message}");
+                    ShowError($"Error selecting view: {ex.Message}");
                 }
             }
         }
@@ -798,7 +798,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de l'ajout de vue: {ex.Message}");
+                ShowError($"Error adding view: {ex.Message}");
             }
         }
 
@@ -811,7 +811,7 @@ namespace RecoTool.Windows
             {
                 var saveFileDialog = new Microsoft.Win32.SaveFileDialog
                 {
-                    Title = "Exporter les données de réconciliation",
+                    Title = "Export reconciliation data",
                     Filter = "Fichiers Excel (*.xlsx)|*.xlsx|Fichiers CSV (*.csv)|*.csv",
                     DefaultExt = "xlsx"
                 };
@@ -823,7 +823,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de l'export: {ex.Message}");
+                ShowError($"Error during export: {ex.Message}");
             }
         }
 
@@ -836,12 +836,12 @@ namespace RecoTool.Windows
             {
                 if (string.IsNullOrEmpty(_currentCountryId))
                 {
-                    ShowWarning("Veuillez sélectionner un pays avant d'appliquer les règles.");
+                    ShowWarning("Please select a country before applying rules.");
                     return;
                 }
 
                 var result = MessageBox.Show(
-                    "Êtes-vous sûr de vouloir appliquer les règles automatiques ?\nCela peut modifier les Actions et KPI existants.",
+                    "Are you sure you want to apply automatic rules?\nThis may modify existing Actions and KPIs.",
                     "Confirmation",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
@@ -855,12 +855,12 @@ namespace RecoTool.Windows
                     await _reconciliationService.ApplyAutomaticRulesAsync(_currentCountryId);
                     await LoadDataAsync(token).ConfigureAwait(false);
                     
-                    ShowInfo("Règles automatiques appliquées avec succès.");
+                    ShowInfo("Automatic rules applied successfully.");
                 }
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de l'application des règles: {ex.Message}");
+                ShowError($"Error applying rules: {ex.Message}");
             }
             finally
             {
@@ -877,7 +877,7 @@ namespace RecoTool.Windows
             {
                 if (string.IsNullOrEmpty(_currentCountryId))
                 {
-                    ShowWarning("Veuillez sélectionner un pays avant le rapprochement automatique.");
+                    ShowWarning("Please select a country before automatic matching.");
                     return;
                 }
 
@@ -888,11 +888,11 @@ namespace RecoTool.Windows
                 var matchCount = await _reconciliationService.PerformAutomaticMatchingAsync(_currentCountryId);
                 await LoadDataAsync(token).ConfigureAwait(false);
                 
-                ShowInfo($"Rapprochement automatique terminé.\n{matchCount} éléments ont été rapprochés.");
+                ShowInfo($"Automatic matching completed.\n{matchCount} items matched.");
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors du rapprochement automatique: {ex.Message}");
+                ShowError($"Error during automatic matching: {ex.Message}");
             }
             finally
             {
@@ -945,7 +945,7 @@ namespace RecoTool.Windows
                                 // Après fin de verrou global (publication réseau d'un import), effectuer une réconciliation post-publication
                                 await ReconcileAfterImportAsync();
                                 _lastAutoSyncUtc = DateTime.UtcNow;
-                                try { ShowInfo("Réconciliation terminée après publication (fin du verrou global)"); } catch { }
+                                try { ShowInfo("Reconciliation completed after publish (global lock released)"); } catch { }
                             }
                             else
                             {
@@ -953,7 +953,7 @@ namespace RecoTool.Windows
                                 await TrySynchronizeIfSafeAsync().ConfigureAwait(false);
                                 await LoadDataAsync().ConfigureAwait(false);
                                 _lastAutoSyncUtc = DateTime.UtcNow;
-                                try { ShowInfo("Synchronisation terminée (réseau rétabli)"); } catch { }
+                                try { ShowInfo("Synchronization complete (network restored)"); } catch { }
                             }
                         })).ConfigureAwait(false);
                     }
@@ -963,8 +963,8 @@ namespace RecoTool.Windows
                         {
                             await Dispatcher.InvokeAsync(() =>
                                 ShowWarning(string.Equals(reason, "LockReleased", StringComparison.OrdinalIgnoreCase)
-                                    ? "Réconciliation échouée après libération du verrou"
-                                    : "Synchronisation échouée au rétablissement du réseau"));
+                                    ? "Reconciliation failed after lock release"
+                                    : "Synchronization failed when network restored"));
                         }
                         catch { }
                     }
@@ -1032,7 +1032,7 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 // Non-fatal
-                try { ShowWarning($"Synchronisation ignorée: {ex.Message}"); } catch { }
+                try { ShowWarning($"Synchronization skipped: {ex.Message}"); } catch { }
             }
             finally
             {
@@ -1065,11 +1065,11 @@ namespace RecoTool.Windows
             try
             {
                 // TODO: Implémenter l'export Excel/CSV
-                ShowInfo($"Export terminé vers {fileName}");
+                ShowInfo($"Export completed to {fileName}");
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de l'export: {ex.Message}");
+                ShowError($"Error during export: {ex.Message}");
             }
         }
 
@@ -1078,7 +1078,7 @@ namespace RecoTool.Windows
         /// </summary>
         private void ShowError(string message)
         {
-            MessageBox.Show(message, "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
         /// <summary>
@@ -1086,7 +1086,7 @@ namespace RecoTool.Windows
         /// </summary>
         private void ShowWarning(string message)
         {
-            MessageBox.Show(message, "Avertissement", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(message, "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
         /// <summary>
@@ -1120,7 +1120,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de l'ajout de vue: {ex.Message}");
+                ShowError($"Error adding view: {ex.Message}");
             }
         }
 
@@ -1128,7 +1128,7 @@ namespace RecoTool.Windows
         {
             if (_reconciliationService == null)
             {
-                ShowWarning("Le service de réconciliation n'est pas disponible.");
+                ShowWarning("Reconciliation service is not available.");
                 return;
             }
 
@@ -1379,7 +1379,7 @@ namespace RecoTool.Windows
                 Height = 16,
                 Margin = new Thickness(6, 0, 0, 0),
                 Padding = new Thickness(0),
-                ToolTip = "Réduire la hauteur"
+                ToolTip = "Reduce height"
             };
             btnShrink.Click += (s, e) =>
             {
@@ -1474,7 +1474,7 @@ namespace RecoTool.Windows
             var grid = new Grid();
             var textBlock = new TextBlock
             {
-                Text = "Fonctionnalité à implémenter",
+                Text = "Feature to implement",
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };

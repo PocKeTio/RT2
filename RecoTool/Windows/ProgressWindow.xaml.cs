@@ -26,7 +26,7 @@ namespace RecoTool.Windows
 
             // Initialisation des valeurs par défaut
             MainProgressBar.Value = 0;
-            StatusMessage.Text = "Préparation...";
+            StatusMessage.Text = "Preparing...";
             PercentageText.Text = "0%";
         }
 
@@ -89,7 +89,7 @@ namespace RecoTool.Windows
         /// <summary>
         /// Marque la progression comme terminée
         /// </summary>
-        public void SetCompleted(string completionMessage = "Terminé")
+        public void SetCompleted(string completionMessage = "Completed")
         {
             if (!Dispatcher.CheckAccess())
             {
@@ -101,9 +101,9 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Affiche une erreur dans la fenêtre de progression
+        /// Displays an error in the progress window
         /// </summary>
-        /// <param name="errorMessage">Message d'erreur</param>
+        /// <param name="errorMessage">Error message</param>
         public void SetError(string errorMessage)
         {
             if (!Dispatcher.CheckAccess())
@@ -114,7 +114,7 @@ namespace RecoTool.Windows
 
             StatusMessage.Text = errorMessage;
             StatusMessage.Foreground = new SolidColorBrush(Colors.Red);
-            Title = "Erreur";
+            Title = "Error";
         }
     }
 }

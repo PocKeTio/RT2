@@ -373,8 +373,6 @@ namespace RecoTool.Windows
                     {
                         // ID is ALWAYS column A. For receivable, this contains Event_Num.
                         var id = row.TryGetValue("ID", out var idv) ? idv?.ToString()?.Trim() : null;
-                        if (string.IsNullOrWhiteSpace(id))
-                            id = row.TryGetValue("Event_Num", out var ev) ? S(ev) : null; // fallback if A is missing
                         if (string.IsNullOrWhiteSpace(id)) continue;
                         row["ID"] = id;
 
@@ -413,7 +411,7 @@ namespace RecoTool.Windows
 
                 // Build DB lookup indices to resolve real IDs from Excel column A values (per sheet rules)
                 UpdateProgress(48, "Building database lookup indices...");
-                LogMessage("Building in-memory indices from T_Reconciliation for ID resolution...");
+                LogMessage("Building in-memory indices from AMBRE (T_Data_Ambre) for ID resolution...");
                 var receivableIndex = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // Event_Num (Excel A in Receivable) -> DB ID
                 var pivotIndex = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // Excel A for Pivot (concat) -> DB ID
 
@@ -430,11 +428,14 @@ namespace RecoTool.Windows
 
                 if (_offlineFirstService == null)
                     throw new InvalidOperationException("OfflineFirstService is not available.");
-                var connStrIdx = _offlineFirstService.GetCurrentLocalConnectionString();
-                using (var conn = new OleDbConnection(connStrIdx))
+                var ambrePath = _offlineFirstService.GetLocalAmbreDatabasePath();
+                if (string.IsNullOrWhiteSpace(ambrePath) || !File.Exists(ambrePath))
+                    throw new InvalidOperationException("Local AMBRE database not found. Please refresh AMBRE for the current country.");
+                var ambreConnStr = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={ambrePath};";
+                using (var conn = new OleDbConnection(ambreConnStr))
                 {
                     await conn.OpenAsync();
-                    var sql = "SELECT ID, Event_Num, RawLabel, Reconciliation_Num, ReconciliationOrigin_Num, Operation_Date FROM [T_Reconciliation]";
+                    var sql = "SELECT ID, Event_Num, RawLabel, Reconciliation_Num, ReconciliationOrigin_Num, Operation_Date FROM [T_Data_Ambre]";
                     using (var cmd = new OleDbCommand(sql, conn))
                     using (var reader = await cmd.ExecuteReaderAsync())
                     {

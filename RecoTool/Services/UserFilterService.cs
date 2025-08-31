@@ -97,31 +97,22 @@ namespace RecoTool.Services
 
         public IList<string> ListUserFilterNames()
         {
-            var names = new List<string>();
-            using (var conn = new OleDbConnection(_connString))
-            using (var cmd = new OleDbCommand("SELECT UFI_Name FROM T_Ref_User_Filter ORDER BY UFI_Name", conn))
-            {
-                conn.Open();
-                using (var rdr = cmd.ExecuteReader())
-                {
-                    while (rdr.Read())
-                    {
-                        names.Add(rdr.GetString(0));
-                    }
-                }
-            }
-            return names;
+            return ListUserFilterNames(null);
         }
 
-        public IList<string> ListUserFilterNames(string contains)
+        public IList<string> ListUserFilterNames(string contains = null)
         {
-            if (string.IsNullOrWhiteSpace(contains)) return ListUserFilterNames();
             var names = new List<string>();
             using (var conn = new OleDbConnection(_connString))
-            using (var cmd = new OleDbCommand("SELECT UFI_Name FROM T_Ref_User_Filter WHERE UFI_Name LIKE ? ORDER BY UFI_Name", conn))
+            using (var cmd = string.IsNullOrWhiteSpace(contains)
+                ? new OleDbCommand("SELECT UFI_Name FROM T_Ref_User_Filter ORDER BY UFI_Name", conn)
+                : new OleDbCommand("SELECT UFI_Name FROM T_Ref_User_Filter WHERE UFI_Name LIKE ? ORDER BY UFI_Name", conn))
             {
                 conn.Open();
-                cmd.Parameters.AddWithValue("@p1", "%" + contains + "%");
+                if (!string.IsNullOrWhiteSpace(contains))
+                {
+                    cmd.Parameters.AddWithValue("@p1", "%" + contains + "%");
+                }
                 using (var rdr = cmd.ExecuteReader())
                 {
                     while (rdr.Read())

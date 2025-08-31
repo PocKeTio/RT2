@@ -106,6 +106,7 @@
     <Compile Include="Services\Enums\KPIType.cs" />
     <Compile Include="Services\OfflineFirstService.cs" />
     <Compile Include="Services\ReconciliationService.cs" />
+    <Compile Include="Services\BackgroundTaskQueue.cs" />
     <Compile Include="Services\UserFilterService.cs" />
     <Compile Include="Services\DTOs\ReconciliationViewData.cs" />
     <Compile Include="Services\TransformationService.cs" />

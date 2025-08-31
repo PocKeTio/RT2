@@ -103,7 +103,7 @@ namespace RecoTool.Services
             var results = new List<T>();
             using (var connection = new OleDbConnection(connectionString))
             {
-                await connection.OpenAsync();
+                await connection.OpenAsync().ConfigureAwait(false);
                 using (var command = new OleDbCommand(query, connection))
                 {
                     if (parameters != null)
@@ -114,9 +114,9 @@ namespace RecoTool.Services
                         }
                     }
 
-                    using (var reader = await command.ExecuteReaderAsync())
+                    using (var reader = await command.ExecuteReaderAsync().ConfigureAwait(false))
                     {
-                        while (await reader.ReadAsync())
+                        while (await reader.ReadAsync().ConfigureAwait(false))
                         {
                             object value = reader.IsDBNull(0) ? null : reader.GetValue(0);
                             if (value == null)
@@ -775,22 +775,24 @@ namespace RecoTool.Services
         /// </summary>
         private async Task CreateMatchingReconciliationsAsync(DataAmbre receivableLine, List<DataAmbre> pivotLines)
         {
-            var receivableReco = await GetOrCreateReconciliationAsync(receivableLine.ID);
+            var receivableReco = await GetOrCreateReconciliationAsync(receivableLine.ID).ConfigureAwait(false);
 
             // Marquer comme matché et ajouter commentaire
             receivableReco.Action = (int)ActionType.Match;
             receivableReco.KPI = (int)KPIType.PaidButNotReconciled;
             receivableReco.Comments = $"Auto-matched with {pivotLines.Count} pivot line(s)";
 
-            foreach (var pivotLine in pivotLines)
+            var pivotTasks = pivotLines.Select(p => GetOrCreateReconciliationAsync(p.ID));
+            var pivotReconciliations = await Task.WhenAll(pivotTasks).ConfigureAwait(false);
+
+            foreach (var pivotReco in pivotReconciliations)
             {
-                var pivotReco = await GetOrCreateReconciliationAsync(pivotLine.ID);
                 pivotReco.Action = (int)ActionType.Match;
                 pivotReco.KPI = (int)KPIType.PaidButNotReconciled;
                 pivotReco.Comments = $"Auto-matched with receivable line {receivableLine.ID}";
             }
 
-            await SaveReconciliationsAsync(new[] { receivableReco }.Concat(pivotLines.Select(p => GetOrCreateReconciliationAsync(p.ID).Result)));
+            await SaveReconciliationsAsync(new[] { receivableReco }.Concat(pivotReconciliations)).ConfigureAwait(false);
         }
 
         #endregion
@@ -805,7 +807,7 @@ namespace RecoTool.Services
             // Lookup by ID
             var query = "SELECT * FROM T_Reconciliation WHERE ID = ? AND DeleteDate IS NULL";
             // Explicitly pass the connection string to avoid binding to the wrong overload (id mistaken for connection string)
-            var existing = await ExecuteQueryAsync<Reconciliation>(query, _connectionString, id);
+            var existing = await ExecuteQueryAsync<Reconciliation>(query, _connectionString, id).ConfigureAwait(false);
 
             if (existing.Any())
                 return existing.First();
@@ -830,7 +832,7 @@ namespace RecoTool.Services
             {
                 using (var connection = new OleDbConnection(_connectionString))
                 {
-                    await connection.OpenAsync();
+                    await connection.OpenAsync().ConfigureAwait(false);
                     using (var transaction = connection.BeginTransaction())
                     {
                         try
@@ -838,7 +840,7 @@ namespace RecoTool.Services
                             var changeTuples = new List<(string TableName, string RecordId, string OperationType)>();
                             foreach (var reconciliation in reconciliations)
                             {
-                                var op = await SaveSingleReconciliationAsync(connection, transaction, reconciliation);
+                                var op = await SaveSingleReconciliationAsync(connection, transaction, reconciliation).ConfigureAwait(false);
                                 if (!string.Equals(op, "NOOP", StringComparison.OrdinalIgnoreCase))
                                 {
                                     changeTuples.Add(("T_Reconciliation", reconciliation.ID, op));
@@ -855,13 +857,13 @@ namespace RecoTool.Services
                                     var countryId = _offlineFirstService.CurrentCountryId;
                                     if (!string.IsNullOrWhiteSpace(countryId))
                                     {
-                                        using (var session = await _offlineFirstService.BeginChangeLogSessionAsync(countryId))
+                                        using (var session = await _offlineFirstService.BeginChangeLogSessionAsync(countryId).ConfigureAwait(false))
                                         {
                                             foreach (var t in changeTuples)
                                             {
-                                                await session.AddAsync(t.TableName, t.RecordId, t.OperationType);
+                                                await session.AddAsync(t.TableName, t.RecordId, t.OperationType).ConfigureAwait(false);
                                             }
-                                            await session.CommitAsync();
+                                            await session.CommitAsync().ConfigureAwait(false);
                                         }
                                     }
                                 }
@@ -871,7 +873,7 @@ namespace RecoTool.Services
                                 // Swallow change-log errors to not block user saves
                             }
 
-                            // Background push of reconciliation changes when possible (fire-and-forget)
+                            // Background push of reconciliation changes via serialized queue
                             try
                             {
                                 if (_offlineFirstService != null)
@@ -879,9 +881,10 @@ namespace RecoTool.Services
                                     var cid = _offlineFirstService.CurrentCountryId;
                                     if (!string.IsNullOrWhiteSpace(cid))
                                     {
-                                        _ = Task.Run(async () =>
+                                        BackgroundTaskQueue.Instance.Enqueue(async () =>
                                         {
-                                            try { await _offlineFirstService.PushReconciliationIfPendingAsync(cid); } catch { }
+                                            try { await _offlineFirstService.PushReconciliationIfPendingAsync(cid).ConfigureAwait(false); }
+                                            catch { }
                                         });
                                     }
                                 }
@@ -915,7 +918,7 @@ namespace RecoTool.Services
             using (var checkCmd = new OleDbCommand(checkQuery, connection, transaction))
             {
                 checkCmd.Parameters.AddWithValue("@ID", reconciliation.ID);
-                var exists = (int)await checkCmd.ExecuteScalarAsync() > 0;
+                var exists = (int)await checkCmd.ExecuteScalarAsync().ConfigureAwait(false) > 0;
 
                 // If the row exists, compare business fields to avoid no-op updates
                 if (exists)
@@ -930,9 +933,9 @@ namespace RecoTool.Services
                                 [MbawData], [SpiritData]
                               FROM T_Reconciliation WHERE [ID] = ?", connection, transaction);
                     selectCmd.Parameters.AddWithValue("@ID", reconciliation.ID);
-                    using (var rdr = await selectCmd.ExecuteReaderAsync())
+                    using (var rdr = await selectCmd.ExecuteReaderAsync().ConfigureAwait(false))
                     {
-                        if (await rdr.ReadAsync())
+                        if (await rdr.ReadAsync().ConfigureAwait(false))
                         {
                             object DbVal(int i) => rdr.IsDBNull(i) ? null : rdr.GetValue(i);
                             bool Equal(object a, object b) => (a == null && b == null) || (a != null && a.Equals(b));
@@ -1118,7 +1121,7 @@ namespace RecoTool.Services
                         }
                         catch { }
 
-                        await cmd.ExecuteNonQueryAsync();
+                            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                         // Encode changed fields for partial update during sync
                         var op = $"UPDATE({string.Join(",", changed)})";
                         LogManager.Debug($"Reconciliation UPDATE operation encoded: {op}");
@@ -1144,7 +1147,7 @@ namespace RecoTool.Services
                     {
                         AddReconciliationParameters(cmd, reconciliation, isInsert: true);
                         LogManager.Debug($"Reconciliation INSERT: ID={reconciliation.ID}");
-                        await cmd.ExecuteNonQueryAsync();
+                            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                         return "INSERT";
                     }
                 }
@@ -1603,7 +1606,7 @@ namespace RecoTool.Services
                 cmd.Parameters.AddWithValue("@p2", _currentUser ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@p3", sql ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@p4", columnsJson ?? (object)DBNull.Value);
-                await cmd.ExecuteNonQueryAsync();
+                            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                 // Retrieve autonumber (Access specific)
                 var idCmd = new OleDbCommand("SELECT @@IDENTITY", connection);
                 var obj = await idCmd.ExecuteScalarAsync();
@@ -1752,7 +1755,7 @@ namespace RecoTool.Services
         /// </summary>
         private async Task<List<T>> ExecuteQueryAsync<T>(string query, params object[] parameters) where T : new()
         {
-            return await ExecuteQueryAsync<T>(query, _connectionString, parameters);
+            return await ExecuteQueryAsync<T>(query, _connectionString, parameters).ConfigureAwait(false);
         }
 
         /// <summary>

@@ -375,7 +375,7 @@ namespace RecoTool.Services
 
                     var netFi = new FileInfo(networkPath);
                     var locFi = new FileInfo(localPath);
-                    bool needCopy = !locFi.Exists || locFi.Length != netFi.Length || locFi.LastWriteTimeUtc != netFi.LastWriteTimeUtc;
+                    bool needCopy = !locFi.Exists || !FilesAreEqual(locFi, netFi);
                     if (needCopy)
                     {
                         Directory.CreateDirectory(Path.GetDirectoryName(localPath) ?? string.Empty);
@@ -822,7 +822,7 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// Vérifie si le ZIP AMBRE local correspond au ZIP réseau (comparaison taille et LastWriteTimeUtc).
+        /// Vérifie si le ZIP AMBRE local correspond au ZIP réseau (comparaison taille et contenu).
         /// Renvoie true si le ZIP réseau est absent (rien à comparer) ou si les deux existent et correspondent, sinon false.
         /// </summary>
         public Task<bool> IsLocalAmbreZipInSyncWithNetworkAsync(string countryId)
@@ -843,7 +843,7 @@ namespace RecoTool.Services
 
                 if (!locFi.Exists) return Task.FromResult(false);
 
-                bool same = netFi.Length == locFi.Length && netFi.LastWriteTimeUtc == locFi.LastWriteTimeUtc;
+                bool same = FilesAreEqual(locFi, netFi);
                 return Task.FromResult(same);
             }
             catch
@@ -885,13 +885,13 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// Copie un ZIP depuis le réseau vers un cache local si différent (taille/date) de manière atomique. Renvoie true si une copie a été effectuée.
+        /// Copie un ZIP depuis le réseau vers un cache local si différent (taille/contenu) de manière atomique. Renvoie true si une copie a été effectuée.
         /// </summary>
         private async Task<bool> CopyZipIfDifferentAsync(string networkZipPath, string localZipPath)
         {
             var netFi = new FileInfo(networkZipPath);
             var locFi = new FileInfo(localZipPath);
-            bool needZipCopy = !locFi.Exists || locFi.Length != netFi.Length || locFi.LastWriteTimeUtc != netFi.LastWriteTimeUtc;
+            bool needZipCopy = !locFi.Exists || !FilesAreEqual(locFi, netFi);
             if (!needZipCopy) return false;
 
             Directory.CreateDirectory(Path.GetDirectoryName(localZipPath) ?? string.Empty);
@@ -905,6 +905,20 @@ namespace RecoTool.Services
             }
             try { var bak = localZipPath + ".bak"; if (File.Exists(bak)) File.Delete(bak); } catch { }
             return true;
+        }
+
+        private static bool FilesAreEqual(FileInfo first, FileInfo second)
+        {
+            try
+            {
+                if (!first.Exists || !second.Exists) return false;
+                if (first.Length != second.Length) return false;
+                return first.LastWriteTimeUtc.Date == second.LastWriteTimeUtc.Date;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>
@@ -949,7 +963,7 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// Vérifie si le ZIP DW local correspond au ZIP DW réseau (taille/date). True si pas de ZIP réseau ou si identiques.
+        /// Vérifie si le ZIP DW local correspond au ZIP DW réseau (taille/contenu). True si pas de ZIP réseau ou si identiques.
         /// </summary>
         public Task<bool> IsLocalDwZipInSyncWithNetworkAsync(string countryId)
         {
@@ -965,7 +979,7 @@ namespace RecoTool.Services
                 var netFi = new FileInfo(networkZip);
                 var locFi = new FileInfo(localZip);
                 if (!locFi.Exists) return Task.FromResult(false);
-                bool same = netFi.Length == locFi.Length && netFi.LastWriteTimeUtc == locFi.LastWriteTimeUtc;
+                bool same = FilesAreEqual(locFi, netFi);
                 return Task.FromResult(same);
             }
             catch { return Task.FromResult(false); }
@@ -4472,7 +4486,7 @@ namespace RecoTool.Services
 
                     var netFi = new FileInfo(networkZipPath);
                     var locFi = new FileInfo(localZipPath);
-                    bool needZipCopy = !locFi.Exists || locFi.Length != netFi.Length || locFi.LastWriteTimeUtc != netFi.LastWriteTimeUtc;
+                    bool needZipCopy = !locFi.Exists || !FilesAreEqual(locFi, netFi);
 
                     if (needZipCopy)
                     {
@@ -5724,7 +5738,7 @@ namespace RecoTool.Services
                         {
                             var lfi = new FileInfo(localPath);
                             var rfi = new FileInfo(remotePath);
-                            bool filesLikelyIdentical = lfi.Length == rfi.Length && lfi.LastWriteTimeUtc == rfi.LastWriteTimeUtc;
+                            bool filesLikelyIdentical = FilesAreEqual(lfi, rfi);
 
                             if (filesLikelyIdentical)
                             {

@@ -1219,7 +1219,7 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 // Log l'erreur si nécessaire
-                System.Diagnostics.Debug.WriteLine($"Erreur lors de l'initialisation des services: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error initializing services: {ex.Message}");
             }
         }
 
@@ -1547,7 +1547,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors du chargement initial: {ex.Message}");
+                ShowError($"Error during initial load: {ex.Message}");
             }
         }
 
@@ -1559,7 +1559,7 @@ namespace RecoTool.Windows
             try
             {
                 IsLoading = true;
-                UpdateStatusInfo("Chargement des données...");
+                UpdateStatusInfo("Loading data...");
                 var swTotal = Stopwatch.StartNew();
                 var swDb = Stopwatch.StartNew();
                 List<ReconciliationViewData> viewList;
@@ -1588,7 +1588,7 @@ namespace RecoTool.Windows
                 swFilter.Stop();
 
                 swTotal.Stop();
-                UpdateStatusInfo($"{ViewData?.Count ?? 0} lignes chargées");
+                UpdateStatusInfo($"{ViewData?.Count ?? 0} lines loaded");
                 try
                 {
                     LogPerf(
@@ -1600,8 +1600,8 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors du chargement des données: {ex.Message}");
-                UpdateStatusInfo("Erreur de chargement");
+                ShowError($"Error loading data: {ex.Message}");
+                UpdateStatusInfo("Load error");
             }
             finally
             {
@@ -1772,7 +1772,7 @@ namespace RecoTool.Windows
                            ?? new List<ReconciliationViewData>();
                 if (items.Count == 0)
                 {
-                    ShowError("Aucune ligne à exporter.");
+                    ShowError("No rows to export.");
                     return;
                 }
 
@@ -1780,7 +1780,7 @@ namespace RecoTool.Windows
                 var columns = ResultsDataGrid?.Columns?.Where(c => c.Visibility == Visibility.Visible).ToList() ?? new List<DataGridColumn>();
                 if (columns.Count == 0)
                 {
-                    ShowError("Aucune colonne visible à exporter.");
+                    ShowError("No visible columns to export.");
                     return;
                 }
 
@@ -1809,7 +1809,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur export: {ex.Message}");
+                ShowError($"Export error: {ex.Message}");
             }
         }
 
@@ -2117,11 +2117,11 @@ namespace RecoTool.Windows
                     try { cs = _offlineFirstService?.GetCurrentLocalConnectionString(); } catch (Exception csex) { cs = $"<error: {csex.Message}>"; }
                     string dw = null;
                     try { dw = _offlineFirstService?.GetLocalDWDatabasePath(); } catch { }
-                    ShowError($"Erreur de sauvegarde: {ex.Message}\nPays: {country} | Init: {isInit}\nCS: {cs}\nDW: {dw}");
+                    ShowError($"Save error: {ex.Message}\nCountry: {country} | Init: {isInit}\nCS: {cs}\nDW: {dw}");
                 }
                 catch
                 {
-                    ShowError($"Erreur de sauvegarde: {ex.Message}");
+                    ShowError($"Save error: {ex.Message}");
                 }
             }
         }
@@ -2162,7 +2162,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur de sauvegarde (cell): {ex.Message}");
+                ShowError($"Save error (cell): {ex.Message}");
             }
         }
 
@@ -2313,13 +2313,13 @@ namespace RecoTool.Windows
             if (!string.IsNullOrWhiteSpace(_filterAssigneeId))
                 filtered = filtered.Where(x => string.Equals(x.Assignee, _filterAssigneeId, StringComparison.OrdinalIgnoreCase));
 
-            // Mettre à jour l'affichage avec pagination (100 premières lignes), mais totaux sur tout le jeu filtré
+            // Update display with pagination (first 100 lines) but totals on full filtered set
             var filteredList = filtered.ToList();
             _filteredData = filteredList;
             _loadedCount = Math.Min(InitialPageSize, _filteredData.Count);
             ViewData = new ObservableCollection<ReconciliationViewData>(_filteredData.Take(_loadedCount));
             UpdateKpis(_filteredData); // totaux sur l'ensemble
-            UpdateStatusInfo($"{ViewData.Count} / {_filteredData.Count} lignes affichées");
+            UpdateStatusInfo($"{ViewData.Count} / {_filteredData.Count} lines displayed");
             LogAction("ApplyFilters", $"{ViewData.Count} / {_filteredData.Count} displayed | Account={_filterAccountId ?? "All"} | Status={_filterStatus ?? "All"}");
             sw.Stop();
             try { LogPerf("ApplyFilters", $"source={_allViewData.Count} | displayed={ViewData.Count} | ms={sw.ElapsedMilliseconds}"); } catch { }
@@ -2391,7 +2391,7 @@ namespace RecoTool.Windows
                     ViewData.Add(item);
                 }
                 _loadedCount += take;
-                UpdateStatusInfo($"{ViewData.Count} / {_filteredData.Count} lignes affichées");
+                UpdateStatusInfo($"{ViewData.Count} / {_filteredData.Count} lines displayed");
                 // After load, hide footer if no more data, otherwise keep visible when still at bottom
                 var btn = this.FindName("LoadMoreFooterButton") as Button;
                 if (btn != null)
@@ -2435,7 +2435,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Erreur KPI: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"KPI error: {ex.Message}");
             }
         }
 
@@ -2499,7 +2499,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Erreur lors de l'effacement des filtres: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error clearing filters: {ex.Message}");
             }
         }
 
@@ -2518,7 +2518,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors du basculement des filtres: {ex.Message}");
+                ShowError($"Error switching filters: {ex.Message}");
             }
         }
 
@@ -2533,12 +2533,12 @@ namespace RecoTool.Windows
                 if (selectedItem != null)
                 {
                     // Mettre à jour les infos de sélection si nécessaire
-                    UpdateStatusInfo($"Ligne sélectionnée: {selectedItem.ID}");
+                    UpdateStatusInfo($"Selected row: {selectedItem.ID}");
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Erreur sélection: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Selection error: {ex.Message}");
             }
         }
 
@@ -2569,7 +2569,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur lors de l'ouverture du détail: {ex.Message}");
+                ShowError($"Error opening detail: {ex.Message}");
             }
         }
 
@@ -2607,7 +2607,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Erreur lecture filtres: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Filter read error: {ex.Message}");
             }
         }
 
@@ -2618,13 +2618,13 @@ namespace RecoTool.Windows
         {
             try
             {
-                // Ouvrir le détail d'une ligne Ambre
-                MessageBox.Show($"Détail Ambre - ID: {item.ID}\nCompte: {item.Account_ID}\nMontant: {item.SignedAmount:N2}\nDevise: {item.CCY}\nDate: {item.Operation_Date:d}",
-                               "Détail Ambre", MessageBoxButton.OK, MessageBoxImage.Information);
+                // Open detail of an Ambre line
+                MessageBox.Show($"Ambre Detail - ID: {item.ID}\nAccount: {item.Account_ID}\nAmount: {item.SignedAmount:N2}\nCurrency: {item.CCY}\nDate: {item.Operation_Date:d}",
+                               "Ambre Detail", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Erreur lors de l'ouverture du détail: {ex.Message}", "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Error opening detail: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -2663,7 +2663,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Erreur mise à jour titre: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error updating title: {ex.Message}");
             }
         }
 
@@ -2685,12 +2685,12 @@ namespace RecoTool.Windows
             {
                 if (AccountInfoText != null)
                 {
-                    AccountInfoText.Text = $"Pays: {_currentCountryId ?? "N/A"} | {status}";
+                    AccountInfoText.Text = $"Country: {_currentCountryId ?? "N/A"} | {status}";
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Erreur mise à jour statut: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error updating status: {ex.Message}");
             }
         }
 
@@ -2775,11 +2775,11 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Affiche un message d'erreur
+        /// Displays an error message
         /// </summary>
         private void ShowError(string message)
         {
-            MessageBox.Show(message, "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
         private void LogAction(string action, string details)
@@ -3165,16 +3165,16 @@ namespace RecoTool.Windows
                         }
                     }
                     catch { }
-                    UpdateStatusInfo($"Filtre '{name}' supprimé");
+                    UpdateStatusInfo($"Filter '{name}' deleted");
                 }
                 else
                 {
-                    ShowError($"Le filtre '{name}' n'a pas été trouvé.");
+                    ShowError($"Filter '{name}' not found.");
                 }
             }
             catch (Exception ex)
             {
-                ShowError($"Erreur suppression filtre: {ex.Message}");
+                ShowError($"Error deleting filter: {ex.Message}");
             }
         }
     }

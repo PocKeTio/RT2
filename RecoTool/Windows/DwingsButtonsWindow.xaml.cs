@@ -38,7 +38,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"Erreur lors du chargement: {ex.Message}", "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(this, $"Error during loading: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -49,7 +49,7 @@ namespace RecoTool.Windows
                 var list = _items?.ToList() ?? new List<Reconciliation>();
                 if (list.Count == 0)
                 {
-                    MessageBox.Show(this, "Aucune ligne à traiter.", "Information", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show(this, "No rows to process.", "Information", MessageBoxButton.OK, MessageBoxImage.Information);
                     return;
                 }
 
@@ -78,11 +78,11 @@ namespace RecoTool.Windows
                     await LoadDataAsync();
                 }
 
-                MessageBox.Show(this, $"Traitement terminé. Succès: {updated.Count}/{list.Count}", "Terminé", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(this, $"Processing completed. Success: {updated.Count}/{list.Count}", "Completed", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"Erreur lors du traitement: {ex.Message}", "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(this, $"Error during processing: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
             {

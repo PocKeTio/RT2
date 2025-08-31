@@ -155,7 +155,7 @@ namespace RecoTool.Windows
         }
 
         // Barre de statut (bas à droite)
-        private string _initializationStatus = "Prêt";
+        private string _initializationStatus = "Ready";
         public string InitializationStatus
         {
             get => _initializationStatus;
@@ -257,15 +257,15 @@ namespace RecoTool.Windows
             try
             {
                 IsInitializing = true;
-                SetInitializationState("Initialisation...", Brushes.DarkOrange);
-                SetReferentialState("Initialisation...", Brushes.DarkOrange, false);
+                SetInitializationState("Initializing...", Brushes.DarkOrange);
+                SetReferentialState("Initializing...", Brushes.DarkOrange, false);
 
                 // Chargez d'abord la liste des pays via votre service
                 _countries = await _offlineFirstService.GetCountries();
 
                 if (!_countries.Any())
                 {
-                    ShowError("Erreur", "Aucun pays disponible.");
+                    ShowError("Error", "No country available.");
                     return;
                 }
                 else if (CountryComboBox.SelectedItem == null)
@@ -289,15 +289,15 @@ namespace RecoTool.Windows
                 await SetInitialCountrySelection();
 
                 // Fin d'init de la fenêtre, en attente d'une sélection de pays
-                SetInitializationState("En attente de sélection du pays", Brushes.Gray);
+                SetInitializationState("Waiting for country selection", Brushes.Gray);
                 SetReferentialState("Indisponible", Brushes.Gray, false);
                 IsInitializing = false;
             }
             catch (Exception ex)
             {
-                ShowError("Erreur d'initialisation", ex.Message);
-                SetInitializationState("Erreur d'initialisation", Brushes.Crimson);
-                SetReferentialState("Erreur", Brushes.Crimson, false);
+                ShowError("Initialization error", ex.Message);
+                SetInitializationState("Initialization error", Brushes.Crimson);
+                SetReferentialState("Error", Brushes.Crimson, false);
                 IsInitializing = false;
             }
         }
@@ -307,7 +307,7 @@ namespace RecoTool.Windows
         /// </summary>
         private async Task CopyDwingsDatabaseWithProgressAsync()
         {
-            var progressWindow = new ProgressWindow("Préparation de la base DW...");
+            var progressWindow = new ProgressWindow("Preparing DW database...");
             // Définir l'owner uniquement si la fenêtre principale est déjà affichée
             if (this.IsVisible || this.IsLoaded)
             {
@@ -339,7 +339,7 @@ namespace RecoTool.Windows
                 // Fermer la fenêtre avant d'afficher l'erreur
                 progressWindow.Topmost = false;
                 progressWindow.Close();
-                ShowError("Erreur", $"Copie de la base DW échouée: {ex.Message}");
+                ShowError("Error", $"DW database copy failed: {ex.Message}");
                 return;
             }
 
@@ -373,7 +373,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError("Avertissement", $"Impossible de définir la country initiale: {ex.Message}");
+                ShowError("Warning", $"Unable to set initial country: {ex.Message}");
             }
         }
 
@@ -473,7 +473,7 @@ namespace RecoTool.Windows
             {
                 if (string.IsNullOrWhiteSpace(_currentCountryId))
                 {
-                    ShowWarning("Sélection requise", "Veuillez sélectionner un pays avant d'ouvrir DWINGS BUTTONS.");
+                    ShowWarning("Selection required", "Please select a country before opening DWINGS BUTTONS.");
                     return;
                 }
 
@@ -486,7 +486,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError("Erreur", $"Impossible d'ouvrir DWINGS BUTTONS: {ex.Message}");
+                ShowError("Error", $"Unable to open DWINGS BUTTONS: {ex.Message}");
             }
         }
 
@@ -525,7 +525,7 @@ namespace RecoTool.Windows
                     _reconciliationService = null;
                     IsOffline = true;
                     OperationalDataStatus = "OFFLINE";
-                    SetInitializationState("Aucun pays sélectionné", Brushes.Gray);
+                    SetInitializationState("No country selected", Brushes.Gray);
                     SetReferentialState("Indisponible", Brushes.Gray, false);
                     return;
                 }
@@ -541,10 +541,10 @@ namespace RecoTool.Windows
                 try
                 {
                     // Afficher une ProgressWindow pendant tout le traitement (copie, synchro, etc.)
-                    progressWindow = new ProgressWindow("Initialisation du pays en cours...");
+                    progressWindow = new ProgressWindow("Initializing country...");
                     progressWindow.Owner = this;
                     progressWindow.Show();
-                    progressWindow.UpdateProgress("Préparation...", 5);
+                    progressWindow.UpdateProgress("Preparing...", 5);
 
                     // Créer un callback de progression pour relayer les mises à jour vers la ProgressWindow
                     Action<int, string> onProgress = (progress, message) =>
@@ -566,7 +566,7 @@ namespace RecoTool.Windows
                         // Fermer la fenêtre avant retour à l'état précédent
                         try { progressWindow?.Close(); } catch { }
                         // Echec d'initialisation (base manquante/verrouillée). Revenir à la sélection précédente ou vider.
-                        ShowError("Base pays indisponible", "La base locale/réseau pour ce pays est introuvable ou verrouillée. Veuillez sélectionner un autre pays.");
+                        ShowError("Country database unavailable", "The local/network database for this country is missing or locked. Please select another country.");
                         _isChangingCountrySelection = true;
                         try
                         {
@@ -585,8 +585,8 @@ namespace RecoTool.Windows
                         }
                         IsOffline = true;
                         OperationalDataStatus = "OFFLINE";
-                        SetInitializationState("Erreur pays", Brushes.Crimson);
-                        SetReferentialState("Erreur", Brushes.Crimson, false);
+                        SetInitializationState("Country error", Brushes.Crimson);
+                        SetReferentialState("Error", Brushes.Crimson, false);
                         return;
                     }
                     progressWindow.UpdateProgress("Finalisation...", 95);
@@ -594,9 +594,9 @@ namespace RecoTool.Windows
                     await NotifyCurrentPageOfCountryChange();
 
                     // Attendre la fin du premier rafraîchissement de la page courante (si exposé)
-                    progressWindow.UpdateProgress("Chargement des données...", 98);
+                    progressWindow.UpdateProgress("Loading data...", 98);
                     await WaitForCurrentPageRefreshAsync(TimeSpan.FromSeconds(15));
-                    SetInitializationState($"Pays sélectionné: {selected.CNT_Name}", Brushes.DarkGreen);
+                    SetInitializationState($"Country selected: {selected.CNT_Name}", Brushes.DarkGreen);
                     OperationalDataStatus = "ONLINE";
                     SetReferentialState("OK", Brushes.DarkGreen, true);
                 }
@@ -618,11 +618,11 @@ namespace RecoTool.Windows
                     }
                 }
                 catch { }
-                ShowError("Erreur", $"Impossible d'initialiser le pays sélectionné: {ex.Message}");
+                ShowError("Error", $"Unable to initialize selected country: {ex.Message}");
                 IsOffline = true;
                 OperationalDataStatus = "OFFLINE";
-                SetInitializationState("Erreur pays", Brushes.Crimson);
-                SetReferentialState("Erreur", Brushes.Crimson, false);
+                SetInitializationState("Country error", Brushes.Crimson);
+                SetReferentialState("Error", Brushes.Crimson, false);
             }
         }
 
@@ -650,14 +650,14 @@ namespace RecoTool.Windows
 
                 // 0) Vérifier que la version du ZIP AMBRE local correspond à la version réseau
                 bool zipOk = false;
-                onProgress?.Invoke(82, "Vérifications AMBRE (ZIP)");
+                onProgress?.Invoke(82, "Checking AMBRE (ZIP)");
                 try { zipOk = await _offlineFirstService.IsLocalAmbreZipInSyncWithNetworkAsync(countryId); } catch { zipOk = false; }
                 if (!zipOk)
                 {
                     // Tenter une mise à jour automatique depuis le réseau
                     try
                     {
-                        onProgress?.Invoke(84, "Mise à jour AMBRE depuis le réseau...");
+                        onProgress?.Invoke(84, "Updating AMBRE from network...");
                         await _offlineFirstService.CopyNetworkToLocalAmbreAsync(countryId);
                         zipOk = await _offlineFirstService.IsLocalAmbreZipInSyncWithNetworkAsync(countryId);
                     }
@@ -668,14 +668,14 @@ namespace RecoTool.Windows
                         // Tentative d'initialisation AMBRE si le contenu réseau est absent
                         try
                         {
-                            onProgress?.Invoke(85, "Initialisation AMBRE (création réseau)...");
+                            onProgress?.Invoke(85, "Initializing AMBRE (network creation)...");
                             var recreationService = new DatabaseRecreationService();
                             var report = await recreationService.RecreateAmbreAsync(_offlineFirstService, countryId);
                             if (!(report?.Success ?? false))
                             {
                                 var details = string.Join("\n", report?.Errors ?? new List<string>());
                                 if (!string.IsNullOrWhiteSpace(details))
-                                    ShowWarning("Initialisation AMBRE", details);
+                            ShowWarning("AMBRE initialization", details);
                             }
                             // Re-vérifier l'alignement ZIP après (éventuelle) création/publish
                             zipOk = await _offlineFirstService.IsLocalAmbreZipInSyncWithNetworkAsync(countryId);
@@ -687,9 +687,9 @@ namespace RecoTool.Windows
                             // Bloquer l'initialisation tant que la version locale ne correspond pas
                             IsOffline = true;
                             OperationalDataStatus = "OFFLINE";
-                            SetReferentialState("AMBRE désynchronisé", Brushes.Crimson, false);
+                            SetReferentialState("AMBRE out of sync", Brushes.Crimson, false);
                             var ambreDiag = _offlineFirstService.GetAmbreZipDiagnostics(countryId);
-                            ShowError("Données AMBRE non à jour", "Le ZIP AMBRE local ne correspond pas à la version réseau. Veuillez réessayer plus tard ou vérifier l'accès au partage réseau.\n\nDétails:\n" + ambreDiag);
+                            ShowError("AMBRE data not up to date", "The local AMBRE ZIP does not match the network version. Please try again later or check network share access.\n\nDetails:\n" + ambreDiag);
                             return false;
                         }
                     }
@@ -698,13 +698,13 @@ namespace RecoTool.Windows
 
                 // 0.b) Vérifier également la version du ZIP DW local vs réseau
                 bool dwZipOk = false;
-                onProgress?.Invoke(87, "Vérifications DW (ZIP)");
+                onProgress?.Invoke(87, "Checking DW (ZIP)");
                 try { dwZipOk = await _offlineFirstService.IsLocalDwZipInSyncWithNetworkAsync(countryId); } catch { dwZipOk = false; }
                 if (!dwZipOk)
                 {
                     try
                     {
-                        onProgress?.Invoke(88, "Mise à jour DW depuis le réseau...");
+                        onProgress?.Invoke(88, "Updating DW from network...");
                         await _offlineFirstService.CopyNetworkToLocalDwAsync(countryId);
                         dwZipOk = await _offlineFirstService.IsLocalDwZipInSyncWithNetworkAsync(countryId);
                     }
@@ -714,9 +714,9 @@ namespace RecoTool.Windows
                     {
                         IsOffline = true;
                         OperationalDataStatus = "OFFLINE";
-                        SetReferentialState("DW désynchronisé", Brushes.Crimson, false);
+                        SetReferentialState("DW out of sync", Brushes.Crimson, false);
                         var dwDiag = _offlineFirstService.GetDwZipDiagnostics(countryId);
-                        ShowError("Données DW non à jour", "Le ZIP DW local ne correspond pas à la version réseau. Veuillez réessayer plus tard ou vérifier l'accès au partage réseau.\n\nDétails:\n" + dwDiag);
+                        ShowError("DW data not up to date", "The local DW ZIP does not match the network version. Please try again later or check network share access.\n\nDetails:\n" + dwDiag);
                         return false;
                     }
                 }
@@ -728,7 +728,7 @@ namespace RecoTool.Windows
                     var settings = RecoTool.Properties.Settings.Default;
                     if (settings != null && settings.RecreateDwingsDatabasesAtStartup)
                     {
-                        onProgress?.Invoke(91, "Recréation des bases DWINGS...");
+                    onProgress?.Invoke(91, "Recreating DWINGS databases...");
                         // Obtain target directory and DW prefix from OfflineFirstService parameters
                         var dataDirectory = _offlineFirstService.GetParameter("DataDirectory");
                         var dwPrefix = _offlineFirstService.GetParameter("DWDatabasePrefix");
@@ -741,26 +741,26 @@ namespace RecoTool.Windows
                         if (!report.Success)
                         {
                             var details = string.Join("\n", report.Errors ?? new List<string>());
-                            ShowWarning("Recréation DWINGS", string.IsNullOrWhiteSpace(details)
-                                ? "La recréation des bases DWINGS a rencontré des erreurs. Veuillez vérifier les journaux."
-                                : ("La recréation des bases DWINGS a rencontré des erreurs:\n" + details));
+                            ShowWarning("DWINGS recreation", string.IsNullOrWhiteSpace(details)
+                                ? "Recreating DWINGS databases encountered errors. Please check logs."
+                                : ("Recreating DWINGS databases encountered errors:\n" + details));
                         }
                         else
                         {
-                            onProgress?.Invoke(92, "DWINGS recréées");
+                    onProgress?.Invoke(92, "DWINGS recreated");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
                     // Best-effort: do not block country initialization on recreation failure
-                    ShowWarning("Recréation DWINGS", $"Échec de la recréation des bases DWINGS: {ex.Message}");
+                    ShowWarning("DWINGS recreation", $"Failed to recreate DWINGS databases: {ex.Message}");
                 }
 
                 // Vérifier/initialiser la base de Réconciliation (RECON)
                 try
                 {
-                    onProgress?.Invoke(92, "Vérifications RECON...");
+                onProgress?.Invoke(92, "Checking RECON...");
                     try
                     {
                         // Tenter d'aligner la base locale depuis le réseau si elle existe déjà
@@ -770,19 +770,19 @@ namespace RecoTool.Windows
                     catch (System.IO.FileNotFoundException)
                     {
                         // Si la base réseau est absente, créer localement et publier vers le réseau
-                        onProgress?.Invoke(92, "Initialisation RECON (création réseau)...");
+                        onProgress?.Invoke(92, "Initializing RECON (network creation)...");
                         var recreationService = new DatabaseRecreationService();
                         var report = await recreationService.RecreateReconciliationAsync(_offlineFirstService, countryId);
                         if (!(report?.Success ?? false))
                         {
                             var details = string.Join("\n", report?.Errors ?? new List<string>());
-                            ShowWarning("Initialisation Réconciliation", string.IsNullOrWhiteSpace(details)
-                                ? "La création de la base de réconciliation a rencontré des erreurs. Veuillez vérifier les journaux."
+                            ShowWarning("Reconciliation initialization", string.IsNullOrWhiteSpace(details)
+                                ? "Creating the reconciliation database encountered errors. Please check logs."
                                 : details);
                         }
                         else
                         {
-                            onProgress?.Invoke(92, "RECON créée");
+                            onProgress?.Invoke(92, "RECON created");
                         }
                     }
                     catch (InvalidOperationException)
@@ -804,7 +804,7 @@ namespace RecoTool.Windows
                 try { _ = _offlineFirstService.PushReconciliationIfPendingAsync(countryId); } catch { }
 
                 // Récupérer la nouvelle chaîne de connexion
-                onProgress?.Invoke(96, "Initialisation des services...");
+                onProgress?.Invoke(96, "Initializing services...");
                 var connectionString = _offlineFirstService.GetCountryConnectionString(countryId);
                 var user = Environment.UserName;
 
@@ -819,10 +819,10 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError("Erreur", $"Impossible de mettre à jour les services pour le pays {countryId}: {ex.Message}");
+                ShowError("Error", $"Unable to update services for country {countryId}: {ex.Message}");
                 IsOffline = true;
                 OperationalDataStatus = "OFFLINE";
-                SetReferentialState("Erreur", Brushes.Crimson, false);
+                SetReferentialState("Error", Brushes.Crimson, false);
                 return false;
             }
             finally
@@ -860,7 +860,7 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 // Log mais ne pas afficher d'erreur à l'utilisateur pour éviter les popups intempestifs
-                System.Diagnostics.Debug.WriteLine($"Erreur lors de la notification du changement de pays: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error notifying country change: {ex.Message}");
             }
         }
 
@@ -887,7 +887,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError("Erreur de navigation", $"Impossible de naviguer vers la page d'accueil: {ex.Message}");
+                ShowError("Navigation error", $"Unable to navigate to home page: {ex.Message}");
             }
         }
 
@@ -961,21 +961,21 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
     {
         if (string.IsNullOrEmpty(_currentCountryId))
         {
-            ShowWarning("Sélection requise", "Veuillez sélectionner un pays avant de synchroniser.");
+            ShowWarning("Selection required", "Please select a country before synchronizing.");
             return;
         }
 
         var button = sender as Button;
         if (button != null) button.IsEnabled = false;
 
-        var progressWindow = new ProgressWindow("Synchronisation en cours...");
+        var progressWindow = new ProgressWindow("Synchronization in progress...");
         progressWindow.Owner = this;
         progressWindow.Show();
 
         try
         {
-            OperationalDataStatus = "Synchronisation...";
-            SetReferentialState("Mise à jour...", Brushes.DarkOrange, true);
+            OperationalDataStatus = "Synchronizing...";
+            SetReferentialState("Updating...", Brushes.DarkOrange, true);
             var result = await _offlineFirstService.SynchronizeAsync(
                 _currentCountryId,
                 null,
@@ -992,25 +992,25 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
 
             if (result != null && result.Success)
             {
-                ShowInfo("Synchronisation", "Synchronisation terminée avec succès.");
+                ShowInfo("Synchronization", "Synchronization completed successfully.");
                 RefreshCurrentPage();
-                OperationalDataStatus = "Données à jour";
+                OperationalDataStatus = "Data up to date";
                 SetReferentialState("OK", Brushes.DarkGreen, true);
             }
             else
             {
-                var msg = result?.Message ?? "La synchronisation a échoué.";
-                ShowError("Erreur de synchronisation", msg);
-                OperationalDataStatus = "Erreur";
-                SetReferentialState("Erreur", Brushes.Crimson, true);
+                var msg = result?.Message ?? "Synchronization failed.";
+                ShowError("Synchronization error", msg);
+                OperationalDataStatus = "Error";
+                SetReferentialState("Error", Brushes.Crimson, true);
             }
         }
         catch (Exception syncEx)
         {
             progressWindow.Close();
-            ShowError("Erreur de synchronisation", syncEx.Message);
-            OperationalDataStatus = "Erreur";
-            SetReferentialState("Erreur", Brushes.Crimson, true);
+            ShowError("Synchronization error", syncEx.Message);
+            OperationalDataStatus = "Error";
+            SetReferentialState("Error", Brushes.Crimson, true);
         }
         finally
         {
@@ -1019,9 +1019,9 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
     }
     catch (Exception ex)
     {
-        ShowError("Erreur", $"Erreur lors de la synchronisation: {ex.Message}");
-        OperationalDataStatus = "Erreur";
-        SetReferentialState("Erreur", Brushes.Crimson, false);
+        ShowError("Error", $"Error during synchronization: {ex.Message}");
+        OperationalDataStatus = "Error";
+        SetReferentialState("Error", Brushes.Crimson, false);
     }
 }
 
@@ -1034,7 +1034,7 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
             {
                 if (string.IsNullOrEmpty(_currentCountryId))
                 {
-                    ShowWarning("Sélection requise", "Veuillez sélectionner un pays avant d'accéder à la réconciliation.");
+                    ShowWarning("Selection required", "Please select a country before accessing reconciliation.");
                     return;
                 }
 
@@ -1044,7 +1044,7 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
             }
             catch (Exception ex)
             {
-                ShowError("Erreur de navigation", $"Impossible d'ouvrir la page de réconciliation: {ex.Message}");
+                ShowError("Navigation error", $"Unable to open reconciliation page: {ex.Message}");
             }
         }
 
@@ -1057,7 +1057,7 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
             {
                 if (string.IsNullOrEmpty(_currentCountryId))
                 {
-                    ShowWarning("Sélection requise", "Veuillez sélectionner un pays avant d'accéder aux rapports.");
+                    ShowWarning("Selection required", "Please select a country before accessing reports.");
                     return;
                 }
 
@@ -1068,7 +1068,7 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
             }
             catch (Exception ex)
             {
-                ShowError("Erreur", $"Impossible d'ouvrir la fenêtre de rapports: {ex.Message}");
+                ShowError("Error", $"Unable to open reports window: {ex.Message}");
             }
         }
 
@@ -1080,11 +1080,11 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
             try
             {
                 // TODO: Implémenter la page de configuration des comptes
-                ShowInfo("Information", "La page de configuration des comptes sera bientôt disponible.");
+            ShowInfo("Information", "The account configuration page will be available soon.");
             }
             catch (Exception ex)
             {
-                ShowError("Erreur", $"Impossible d'ouvrir la page de configuration des comptes: {ex.Message}");
+                ShowError("Error", $"Unable to open account configuration page: {ex.Message}");
             }
         }
 
@@ -1096,11 +1096,11 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
             try
             {
                 // TODO: Implémenter la page des paramètres
-                ShowInfo("Information", "La page des paramètres sera bientôt disponible.");
+            ShowInfo("Information", "The settings page will be available soon.");
             }
             catch (Exception ex)
             {
-                ShowError("Erreur", $"Impossible d'ouvrir la page des paramètres: {ex.Message}");
+                ShowError("Error", $"Unable to open settings page: {ex.Message}");
             }
         }
 
@@ -1113,13 +1113,13 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
             {
                 if (string.IsNullOrEmpty(_currentCountryId))
                 {
-                    ShowWarning("Sélection requise", "Veuillez sélectionner un pays avant d'importer.");
+                    ShowWarning("Selection required", "Please select a country before importing.");
                     return;
                 }
 
                 var openFileDialog = new Microsoft.Win32.OpenFileDialog
                 {
-                    Title = "Sélectionner le fichier Ambre à importer",
+                    Title = "Select Ambre file to import",
                     Filter = "Fichiers Excel (*.xlsx)|*.xlsx|Tous les fichiers (*.*)|*.*",
                     RestoreDirectory = true
                 };
@@ -1148,28 +1148,28 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
 
                         if (result.IsSuccess)
                         {
-                            ShowInfo("Import réussi", $"Import terminé avec succès.\n" +
-                                   $"Lignes ajoutées: {result.NewRecords}\n" +
-                                   $"Lignes modifiées: {result.ProcessedRecords}\n" +
-                                   $"Lignes supprimées: {result.DeletedRecords}");
+                            ShowInfo("Import successful", $"Import completed successfully.\n" +
+                                   $"Rows added: {result.NewRecords}\n" +
+                                   $"Rows updated: {result.ProcessedRecords}\n" +
+                                   $"Rows deleted: {result.DeletedRecords}");
 
                             RefreshCurrentPage();
                         }
                         else
                         {
-                            ShowError("Erreur d'import", $"L'import a échoué:\n{string.Join("\n", result.Errors)}");
+                            ShowError("Import error", $"Import failed:\n{string.Join("\n", result.Errors)}");
                         }
                     }
                     catch (Exception importEx)
                     {
                         progressWindow.Close();
-                        ShowError("Erreur d'import", $"Erreur lors de l'import: {importEx.Message}");
+                        ShowError("Import error", $"Error during import: {importEx.Message}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                ShowError("Erreur", $"Erreur lors de l'import: {ex.Message}");
+                ShowError("Error", $"Error during import: {ex.Message}");
             }
         }
 
@@ -1187,7 +1187,7 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
             }
             catch (Exception ex)
             {
-                ShowError("Erreur", $"Erreur lors du rafraîchissement: {ex.Message}");
+                ShowError("Error", $"Error during refresh: {ex.Message}");
             }
         }
 

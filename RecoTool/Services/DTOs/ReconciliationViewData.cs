@@ -122,6 +122,8 @@ namespace RecoTool.Services
         public decimal? GUARANTEE_AMOUNT { get; set; }
         public string GUARANTEE_CURRENCY { get; set; }
         public string GUARANTEE_STATUS { get; set; }
+        // DWINGS guarantee type (raw code)
+        public string GUARANTEE_TYPE { get; set; }
 
         // DWINGS Guarantee extra fields (prefixed with G_ to avoid collisions)
         public string G_BOOKING { get; set; }
@@ -152,6 +154,8 @@ namespace RecoTool.Services
         public string G_CONTROLER { get; set; }
         public string G_AUTOMATICBOOKOFF { get; set; }
         public string G_NATUREOFDEAL { get; set; }
+        // Guarantee type duplicated with G_ prefix to avoid collisions in bindings
+        public string G_GUARANTEE_TYPE { get; set; }
 
         // DWINGS Invoice extra fields (prefixed with I_)
         public string I_BOOKING { get; set; }

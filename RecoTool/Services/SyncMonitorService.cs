@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using System.Timers;
 using System.IO;
 using System.Collections.Concurrent;
+using System.Threading;
 using OfflineFirstAccess.Helpers;
 
 namespace RecoTool.Services
@@ -24,7 +25,7 @@ namespace RecoTool.Services
         private bool _lastNetworkAvailable;
         private bool _initialized;
         private bool _disposed;
-        private bool _isTickRunning;
+        private int _isTickRunning;
         private DateTime _lastSuggestUtc = DateTime.MinValue;
         private DateTime _lastForwardUtc = DateTime.MinValue;
         private DateTime _lastPeriodicPushUtc = DateTime.MinValue;
@@ -116,8 +117,7 @@ namespace RecoTool.Services
 
         private async Task OnTimerElapsed(ElapsedEventArgs e)
         {
-            if (_isTickRunning) return;
-            _isTickRunning = true;
+            if (Interlocked.CompareExchange(ref _isTickRunning, 1, 0) == 1) return;
             try
             {
                 var svc = _serviceProvider?.Invoke();
@@ -252,7 +252,7 @@ namespace RecoTool.Services
             }
             finally
             {
-                _isTickRunning = false;
+                Interlocked.Exchange(ref _isTickRunning, 0);
             }
         }
 

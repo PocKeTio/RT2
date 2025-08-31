@@ -343,113 +343,145 @@ namespace RecoTool.Helpers
             {
                 Worksheet worksheet = _workbook.Sheets[sheetName];
 
-                // Resolve columns
                 if (startRow < 1) startRow = 1;
-                int idColIndex = ColumnLetterToIndex(idColumnLetter);
-                // Prefer End(xlUp) on the ID column to find last used row instead of UsedRange
-                int sheetMaxRow = worksheet.Rows.Count;
-                int lastRow = worksheet.Cells[sheetMaxRow, idColIndex].End(XlDirection.xlUp).Row;
-                var destToColIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                foreach (var kv in letterToDestination)
-                {
-                    var letter = (kv.Key ?? string.Empty).Trim();
-                    if (string.IsNullOrEmpty(letter)) continue;
-                    destToColIndex[kv.Value] = ColumnLetterToIndex(letter);
-                }
 
-                // 1) Read ID column in bulk to determine the actual number of rows
-                int actualRows = 0;
-                if (lastRow >= startRow)
-                {
-                    Range idRange = worksheet.Range[worksheet.Cells[startRow, idColIndex], worksheet.Cells[lastRow, idColIndex]];
-                    object idRaw = idRange.Value2;
-                    if (idRaw is object[,] idVals)
-                    {
-                        int rowsCount = idVals.GetLength(0);
-                        for (int i = 1; i <= rowsCount; i++)
-                        {
-                            var v = idVals[i, 1];
-                            var s = v?.ToString();
-                            if (string.IsNullOrWhiteSpace(s)) { break; }
-                            actualRows++;
-                        }
-                    }
-                    else
-                    {
-                        // Single cell case
-                        var s = idRaw?.ToString();
-                        actualRows = string.IsNullOrWhiteSpace(s) ? 0 : 1;
-                    }
-                }
+                // 1) Resolve columns and offsets
+                var (idColIndex, destToOffset, minCol, maxCol) =
+                    ResolveColumnMappings(letterToDestination, idColumnLetter);
 
-                var rows = new List<Dictionary<string, object>>(actualRows > 0 ? actualRows : 0);
+                // 2) Read ID column to determine actual row count
+                int actualRows = ReadIdColumn(worksheet, startRow, idColIndex);
                 if (actualRows == 0)
                 {
-                    return rows;
+                    return new List<Dictionary<string, object>>();
                 }
 
-                // 2) Read a single rectangular block that covers all needed columns to minimize COM calls
-                int minCol = idColIndex;
-                int maxCol = idColIndex;
-                foreach (var c in destToColIndex.Values)
-                {
-                    if (c < minCol) minCol = c;
-                    if (c > maxCol) maxCol = c;
-                }
-                // Precompute offsets inside the block to avoid repeated arithmetic
-                var destToOffset = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                foreach (var kv in destToColIndex)
-                {
-                    destToOffset[kv.Key] = kv.Value - minCol + 1; // 1-based in block
-                }
+                // 3) Read all required values in one block
+                object[,] blockVals = ReadDataBlock(worksheet, startRow, actualRows, minCol, maxCol);
 
-                Range block = worksheet.Range[
-                    worksheet.Cells[startRow, minCol],
-                    worksheet.Cells[startRow + actualRows - 1, maxCol]
-                ];
-                object blockRaw = block.Value2;
-                object[,] blockVals;
-                if (blockRaw is object[,])
-                {
-                    blockVals = (object[,])blockRaw;
-                }
-                else
-                {
-                    // Single cell block (rare): normalize to 1x1
-                    blockVals = new object[2, 2];
-                    blockVals[1, 1] = blockRaw;
-                }
-
-                // 3) Materialize rows from the in-memory 2D array
-                int idOffset = idColIndex - minCol + 1; // 1-based inside block
-                for (int rRel = 1; rRel <= actualRows; rRel++)
-                {
-                    var idObj = blockVals[rRel, idOffset];
-                    var idStr = idObj?.ToString();
-                    if (string.IsNullOrWhiteSpace(idStr)) break; // safety
-
-                    var dict = new Dictionary<string, object>(destToColIndex.Count + 1, StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["ID"] = idStr
-                    };
-
-                    foreach (var kv in destToOffset)
-                    {
-                        string dest = kv.Key;
-                        int offset = kv.Value;
-                        object v = blockVals[rRel, offset];
-                        dict[dest] = v;
-                    }
-
-                    rows.Add(dict);
-                }
-
-                return rows;
+                // 4) Materialize dictionaries from the block
+                return MaterializeRows(blockVals, actualRows, idColIndex, minCol, destToOffset);
             }
             catch (Exception ex)
             {
                 throw new Exception($"Erreur lors de la lecture de la feuille '{sheetName}': {ex.Message}", ex);
             }
+        }
+
+        private (int idColIndex, Dictionary<string, int> destToOffset, int minCol, int maxCol) ResolveColumnMappings(
+            Dictionary<string, string> letterToDestination, string idColumnLetter)
+        {
+            int idColIndex = ColumnLetterToIndex(idColumnLetter);
+            var destToColIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in letterToDestination)
+            {
+                var letter = (kv.Key ?? string.Empty).Trim();
+                if (string.IsNullOrEmpty(letter)) continue;
+                destToColIndex[kv.Value] = ColumnLetterToIndex(letter);
+            }
+
+            int minCol = idColIndex;
+            int maxCol = idColIndex;
+            foreach (var c in destToColIndex.Values)
+            {
+                if (c < minCol) minCol = c;
+                if (c > maxCol) maxCol = c;
+            }
+
+            var destToOffset = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in destToColIndex)
+            {
+                destToOffset[kv.Key] = kv.Value - minCol + 1; // 1-based in block
+            }
+
+            return (idColIndex, destToOffset, minCol, maxCol);
+        }
+
+        private int ReadIdColumn(Worksheet worksheet, int startRow, int idColIndex)
+        {
+            // Prefer End(xlUp) on the ID column to find last used row instead of UsedRange
+            int sheetMaxRow = worksheet.Rows.Count;
+            int lastRow = worksheet.Cells[sheetMaxRow, idColIndex].End(XlDirection.xlUp).Row;
+
+            int actualRows = 0;
+            if (lastRow >= startRow)
+            {
+                Range idRange = worksheet.Range[
+                    worksheet.Cells[startRow, idColIndex],
+                    worksheet.Cells[lastRow, idColIndex]
+                ];
+                object idRaw = idRange.Value2;
+                if (idRaw is object[,] idVals)
+                {
+                    int rowsCount = idVals.GetLength(0);
+                    for (int i = 1; i <= rowsCount; i++)
+                    {
+                        var v = idVals[i, 1];
+                        var s = v?.ToString();
+                        if (string.IsNullOrWhiteSpace(s)) { break; }
+                        actualRows++;
+                    }
+                }
+                else
+                {
+                    var s = idRaw?.ToString();
+                    actualRows = string.IsNullOrWhiteSpace(s) ? 0 : 1;
+                }
+            }
+
+            return actualRows;
+        }
+
+        private object[,] ReadDataBlock(Worksheet worksheet, int startRow, int actualRows, int minCol, int maxCol)
+        {
+            Range block = worksheet.Range[
+                worksheet.Cells[startRow, minCol],
+                worksheet.Cells[startRow + actualRows - 1, maxCol]
+            ];
+            object blockRaw = block.Value2;
+            if (blockRaw is object[,] blockVals)
+            {
+                return blockVals;
+            }
+
+            // Single cell block (rare): normalize to 1x1
+            var single = new object[2, 2];
+            single[1, 1] = blockRaw;
+            return single;
+        }
+
+        private List<Dictionary<string, object>> MaterializeRows(
+            object[,] blockVals,
+            int actualRows,
+            int idColIndex,
+            int minCol,
+            Dictionary<string, int> destToOffset)
+        {
+            var rows = new List<Dictionary<string, object>>(actualRows > 0 ? actualRows : 0);
+            int idOffset = idColIndex - minCol + 1; // 1-based inside block
+            for (int rRel = 1; rRel <= actualRows; rRel++)
+            {
+                var idObj = blockVals[rRel, idOffset];
+                var idStr = idObj?.ToString();
+                if (string.IsNullOrWhiteSpace(idStr)) break; // safety
+
+                var dict = new Dictionary<string, object>(destToOffset.Count + 1, StringComparer.OrdinalIgnoreCase)
+                {
+                    ["ID"] = idStr
+                };
+
+                foreach (var kv in destToOffset)
+                {
+                    string dest = kv.Key;
+                    int offset = kv.Value;
+                    object v = blockVals[rRel, offset];
+                    dict[dest] = v;
+                }
+
+                rows.Add(dict);
+            }
+
+            return rows;
         }
 
         private static int ColumnLetterToIndex(string letter)

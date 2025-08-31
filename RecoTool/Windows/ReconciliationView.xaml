@@ -994,7 +994,6 @@
                             </DataGridTextColumn>
                             
                             <!-- DWINGS Guarantee extended fields -->
-                            <DataGridTextColumn Header="G Booking" Binding="{Binding G_BOOKING}" Width="110"/>
                             <DataGridTextColumn Header="G Nature" Binding="{Binding G_NATURE}" Width="110"/>
                             <DataGridTextColumn Header="G Event Status" Binding="{Binding G_EVENT_STATUS}" Width="120"/>
                             <DataGridTextColumn Header="G Issue Date" Binding="{Binding G_ISSUEDATE}" Width="110"/>
@@ -1002,7 +1001,6 @@
                             <DataGridTextColumn Header="G Name" Binding="{Binding G_NAME1}" Width="160"/>
                             
                             <!-- DWINGS Invoice extended fields -->
-                            <DataGridTextColumn Header="I Booking" Binding="{Binding I_BOOKING}" Width="110"/>
                             <DataGridTextColumn Header="I Req Amount" Binding="{Binding I_REQUESTED_INVOICE_AMOUNT}" Width="130"/>
                             <DataGridTextColumn Header="I Curr" Binding="{Binding I_BILLING_CURRENCY}" Width="70"/>
                             <DataGridTextColumn Header="I Start" Binding="{Binding I_START_DATE}" Width="110"/>

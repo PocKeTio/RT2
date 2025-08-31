@@ -126,7 +126,6 @@ namespace RecoTool.Services
         public string GUARANTEE_TYPE { get; set; }
 
         // DWINGS Guarantee extra fields (prefixed with G_ to avoid collisions)
-        public string G_BOOKING { get; set; }
         public string G_NATURE { get; set; }
         public string G_EVENT_STATUS { get; set; }
         public string G_EVENT_EFFECTIVEDATE { get; set; }
@@ -154,11 +153,9 @@ namespace RecoTool.Services
         public string G_CONTROLER { get; set; }
         public string G_AUTOMATICBOOKOFF { get; set; }
         public string G_NATUREOFDEAL { get; set; }
-        // Guarantee type duplicated with G_ prefix to avoid collisions in bindings
         public string G_GUARANTEE_TYPE { get; set; }
 
         // DWINGS Invoice extra fields (prefixed with I_)
-        public string I_BOOKING { get; set; }
         public string I_REQUESTED_INVOICE_AMOUNT { get; set; }
         public string I_SENDER_NAME { get; set; }
         public string I_RECEIVER_NAME { get; set; }

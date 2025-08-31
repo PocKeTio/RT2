@@ -16,18 +16,9 @@ namespace RecoTool.Services
         {
             try
             {
-                // Prefer referential label if provided
-                if (userFields != null)
-                {
-                    var uf = userFields.FirstOrDefault(u => u.USR_ID == actionId && string.Equals(u.USR_Category, "Action", StringComparison.OrdinalIgnoreCase));
-                    if (uf != null)
-                    {
-                        if (!string.IsNullOrWhiteSpace(uf.USR_FieldName)) return uf.USR_FieldName;
-                        if (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription)) return uf.USR_FieldDescription;
-                    }
-                }
+                if (TryGetUserFieldLabel(actionId, new[] { "Action" }, userFields, out var label))
+                    return label;
 
-                // Fallback to enum description
                 try
                 {
                     var value = (ActionType)actionId;
@@ -40,22 +31,9 @@ namespace RecoTool.Services
 
         public static string GetKPIName(int kpiId, IEnumerable<UserField> userFields = null)
         {
-            // Prefer referential label if provided
-            try
-            {
-                if (userFields != null)
-                {
-                    var uf = userFields.FirstOrDefault(u => u.USR_ID == kpiId && string.Equals(u.USR_Category, "KPI", StringComparison.OrdinalIgnoreCase));
-                    if (uf != null)
-                    {
-                        if (!string.IsNullOrWhiteSpace(uf.USR_FieldName)) return uf.USR_FieldName;
-                        if (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription)) return uf.USR_FieldDescription;
-                    }
-                }
-            }
-            catch { }
+            if (TryGetUserFieldLabel(kpiId, new[] { "KPI" }, userFields, out var label))
+                return label;
 
-            // Fallback to friendly names from KPIType or enum name
             try
             {
                 var value = (KPIType)kpiId;
@@ -77,24 +55,9 @@ namespace RecoTool.Services
 
         public static string GetIncidentName(int incidentId, IEnumerable<UserField> userFields = null)
         {
-            // Prefer referential label first
-            try
-            {
-                if (userFields != null)
-                {
-                    var uf = userFields.FirstOrDefault(u => u.USR_ID == incidentId && (
-                        string.Equals(u.USR_Category, "INC", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(u.USR_Category, "Incident Type", StringComparison.OrdinalIgnoreCase)));
-                    if (uf != null)
-                    {
-                        if (!string.IsNullOrWhiteSpace(uf.USR_FieldName)) return uf.USR_FieldName;
-                        if (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription)) return uf.USR_FieldDescription;
-                    }
-                }
-            }
-            catch { }
+            if (TryGetUserFieldLabel(incidentId, new[] { "INC", "Incident Type" }, userFields, out var label))
+                return label;
 
-            // Fallback to enum description if within range
             try
             {
                 var value = (INC)incidentId;
@@ -105,24 +68,9 @@ namespace RecoTool.Services
 
         public static string GetRiskReasonName(int reasonId, IEnumerable<UserField> userFields = null)
         {
-            // Prefer referential label first
-            try
-            {
-                if (userFields != null)
-                {
-                    var uf = userFields.FirstOrDefault(u => u.USR_ID == reasonId && (
-                        string.Equals(u.USR_Category, "RISKY", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(u.USR_Category, "ReasonNonRisky", StringComparison.OrdinalIgnoreCase)));
-                    if (uf != null)
-                    {
-                        if (!string.IsNullOrWhiteSpace(uf.USR_FieldName)) return uf.USR_FieldName;
-                        if (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription)) return uf.USR_FieldDescription;
-                    }
-                }
-            }
-            catch { }
+            if (TryGetUserFieldLabel(reasonId, new[] { "RISKY", "ReasonNonRisky" }, userFields, out var label))
+                return label;
 
-            // Fallback to enum description if within range
             try
             {
                 var value = (Risky)reasonId;
@@ -135,6 +83,35 @@ namespace RecoTool.Services
         public static string GetRiskyName(int reasonId, IEnumerable<UserField> userFields = null)
         {
             return GetRiskReasonName(reasonId, userFields);
+        }
+
+        private static bool TryGetUserFieldLabel(int id, string[] categories, IEnumerable<UserField> userFields, out string label)
+        {
+            label = null;
+            try
+            {
+                if (userFields != null)
+                {
+                    var uf = userFields.FirstOrDefault(u =>
+                        u.USR_ID == id &&
+                        categories.Any(c => string.Equals(u.USR_Category, c, StringComparison.OrdinalIgnoreCase)));
+                    if (uf != null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(uf.USR_FieldName))
+                        {
+                            label = uf.USR_FieldName;
+                            return true;
+                        }
+                        if (!string.IsNullOrWhiteSpace(uf.USR_FieldDescription))
+                        {
+                            label = uf.USR_FieldDescription;
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch { }
+            return false;
         }
 
         public static string GetEnumDescription(Enum value)

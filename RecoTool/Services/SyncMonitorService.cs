@@ -18,7 +18,7 @@ namespace RecoTool.Services
         public static SyncMonitorService Instance => _instance.Value;
 
         private readonly object _gate = new object();
-        private Timer _timer;
+        private System.Timers.Timer _timer;
         private ElapsedEventHandler _timerHandler;
         private Func<OfflineFirstService> _serviceProvider;
         private bool _lastLockActive;
@@ -89,7 +89,7 @@ namespace RecoTool.Services
                 if (!_initialized) throw new InvalidOperationException("SyncMonitorService not initialized");
                 if (_timer != null) return;
 
-                _timer = new Timer(PollInterval.TotalMilliseconds);
+                _timer = new System.Timers.Timer(PollInterval.TotalMilliseconds);
                 _timer.AutoReset = true;
                 _timerHandler = async (_, e) => await OnTimerElapsed(e);
                 _timer.Elapsed += _timerHandler;

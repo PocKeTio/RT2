@@ -165,24 +165,34 @@ namespace RecoTool.Helpers
         private List<string> ReadRowHeaders(Worksheet worksheet)
         {
             var headers = new List<string>();
-            var usedRange = worksheet.UsedRange;
-            var lastColumn = usedRange.Columns.Count;
-
-            Range headerRange = worksheet.Range[worksheet.Cells[1, 1], worksheet.Cells[1, lastColumn]];
-            object raw = headerRange.Value2;
-
-            if (raw is object[,] values)
+            Range usedRange = null;
+            Range headerRange = null;
+            try
             {
-                for (int col = 1; col <= lastColumn; col++)
+                usedRange = worksheet.UsedRange;
+                var lastColumn = usedRange.Columns.Count;
+
+                headerRange = worksheet.Range[worksheet.Cells[1, 1], worksheet.Cells[1, lastColumn]];
+                object raw = headerRange.Value2;
+
+                if (raw is object[,] values)
                 {
-                    var cellValue = values[1, col];
-                    headers.Add(cellValue?.ToString() ?? $"Column{col}");
+                    for (int col = 1; col <= lastColumn; col++)
+                    {
+                        var cellValue = values[1, col];
+                        headers.Add(cellValue?.ToString() ?? $"Column{col}");
+                    }
+                }
+                else
+                {
+                    // Fallback: une seule cellule
+                    headers.Add(raw?.ToString() ?? "Column1");
                 }
             }
-            else
+            finally
             {
-                // Fallback: une seule cellule
-                headers.Add(raw?.ToString() ?? "Column1");
+                try { if (headerRange != null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(headerRange); } catch { }
+                try { if (usedRange != null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(usedRange); } catch { }
             }
 
             return headers;
@@ -339,9 +349,24 @@ namespace RecoTool.Helpers
             if (string.IsNullOrWhiteSpace(sheetName))
                 throw new ArgumentException("sheetName est requis");
 
+            Worksheet worksheet = null;
             try
             {
-                Worksheet worksheet = _workbook.Sheets[sheetName];
+                // Resolve worksheet robustly (case/trim-insensitive)
+                try
+                {
+                    worksheet = FindWorksheetByName(sheetName);
+                    if (worksheet == null)
+                        throw new Exception($"Feuille '{sheetName}' introuvable dans le classeur.");
+                }
+                catch (System.Runtime.InteropServices.COMException)
+                {
+                    // Transient COM glitch: small wait and retry once
+                    System.Threading.Thread.Sleep(100);
+                    worksheet = FindWorksheetByName(sheetName);
+                    if (worksheet == null)
+                        throw;
+                }
 
                 if (startRow < 1) startRow = 1;
 
@@ -366,6 +391,63 @@ namespace RecoTool.Helpers
             {
                 throw new Exception($"Erreur lors de la lecture de la feuille '{sheetName}': {ex.Message}", ex);
             }
+            finally
+            {
+                try { if (worksheet != null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(worksheet); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Recherche une feuille par nom de manière robuste (trim + case-insensitive).
+        /// Retourne un RCW Worksheet que l'appelant DOIT libérer (FinalReleaseComObject) quand terminé.
+        /// </summary>
+        private Worksheet FindWorksheetByName(string sheetName)
+        {
+            var target = (sheetName ?? string.Empty).Trim();
+            // Essai direct (souvent plus rapide)
+            try
+            {
+                var direct = _workbook.Sheets[target] as Worksheet;
+                if (direct != null) return direct;
+            }
+            catch { /* continue with scan */ }
+
+            // Recherche en scannant et en comparant de façon insensible à la casse et aux espaces
+            foreach (object obj in _workbook.Sheets)
+            {
+                Worksheet ws = null;
+                bool keep = false;
+                try
+                {
+                    ws = obj as Worksheet;
+                    if (ws != null)
+                    {
+                        var name = ws.Name?.Trim();
+                        if (!string.IsNullOrEmpty(name) && string.Equals(name, target, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Conserver cette feuille et la retourner sans la libérer
+                            keep = true;
+                            return ws;
+                        }
+                    }
+                }
+                finally
+                {
+                    if (!keep)
+                    {
+                        // Libérer les éléments non retenus
+                        if (ws != null)
+                        {
+                            try { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(ws); } catch { }
+                        }
+                        else
+                        {
+                            try { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(obj); } catch { }
+                        }
+                    }
+                }
+            }
+            return null;
         }
 
         private (int idColIndex, Dictionary<string, int> destToOffset, int minCol, int maxCol) ResolveColumnMappings(
@@ -406,26 +488,34 @@ namespace RecoTool.Helpers
             int actualRows = 0;
             if (lastRow >= startRow)
             {
-                Range idRange = worksheet.Range[
-                    worksheet.Cells[startRow, idColIndex],
-                    worksheet.Cells[lastRow, idColIndex]
-                ];
-                object idRaw = idRange.Value2;
-                if (idRaw is object[,] idVals)
+                Range idRange = null;
+                try
                 {
-                    int rowsCount = idVals.GetLength(0);
-                    for (int i = 1; i <= rowsCount; i++)
+                    idRange = worksheet.Range[
+                        worksheet.Cells[startRow, idColIndex],
+                        worksheet.Cells[lastRow, idColIndex]
+                    ];
+                    object idRaw = idRange.Value2;
+                    if (idRaw is object[,] idVals)
                     {
-                        var v = idVals[i, 1];
-                        var s = v?.ToString();
-                        if (string.IsNullOrWhiteSpace(s)) { break; }
-                        actualRows++;
+                        int rowsCount = idVals.GetLength(0);
+                        for (int i = 1; i <= rowsCount; i++)
+                        {
+                            var v = idVals[i, 1];
+                            var s = v?.ToString();
+                            if (string.IsNullOrWhiteSpace(s)) { break; }
+                            actualRows++;
+                        }
+                    }
+                    else
+                    {
+                        var s = idRaw?.ToString();
+                        actualRows = string.IsNullOrWhiteSpace(s) ? 0 : 1;
                     }
                 }
-                else
+                finally
                 {
-                    var s = idRaw?.ToString();
-                    actualRows = string.IsNullOrWhiteSpace(s) ? 0 : 1;
+                    try { if (idRange != null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(idRange); } catch { }
                 }
             }
 
@@ -434,20 +524,28 @@ namespace RecoTool.Helpers
 
         private object[,] ReadDataBlock(Worksheet worksheet, int startRow, int actualRows, int minCol, int maxCol)
         {
-            Range block = worksheet.Range[
-                worksheet.Cells[startRow, minCol],
-                worksheet.Cells[startRow + actualRows - 1, maxCol]
-            ];
-            object blockRaw = block.Value2;
-            if (blockRaw is object[,] blockVals)
+            Range block = null;
+            try
             {
-                return blockVals;
-            }
+                block = worksheet.Range[
+                    worksheet.Cells[startRow, minCol],
+                    worksheet.Cells[startRow + actualRows - 1, maxCol]
+                ];
+                object blockRaw = block.Value2;
+                if (blockRaw is object[,] blockVals)
+                {
+                    return blockVals;
+                }
 
-            // Single cell block (rare): normalize to 1x1
-            var single = new object[2, 2];
-            single[1, 1] = blockRaw;
-            return single;
+                // Single cell block (rare): normalize to 1x1
+                var single = new object[2, 2];
+                single[1, 1] = blockRaw;
+                return single;
+            }
+            finally
+            {
+                try { if (block != null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(block); } catch { }
+            }
         }
 
         private List<Dictionary<string, object>> MaterializeRows(

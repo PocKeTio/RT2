@@ -76,6 +76,7 @@ namespace RecoTool.Windows
         private string _filterCountry;
         private decimal? _filterMinAmount;
         private decimal? _filterMaxAmount;
+        private bool _filterPotentialDuplicates;
         private DateTime? _filterFromDate;
         private DateTime? _filterToDate;
         private int? _filterAction;
@@ -994,6 +995,7 @@ namespace RecoTool.Windows
             public string DwGuaranteeId { get; set; }
             public string DwCommissionId { get; set; }
             public string GuaranteeType { get; set; }
+            public bool? PotentialDuplicates { get; set; }
         }
 
         private FilterPreset GetCurrentFilterPreset()
@@ -1016,7 +1018,8 @@ namespace RecoTool.Windows
                 EventNum = _filterEventNum,
                 DwGuaranteeId = _filterDwGuaranteeId,
                 DwCommissionId = _filterDwCommissionId,
-                GuaranteeType = _filterGuaranteeType
+                GuaranteeType = _filterGuaranteeType,
+                PotentialDuplicates = _filterPotentialDuplicates
             };
         }
 
@@ -1047,6 +1050,8 @@ namespace RecoTool.Windows
                 FilterDwGuaranteeId = p.DwGuaranteeId;
                 FilterDwCommissionId = p.DwCommissionId;
                 FilterGuaranteeType = p.GuaranteeType;
+                // Default to false if not present in legacy presets
+                FilterPotentialDuplicates = p.PotentialDuplicates ?? false;
             }
             catch { }
         }
@@ -1215,6 +1220,11 @@ namespace RecoTool.Windows
                     PopulateReferentialOptions();
                     // Charger les utilisateurs pour le filtre d'assignation
                     await LoadAssigneeOptionsAsync();
+
+                    // Charger dynamiquement les options des filtres de haut de page
+                    await LoadGuaranteeStatusOptionsAsync();
+                    await LoadGuaranteeTypeOptionsAsync();
+                    await LoadCurrencyOptionsAsync();
                 }
                 // Ne pas effectuer de chargement automatique ici; la page parente appliquera
                 // les filtres et la mise en page, puis appellera explicitement Refresh().
@@ -1280,6 +1290,14 @@ namespace RecoTool.Windows
             get => _assigneeOptions;
             private set { _assigneeOptions = value; OnPropertyChanged(nameof(AssigneeOptions)); }
         }
+
+        // Dynamic options for filter ComboBoxes (Currency / Guarantee Type / Guarantee Status)
+        private ObservableCollection<string> _currencyOptions = new ObservableCollection<string>();
+        private ObservableCollection<string> _guaranteeTypeOptions = new ObservableCollection<string>();
+        private ObservableCollection<string> _guaranteeStatusOptions = new ObservableCollection<string>();
+        public ObservableCollection<string> CurrencyOptions { get => _currencyOptions; private set { _currencyOptions = value; OnPropertyChanged(nameof(CurrencyOptions)); } }
+        public ObservableCollection<string> GuaranteeTypeOptions { get => _guaranteeTypeOptions; private set { _guaranteeTypeOptions = value; OnPropertyChanged(nameof(GuaranteeTypeOptions)); } }
+        public ObservableCollection<string> GuaranteeStatusOptions { get => _guaranteeStatusOptions; private set { _guaranteeStatusOptions = value; OnPropertyChanged(nameof(GuaranteeStatusOptions)); } }
 
         public string CurrentView
         {
@@ -1728,6 +1746,10 @@ namespace RecoTool.Windows
                 _currentCountryId = cc?.CNT_Id;
                 _filterCountry = cc?.CNT_Name;
                 UpdateCountryPivotReceivableInfo();
+                // Recharger les options de devise dépendantes du pays
+                _ = LoadCurrencyOptionsAsync();
+                _ = LoadGuaranteeTypeOptionsAsync();
+                _ = LoadGuaranteeStatusOptionsAsync();
                 Refresh();
             }
             catch { }
@@ -2036,6 +2058,13 @@ namespace RecoTool.Windows
             set { _filterAssigneeId = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterAssigneeId)); ScheduleApplyFiltersDebounced(); }
         }
 
+        // New: Potential Duplicates filter (checkbox)
+        public bool FilterPotentialDuplicates
+        {
+            get => _filterPotentialDuplicates;
+            set { _filterPotentialDuplicates = value; OnPropertyChanged(nameof(FilterPotentialDuplicates)); ScheduleApplyFiltersDebounced(); }
+        }
+
         #endregion
 
         private async Task LoadAssigneeOptionsAsync()
@@ -2055,6 +2084,63 @@ namespace RecoTool.Windows
             catch { }
         }
 
+        // --- Dynamic top filter options loading ---
+        private async Task LoadCurrencyOptionsAsync()
+        {
+            try
+            {
+                if (_reconciliationService == null) return;
+                var countryId = _currentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                CurrencyOptions.Clear();
+                // Empty option first to allow clearing the filter
+                CurrencyOptions.Add(string.Empty);
+                if (string.IsNullOrWhiteSpace(countryId)) return;
+                var list = await _reconciliationService.GetDistinctCurrenciesAsync(countryId);
+                foreach (var s in list)
+                {
+                    if (!string.IsNullOrWhiteSpace(s)) CurrencyOptions.Add(s);
+                }
+            }
+            catch { }
+        }
+
+        private async Task LoadGuaranteeStatusOptionsAsync()
+        {
+            try
+            {
+                if (_reconciliationService == null) return;
+                GuaranteeStatusOptions.Clear();
+                GuaranteeStatusOptions.Add(string.Empty);
+                var list = await _reconciliationService.GetDistinctGuaranteeStatusesAsync();
+                foreach (var s in list)
+                {
+                    if (!string.IsNullOrWhiteSpace(s)) GuaranteeStatusOptions.Add(s);
+                }
+            }
+            catch { }
+        }
+
+        private async Task LoadGuaranteeTypeOptionsAsync()
+        {
+            try
+            {
+                if (_reconciliationService == null) return;
+                GuaranteeTypeOptions.Clear();
+                GuaranteeTypeOptions.Add(string.Empty);
+                var raw = await _reconciliationService.GetDistinctGuaranteeTypesAsync();
+                // Map DB codes to UI-friendly strings using the existing converter
+                var conv = new GuaranteeTypeDisplayConverter();
+                foreach (var code in raw)
+                {
+                    if (string.IsNullOrWhiteSpace(code)) continue;
+                    var ui = conv.Convert(code, typeof(string), null, System.Globalization.CultureInfo.InvariantCulture)?.ToString();
+                    if (!string.IsNullOrWhiteSpace(ui) && !GuaranteeTypeOptions.Any(s => string.Equals(s, ui, StringComparison.OrdinalIgnoreCase)))
+                        GuaranteeTypeOptions.Add(ui);
+                }
+            }
+            catch { }
+        }
+
         #region Editing Handlers (persist user field changes)
 
         private async void UserFieldComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2063,17 +2149,36 @@ namespace RecoTool.Windows
             {
                 var cb = sender as ComboBox;
                 if (cb == null) return;
-                if (cb.SelectedValue == null) return;
                 var row = cb.DataContext as ReconciliationViewData;
                 if (row == null) return;
 
                 // Determine which field changed via Tag
                 var tag = cb.Tag as string;
                 int? newId = null;
-                try { newId = cb.SelectedValue as int?; } catch { }
-                if (newId == null)
+                // Accept explicit null to clear selection; otherwise attempt to convert to int?
+                try
                 {
-                    if (int.TryParse(cb.SelectedValue?.ToString(), out var parsed)) newId = parsed; else return;
+                    if (cb.SelectedValue == null)
+                    {
+                        newId = null;
+                    }
+                    else if (cb.SelectedValue is int directInt)
+                    {
+                        newId = directInt;
+                    }
+                    else if (int.TryParse(cb.SelectedValue.ToString(), out var parsed))
+                    {
+                        newId = parsed;
+                    }
+                    else
+                    {
+                        // If we cannot parse, treat as clear
+                        newId = null;
+                    }
+                }
+                catch
+                {
+                    newId = null;
                 }
 
                 // Load current reconciliation from DB to avoid overwriting unrelated fields
@@ -2316,6 +2421,10 @@ namespace RecoTool.Windows
             if (!string.IsNullOrWhiteSpace(_filterAssigneeId))
                 filtered = filtered.Where(x => string.Equals(x.Assignee, _filterAssigneeId, StringComparison.OrdinalIgnoreCase));
 
+            // Potential Duplicates
+            if (_filterPotentialDuplicates)
+                filtered = filtered.Where(x => x.IsPotentialDuplicate);
+
             // Update display with pagination (first 100 lines) but totals on full filtered set
             var filteredList = filtered.ToList();
             _filteredData = filteredList;
@@ -2468,6 +2577,9 @@ namespace RecoTool.Windows
             _filterKpiId = null;
             _filterIncidentTypeId = null;
             _filterAssigneeId = null;
+            _filterPotentialDuplicates = false;
+            // Keep UI in sync for the checkbox
+            OnPropertyChanged(nameof(FilterPotentialDuplicates));
             // Preserve Status (Live/Archived) filter provided by the parent page
             // _filterStatus is intentionally NOT cleared here
 
@@ -3330,6 +3442,11 @@ namespace RecoTool.Windows
     #endregion
 
     // Converters for UserField ComboBoxes
+    public class UserFieldOption
+    {
+        public int? USR_ID { get; set; }
+        public string USR_FieldName { get; set; }
+    }
     public class UserFieldOptionsConverter : IMultiValueConverter
     {
         // values: [0]=Account_ID (string), [1]=AllUserFields (IReadOnlyList<UserField>), [2]=CurrentCountry (Country)
@@ -3365,10 +3482,12 @@ namespace RecoTool.Windows
                     // else unknown account side: keep all items for that category
                 }
 
-                // Prepend null placeholder to allow clearing selection in ComboBoxes
-                var list = new List<object>();
-                list.Add(null);
-                list.AddRange(query.OrderBy(u => u.USR_FieldName));
+                // Build a list of UserFieldOption and prepend a placeholder with nullable USR_ID
+                var list = new List<UserFieldOption>();
+                list.Add(new UserFieldOption { USR_ID = null, USR_FieldName = string.Empty });
+                list.AddRange(query
+                    .OrderBy(u => u.USR_FieldName)
+                    .Select(u => new UserFieldOption { USR_ID = u.USR_ID, USR_FieldName = u.USR_FieldName }));
                 return list;
             }
             catch { return Array.Empty<object>(); }

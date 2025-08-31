@@ -49,7 +49,7 @@ namespace RecoTool.Models
         /// </summary>
         public string GetUniqueKey()
         {
-            return $"{Country}_{Account_ID}_{Event_Num}_{ReconciliationOrigin_Num}_{Operation_Date?.ToString("yyyyMMdd")}_{SignedAmount}";
+            return $"{Event_Num}_{RawLabel}_{ReconciliationOrigin_Num}_{Operation_Date?.ToString("yyyyMMdd")}_{SignedAmount}";
         }
     }
 }

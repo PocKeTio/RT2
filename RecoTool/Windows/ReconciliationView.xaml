@@ -12,6 +12,14 @@
         <local:UserFieldIdToNameConverter x:Key="UserFieldIdToNameConverter" />
         <local:ActionColorConverter x:Key="ActionColorConverter" />
         <local:AssigneeIdToNameConverter x:Key="AssigneeIdToNameConverter" />
+        <!-- Item template that renders null items as an empty option so users can clear selection -->
+        <DataTemplate x:Key="UserFieldItemTemplate">
+            <TextBlock>
+                <TextBlock.Text>
+                    <Binding Path="USR_FieldName"/>
+                </TextBlock.Text>
+            </TextBlock>
+        </DataTemplate>
         <local:GuaranteeTypeDisplayConverter x:Key="GuaranteeTypeDisplayConverter" />
     </UserControl.Resources>
     <Grid Background="{DynamicResource BNPBackground}">
@@ -267,14 +275,8 @@
                                     <TextBlock Grid.Column="0" Text="Currency:" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
                                         <ComboBox x:Name="CurrencyComboBox" Margin="5,0" BorderThickness="0" Background="Transparent" Style="{StaticResource ModernComboBoxStyle}"
-                                                  SelectedValue="{Binding FilterCurrency, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  SelectedValuePath="Content">
-                                            <!-- Empty option allows clearing the filter -->
-                                            <ComboBoxItem Content=""/>
-                                            <ComboBoxItem Content="EUR"/>
-                                            <ComboBoxItem Content="USD"/>
-                                            <ComboBoxItem Content="GBP"/>
-                                        </ComboBox>
+                                                  ItemsSource="{Binding CurrencyOptions}"
+                                                  SelectedItem="{Binding FilterCurrency, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                     </Border>
                                 </Grid>
 
@@ -350,13 +352,8 @@
                                     <TextBlock Grid.Column="0" Text="Guarantee Type:" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
                                         <ComboBox x:Name="TypeComboBox" Margin="5,0" BorderThickness="0" Background="Transparent" Style="{StaticResource ModernComboBoxStyle}"
-                                                  SelectedValue="{Binding FilterGuaranteeType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  SelectedValuePath="Content">
-                                            <ComboBoxItem Content=""/>
-                                            <ComboBoxItem Content="REISSUANCE"/>
-                                            <ComboBoxItem Content="ISSUANCE"/>
-                                            <ComboBoxItem Content="ADVISING"/>
-                                        </ComboBox>
+                                                  ItemsSource="{Binding GuaranteeTypeOptions}"
+                                                  SelectedItem="{Binding FilterGuaranteeType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                     </Border>
                                 </Grid>
 
@@ -397,13 +394,9 @@
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Guarantee Status:" VerticalAlignment="Center"/>
-                                    <ComboBox x:Name="GuaranteeStatusComboBox" Grid.Column="1" Margin="5,0,0,0"
-                                              SelectedValue="{Binding FilterGuaranteeStatus, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                              SelectedValuePath="Content">
-                                        <ComboBoxItem Content=""/>
-                                        <ComboBoxItem Content="LIVE"/>
-                                        <ComboBoxItem Content="CANCELLED"/>
-                                    </ComboBox>
+                                    <ComboBox x:Name="GuaranteeStatusComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
+                                              ItemsSource="{Binding GuaranteeStatusOptions}"
+                                              SelectedItem="{Binding FilterGuaranteeStatus, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                 </Grid>
                             </StackPanel>
                         </GroupBox>
@@ -426,8 +419,8 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Action:" VerticalAlignment="Center"/>
                                     <ComboBox x:Name="ActionComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
-                                              DisplayMemberPath="USR_FieldName"
                                               SelectedValuePath="USR_ID"
+                                              ItemTemplate="{StaticResource UserFieldItemTemplate}"
                                               SelectedValue="{Binding FilterActionId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
                                         <ComboBox.ItemsSource>
                                             <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Action">
@@ -446,8 +439,8 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="KPI:" VerticalAlignment="Center"/>
                                     <ComboBox x:Name="KPIComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
-                                              DisplayMemberPath="USR_FieldName"
                                               SelectedValuePath="USR_ID"
+                                              ItemTemplate="{StaticResource UserFieldItemTemplate}"
                                               SelectedValue="{Binding FilterKpiId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
                                         <ComboBox.ItemsSource>
                                             <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="KPI">
@@ -466,8 +459,8 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Incident Type:" VerticalAlignment="Center"/>
                                     <ComboBox x:Name="IncidentTypeComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
-                                              DisplayMemberPath="USR_FieldName"
                                               SelectedValuePath="USR_ID"
+                                              ItemTemplate="{StaticResource UserFieldItemTemplate}"
                                               SelectedValue="{Binding FilterIncidentTypeId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
                                         <ComboBox.ItemsSource>
                                             <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Incident Type">
@@ -477,6 +470,18 @@
                                             </MultiBinding>
                                         </ComboBox.ItemsSource>
                                     </ComboBox>
+                                </Grid>
+
+                                <!-- Potential Duplicates -->
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Potential Duplicates:" VerticalAlignment="Center"/>
+                                    <CheckBox x:Name="PotentialDuplicatesCheckBox" Grid.Column="1" Margin="5,0,0,0"
+                                              Content="Show only potential duplicates"
+                                              IsChecked="{Binding FilterPotentialDuplicates, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                 </Grid>
 
                                 <!-- Assignee filter -->

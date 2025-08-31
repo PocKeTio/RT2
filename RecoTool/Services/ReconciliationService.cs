@@ -220,6 +220,13 @@ namespace RecoTool.Services
             return await ExecuteQueryAsync<Reconciliation>(query, _connectionString, (int)ActionType.Trigger);
         }
 
+        // Minimal preset shape to parse JSON snapshot comment embedded by the UI
+        // Only include the fields we actually need on the service side
+        private class ViewFilterPreset
+        {
+            public bool? PotentialDuplicates { get; set; }
+        }
+
         /// <summary>
         /// Récupère les données jointes Ambre + Réconciliation
         /// </summary>
@@ -232,15 +239,61 @@ namespace RecoTool.Services
             string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
 
             string ambreJoin = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre AS a" : $"(SELECT * FROM [{ambreEsc}].T_Data_Ambre) AS a";
+            // Base AMBRE source for subqueries/aggregates (no alias), used to compute duplicates safely in the main query
+            string ambreBase = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre" : $"[{ambreEsc}].T_Data_Ambre";
+
+            // Detect PotentialDuplicates flag from optional JSON comment prefix
+            bool dupOnly = false;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(filterSql))
+                {
+                    var mDup = Regex.Match(filterSql, @"^/\*JSON:(.*?)\*/", RegexOptions.Singleline);
+                    if (mDup.Success)
+                    {
+                        var json = mDup.Groups[1].Value;
+                        var preset = JsonSerializer.Deserialize<ViewFilterPreset>(json);
+                        dupOnly = preset?.PotentialDuplicates == true;
+                    }
+                }
+            }
+            catch { dupOnly = false; }
 
             string query;
             if (dashboardOnly)
             {
-                query = $@"SELECT a.ID, a.Account_ID, a.CCY, a.SignedAmount, a.Operation_Date, a.Value_Date, a.CreationDate, a.DeleteDate,
-                                   r.Action, r.KPI, r.RiskyItem
-                            FROM {ambreJoin}
-                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID
-                            WHERE a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
+                query = $@"
+                        SELECT 
+                            a.ID, 
+                            a.Account_ID, 
+                            a.CCY, 
+                            a.SignedAmount, 
+                            a.Operation_Date, 
+                            a.Value_Date, 
+                            a.CreationDate, 
+                            a.DeleteDate,
+                            r.Action, 
+                            r.KPI, 
+                            r.RiskyItem,
+                            IIF(dup.DupCount > 1, True, False) AS IsPotentialDuplicate
+                        FROM 
+                            (
+                                (
+                                    {ambreJoin}
+                                    LEFT JOIN T_Reconciliation AS r 
+                                        ON a.ID = r.ID
+                                )
+                                LEFT JOIN 
+                                    (
+                                        SELECT Event_Num, COUNT(*) AS DupCount 
+                                        FROM {ambreBase} 
+                                        GROUP BY Event_Num
+                                    ) AS dup 
+                                    ON dup.Event_Num = a.Event_Num
+                            )
+                        WHERE 
+                            a.DeleteDate IS NULL 
+                            AND (r.DeleteDate IS NULL) ";
             }
             else
             {
@@ -269,6 +322,7 @@ namespace RecoTool.Services
                                    r.RiskyItem,
                                    r.ReasonNonRisky,
                                    r.ModifiedBy AS Reco_ModifiedBy,
+                                   IIF(dup.DupCount > 1, True, False) AS IsPotentialDuplicate,
                                     NULL AS SYNDICATE,
                                     g.OUTSTANDING_AMOUNT AS GUARANTEE_AMOUNT,
                                     g.CURRENCYNAME AS GUARANTEE_CURRENCY,
@@ -345,11 +399,18 @@ namespace RecoTool.Services
                                   dInv.DEBTOR_ACCOUNT_NUMBER AS I_DEBTOR_ACCOUNT_NUMBER,
                                   dInv.CREDITOR_PARTY_ID AS I_CREDITOR_PARTY_ID,
                                   dInv.CREDITOR_ACCOUNT_NUMBER AS I_CREDITOR_ACCOUNT_NUMBER
-                           FROM (({ambreJoin}
+                           FROM ((({ambreJoin}
                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
                            LEFT JOIN {dwDataJoinInv} ON r.DWINGS_InvoiceID = dInv.INVOICE_ID)
-                           LEFT JOIN {dwGuaranteeJoin} ON  g.GUARANTEE_ID = r.DWINGS_GuaranteeID
+                           LEFT JOIN {dwGuaranteeJoin} ON  g.GUARANTEE_ID = r.DWINGS_GuaranteeID)
+                           LEFT JOIN (SELECT Event_Num, COUNT(*) AS DupCount FROM {ambreBase} GROUP BY Event_Num) AS dup ON dup.Event_Num = a.Event_Num
                            WHERE 1=1";
+            }
+
+            // Apply Potential Duplicates predicate if requested via JSON
+            if (dupOnly)
+            {
+                query += " AND Nz(dup.DupCount,0) > 1";
             }
 
             if (!string.IsNullOrEmpty(filterSql))
@@ -393,6 +454,62 @@ namespace RecoTool.Services
             swExec.Stop();
 
             return list;
+        }
+
+        // Distinct values for dynamic filter ComboBoxes
+        public async Task<List<string>> GetDistinctCurrenciesAsync(string countryId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(countryId)) return new List<string>();
+                var ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
+                if (string.IsNullOrWhiteSpace(ambrePath) || !File.Exists(ambrePath)) return new List<string>();
+                var ambreCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={ambrePath};";
+                var query = @"SELECT DISTINCT CCY FROM T_Data_Ambre WHERE DeleteDate IS NULL AND CCY IS NOT NULL AND CCY <> '' ORDER BY CCY";
+                var values = await ExecuteScalarListAsync<string>(query, ambreCs).ConfigureAwait(false);
+                return values?.Where(s => !string.IsNullOrWhiteSpace(s))
+                              .Select(s => s.Trim())
+                              .Distinct(StringComparer.OrdinalIgnoreCase)
+                              .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                              .ToList() ?? new List<string>();
+            }
+            catch { return new List<string>(); }
+        }
+
+        public async Task<List<string>> GetDistinctGuaranteeStatusesAsync()
+        {
+            try
+            {
+                var dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
+                if (string.IsNullOrWhiteSpace(dwPath) || !File.Exists(dwPath)) return new List<string>();
+                var dwCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={dwPath};";
+                var query = @"SELECT DISTINCT GUARANTEE_STATUS FROM T_DW_Guarantee WHERE GUARANTEE_STATUS IS NOT NULL AND GUARANTEE_STATUS <> '' ORDER BY GUARANTEE_STATUS";
+                var values = await ExecuteScalarListAsync<string>(query, dwCs).ConfigureAwait(false);
+                return values?.Where(s => !string.IsNullOrWhiteSpace(s))
+                              .Select(s => s.Trim())
+                              .Distinct(StringComparer.OrdinalIgnoreCase)
+                              .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                              .ToList() ?? new List<string>();
+            }
+            catch { return new List<string>(); }
+        }
+
+        public async Task<List<string>> GetDistinctGuaranteeTypesAsync()
+        {
+            try
+            {
+                var dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
+                if (string.IsNullOrWhiteSpace(dwPath) || !File.Exists(dwPath)) return new List<string>();
+                var dwCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={dwPath};";
+                var query = @"SELECT DISTINCT GUARANTEE_TYPE FROM T_DW_Guarantee WHERE GUARANTEE_TYPE IS NOT NULL AND GUARANTEE_TYPE <> '' ORDER BY GUARANTEE_TYPE";
+                var values = await ExecuteScalarListAsync<string>(query, dwCs).ConfigureAwait(false);
+                return values?.Where(s => !string.IsNullOrWhiteSpace(s))
+                              .Select(s => s.Trim())
+                              .Distinct(StringComparer.OrdinalIgnoreCase)
+                              .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                              .ToList() ?? new List<string>();
+            }
+            catch { return new List<string>(); }
         }
 
         #endregion

@@ -209,6 +209,9 @@ namespace RecoTool.Services
             }
         }
 
+        // Derived duplicate indicator from service query
+        public bool IsPotentialDuplicate { get; set; }
+
         private bool _isUpdated;
         public bool IsUpdated
         {

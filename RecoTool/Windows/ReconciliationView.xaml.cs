@@ -3289,6 +3289,44 @@ namespace RecoTool.Windows
         }
     }
 
+    // Converter: map DB guarantee type codes to friendly labels and back
+    public class GuaranteeTypeDisplayConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            try
+            {
+                var s = value?.ToString()?.Trim();
+                if (string.IsNullOrEmpty(s)) return string.Empty;
+                switch (s.ToUpperInvariant())
+                {
+                    case "REISSU": return "REISSUANCE";
+                    case "ISSU": return "ISSUANCE";
+                    case "NOTIF": return "ADVISING";
+                    default: return s;
+                }
+            }
+            catch { return value?.ToString() ?? string.Empty; }
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            try
+            {
+                var s = value?.ToString()?.Trim();
+                if (string.IsNullOrEmpty(s)) return null;
+                switch (s.ToUpperInvariant())
+                {
+                    case "REISSUANCE": return "REISSU";
+                    case "ISSUANCE": return "ISSU";
+                    case "ADVISING": return "NOTIF";
+                    default: return s;
+                }
+            }
+            catch { return value; }
+        }
+    }
+
     #endregion
 
     // Converters for UserField ComboBoxes

@@ -118,8 +118,8 @@ namespace RecoTool.Models
             if (string.IsNullOrEmpty(text))
                 return null;
 
-            // Pattern pour BGI + année (4 chiffres) + mois (2 chiffres) + numéro (X chiffres)
-            var regex = new System.Text.RegularExpressions.Regex(@"BGI\d{6,}");
+            // Pattern pour BGI + année (4 chiffres) + mois (2 chiffres) + numéro (7 chiffres)
+            var regex = new System.Text.RegularExpressions.Regex(@"BGI\d{13}");
             var match = regex.Match(text);
             
             return match.Success ? match.Value : null;

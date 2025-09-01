@@ -154,7 +154,6 @@ namespace RecoTool.Services
         public string G_CONTROLER { get; set; }
         public string G_AUTOMATICBOOKOFF { get; set; }
         public string G_NATUREOFDEAL { get; set; }
-        public string G_GUARANTEE_TYPE { get; set; }
 
         // DWINGS Invoice extra fields (prefixed with I_)
         public string I_REQUESTED_INVOICE_AMOUNT { get; set; }

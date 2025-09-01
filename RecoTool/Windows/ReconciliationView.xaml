@@ -973,24 +973,22 @@
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
 
-                            <DataGridTextColumn Header="DW Syndicate" Binding="{Binding SYNDICATE}" Width="100"/>
-                            <DataGridTextColumn Header="DW Currency" Binding="{Binding GUARANTEE_CURRENCY}" Width="80"/>
-                            <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120"/>
+                            <DataGridTextColumn Header="DW Currency" Binding="{Binding GUARANTEE_CURRENCY}" Width="80" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True"/>
                             
                             <!-- DWINGS Guarantee extended fields -->
-                            <DataGridTextColumn Header="G Nature" Binding="{Binding G_NATURE}" Width="110"/>
-                            <DataGridTextColumn Header="G Event Status" Binding="{Binding G_EVENT_STATUS}" Width="120"/>
-                            <DataGridTextColumn Header="G Issue Date" Binding="{Binding G_ISSUEDATE}" Width="110"/>
-                            <DataGridTextColumn Header="G Party ID" Binding="{Binding G_PARTY_ID}" Width="110"/>
-                            <DataGridTextColumn Header="G Name" Binding="{Binding G_NAME1}" Width="160"/>
+                            <DataGridTextColumn Header="NatureOfDeal" Binding="{Binding G_NATURE}" Width="110" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Event Status" Binding="{Binding G_EVENT_STATUS}" Width="120" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Issue Date" Binding="{Binding G_ISSUEDATE}" Width="110" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="PartyID" Binding="{Binding G_PARTY_ID}" Width="110" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="PartyName" Binding="{Binding G_NAME1}" Width="160" IsReadOnly="True"/>
                             
                             <!-- DWINGS Invoice extended fields -->
-                            <DataGridTextColumn Header="I Req Amount" Binding="{Binding I_REQUESTED_INVOICE_AMOUNT}" Width="130"/>
-                            <DataGridTextColumn Header="I Curr" Binding="{Binding I_BILLING_CURRENCY}" Width="70"/>
-                            <DataGridTextColumn Header="I Start" Binding="{Binding I_START_DATE}" Width="110"/>
-                            <DataGridTextColumn Header="I End" Binding="{Binding I_END_DATE}" Width="110"/>
-                            <DataGridTextColumn Header="I Status" Binding="{Binding I_T_INVOICE_STATUS}" Width="120"/>
-                            <DataGridTextColumn Header="I BC Ref" Binding="{Binding I_BUSINESS_CASE_REFERENCE}" Width="150"/>
+                            <DataGridTextColumn Header="Req Amount" Binding="{Binding I_REQUESTED_INVOICE_AMOUNT}" Width="130" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Cur" Binding="{Binding I_BILLING_CURRENCY}" Width="70" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="StartDate" Binding="{Binding I_START_DATE}" Width="110" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="EndDate" Binding="{Binding I_END_DATE}" Width="110" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Invoice Status" Binding="{Binding I_T_INVOICE_STATUS}" Width="120" IsReadOnly="True"/>
 
                         </DataGrid.Columns>
                     </DataGrid>

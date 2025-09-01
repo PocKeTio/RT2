@@ -632,21 +632,9 @@ namespace RecoTool.Services
         /// </summary>
         public string GetControlConnectionString(string countryId = null)
         {
-            // 1) Explicit single Control DB path (legacy single DB) wins
-            var globalControlPath = GetCentralConfig("ControlDatabasePath");
-            if (!string.IsNullOrWhiteSpace(globalControlPath))
-                return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={globalControlPath};";
-
-            // 2) Per-country Control DB
+            // Control DB uses the same Access file as the global lock database
             var cid = countryId ?? CurrentCountryId;
-            var perCountryPath = GetControlDbPath(cid);
-            if (!string.IsNullOrWhiteSpace(perCountryPath))
-                return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={perCountryPath};";
-
-            // No valid Control DB configuration found
-            throw new InvalidOperationException(
-                "Control DB is mandatory. Configure either 'ControlDatabasePath' for a single Control DB, or " +
-                "use 'CountryDatabaseDirectory' with 'ControlDatabasePrefix' (or fallback to 'CountryDatabasePrefix') to build a per-country Control DB path.");
+            return GetRemoteLockConnectionString(cid);
         }
 
         /// <summary>

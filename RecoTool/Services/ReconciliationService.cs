@@ -1,22 +1,23 @@
+using Microsoft.Office.Interop.Excel;
+using OfflineFirstAccess.ChangeTracking;
+using OfflineFirstAccess.Helpers;
+using RecoTool.Models;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Data;
 using System.Data.Common;
 using System.Data.OleDb;
-using System.Linq;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using RecoTool.Models;
-using OfflineFirstAccess.ChangeTracking;
-using OfflineFirstAccess.Helpers;
 using System.Diagnostics;
-using System.IO;
-using System.Text;
-using System.Threading;
-using System.ComponentModel;
-using System.Reflection;
 using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace RecoTool.Services
 {
@@ -328,7 +329,6 @@ namespace RecoTool.Services
                                     g.CURRENCYNAME AS GUARANTEE_CURRENCY,
                                     g.GUARANTEE_STATUS AS GUARANTEE_STATUS,
                                     g.GUARANTEE_TYPE AS GUARANTEE_TYPE,
-                                   dInv.INVOICE_ID AS INVOICE_ID,
                                     NULL AS COMMISSION_ID,
                                     g.GUARANTEE_ID,
 
@@ -359,52 +359,57 @@ namespace RecoTool.Services
                                   g.CONTROLER AS G_CONTROLER,
                                   g.AUTOMATICBOOKOFF AS G_AUTOMATICBOOKOFF,
                                   g.NATUREOFDEAL AS G_NATUREOFDEAL,
-                                  g.GUARANTEE_TYPE AS G_GUARANTEE_TYPE,
+                                  g.GUARANTEE_TYPE AS G_GUARANTEE_TYPE
 
-                                  dInv.REQUESTED_INVOICE_AMOUNT AS I_REQUESTED_INVOICE_AMOUNT,
-                                  dInv.SENDER_NAME AS I_SENDER_NAME,
-                                  dInv.RECEIVER_NAME AS I_RECEIVER_NAME,
-                                  dInv.SENDER_REFERENCE AS I_SENDER_REFERENCE,
-                                  dInv.RECEIVER_REFERENCE AS I_RECEIVER_REFERENCE,
-                                  dInv.T_INVOICE_STATUS AS I_T_INVOICE_STATUS,
-                                  dInv.BILLING_AMOUNT AS I_BILLING_AMOUNT,
-                                  dInv.BILLING_CURRENCY AS I_BILLING_CURRENCY,
-                                  dInv.START_DATE AS I_START_DATE,
-                                  dInv.END_DATE AS I_END_DATE,
-                                  dInv.FINAL_AMOUNT AS I_FINAL_AMOUNT,
-                                  dInv.T_COMMISSION_PERIOD_STATUS AS I_T_COMMISSION_PERIOD_STATUS,
-                                  dInv.BUSINESS_CASE_REFERENCE AS I_BUSINESS_CASE_REFERENCE,
-                                  dInv.BUSINESS_CASE_ID AS I_BUSINESS_CASE_ID,
-                                  dInv.POSTING_PERIODICITY AS I_POSTING_PERIODICITY,
-                                  dInv.EVENT_ID AS I_EVENT_ID,
-                                  dInv.COMMENTS AS I_COMMENTS,
-                                  dInv.SENDER_ACCOUNT_NUMBER AS I_SENDER_ACCOUNT_NUMBER,
-                                  dInv.SENDER_ACCOUNT_BIC AS I_SENDER_ACCOUNT_BIC,
-                                  dInv.RECEIVER_ACCOUNT_NUMBER AS I_RECEIVER_ACCOUNT_NUMBER,
-                                  dInv.RECEIVER_ACCOUNT_BIC AS I_RECEIVER_ACCOUNT_BIC,
-                                  dInv.REQUESTED_AMOUNT AS I_REQUESTED_AMOUNT,
-                                  dInv.EXECUTED_AMOUNT AS I_EXECUTED_AMOUNT,
-                                  dInv.REQUESTED_EXECUTION_DATE AS I_REQUESTED_EXECUTION_DATE,
-                                  dInv.T_PAYMENT_REQUEST_STATUS AS I_T_PAYMENT_REQUEST_STATUS,
-                                  dInv.BGPMT AS I_BGPMT,
-                                  dInv.DEBTOR_ACCOUNT_ID AS I_DEBTOR_ACCOUNT_ID,
-                                  dInv.CREDITOR_ACCOUNT_ID AS I_CREDITOR_ACCOUNT_ID,
-                                  dInv.MT_STATUS AS I_MT_STATUS,
-                                  dInv.REMINDER_NUMBER AS I_REMINDER_NUMBER,
-                                  dInv.ERROR_MESSAGE AS I_ERROR_MESSAGE,
-                                  dInv.DEBTOR_PARTY_ID AS I_DEBTOR_PARTY_ID,
-                                  dInv.PAYMENT_METHOD AS I_PAYMENT_METHOD,
-                                  dInv.PAYMENT_TYPE AS I_PAYMENT_TYPE,
-                                  dInv.DEBTOR_PARTY_NAME AS I_DEBTOR_PARTY_NAME,
-                                  dInv.DEBTOR_ACCOUNT_NUMBER AS I_DEBTOR_ACCOUNT_NUMBER,
-                                  dInv.CREDITOR_PARTY_ID AS I_CREDITOR_PARTY_ID,
-                                  dInv.CREDITOR_ACCOUNT_NUMBER AS I_CREDITOR_ACCOUNT_NUMBER
-                           FROM ((({ambreJoin}
+
+                           FROM (({ambreJoin}
                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
-                           LEFT JOIN {dwDataJoinInv} ON r.DWINGS_InvoiceID = dInv.INVOICE_ID)
                            LEFT JOIN {dwGuaranteeJoin} ON  g.GUARANTEE_ID = r.DWINGS_GuaranteeID)
                            LEFT JOIN (SELECT Event_Num, COUNT(*) AS DupCount FROM {ambreBase} GROUP BY Event_Num) AS dup ON dup.Event_Num = a.Event_Num
                            WHERE 1=1";
+
+                //dInv.INVOICE_ID AS INVOICE_ID,
+                
+                //LEFT JOIN { dwDataJoinInv} ON r.DWINGS_InvoiceID = dInv.INVOICE_ID)
+
+                //dInv.REQUESTED_INVOICE_AMOUNT AS I_REQUESTED_INVOICE_AMOUNT,
+                //                  dInv.SENDER_NAME AS I_SENDER_NAME,
+                //                  dInv.RECEIVER_NAME AS I_RECEIVER_NAME,
+                //                  dInv.SENDER_REFERENCE AS I_SENDER_REFERENCE,
+                //                  dInv.RECEIVER_REFERENCE AS I_RECEIVER_REFERENCE,
+                //                  dInv.T_INVOICE_STATUS AS I_T_INVOICE_STATUS,
+                //                  dInv.BILLING_AMOUNT AS I_BILLING_AMOUNT,
+                //                  dInv.BILLING_CURRENCY AS I_BILLING_CURRENCY,
+                //                  dInv.START_DATE AS I_START_DATE,
+                //                  dInv.END_DATE AS I_END_DATE,
+                //                  dInv.FINAL_AMOUNT AS I_FINAL_AMOUNT,
+                //                  dInv.T_COMMISSION_PERIOD_STATUS AS I_T_COMMISSION_PERIOD_STATUS,
+                //                  dInv.BUSINESS_CASE_REFERENCE AS I_BUSINESS_CASE_REFERENCE,
+                //                  dInv.BUSINESS_CASE_ID AS I_BUSINESS_CASE_ID,
+                //                  dInv.POSTING_PERIODICITY AS I_POSTING_PERIODICITY,
+                //                  dInv.EVENT_ID AS I_EVENT_ID,
+                //                  dInv.COMMENTS AS I_COMMENTS,
+                //                  dInv.SENDER_ACCOUNT_NUMBER AS I_SENDER_ACCOUNT_NUMBER,
+                //                  dInv.SENDER_ACCOUNT_BIC AS I_SENDER_ACCOUNT_BIC,
+                //                  dInv.RECEIVER_ACCOUNT_NUMBER AS I_RECEIVER_ACCOUNT_NUMBER,
+                //                  dInv.RECEIVER_ACCOUNT_BIC AS I_RECEIVER_ACCOUNT_BIC,
+                //                  dInv.REQUESTED_AMOUNT AS I_REQUESTED_AMOUNT,
+                //                  dInv.EXECUTED_AMOUNT AS I_EXECUTED_AMOUNT,
+                //                  dInv.REQUESTED_EXECUTION_DATE AS I_REQUESTED_EXECUTION_DATE,
+                //                  dInv.T_PAYMENT_REQUEST_STATUS AS I_T_PAYMENT_REQUEST_STATUS,
+                //                  dInv.BGPMT AS I_BGPMT,
+                //                  dInv.DEBTOR_ACCOUNT_ID AS I_DEBTOR_ACCOUNT_ID,
+                //                  dInv.CREDITOR_ACCOUNT_ID AS I_CREDITOR_ACCOUNT_ID,
+                //                  dInv.MT_STATUS AS I_MT_STATUS,
+                //                  dInv.REMINDER_NUMBER AS I_REMINDER_NUMBER,
+                //                  dInv.ERROR_MESSAGE AS I_ERROR_MESSAGE,
+                //                  dInv.DEBTOR_PARTY_ID AS I_DEBTOR_PARTY_ID,
+                //                  dInv.PAYMENT_METHOD AS I_PAYMENT_METHOD,
+                //                  dInv.PAYMENT_TYPE AS I_PAYMENT_TYPE,
+                //                  dInv.DEBTOR_PARTY_NAME AS I_DEBTOR_PARTY_NAME,
+                //                  dInv.DEBTOR_ACCOUNT_NUMBER AS I_DEBTOR_ACCOUNT_NUMBER,
+                //                  dInv.CREDITOR_PARTY_ID AS I_CREDITOR_PARTY_ID,
+                //                  dInv.CREDITOR_ACCOUNT_NUMBER AS I_CREDITOR_ACCOUNT_NUMBER
             }
 
             // Apply Potential Duplicates predicate if requested via JSON
@@ -638,7 +643,7 @@ namespace RecoTool.Services
         /// <summary>
         /// Execute arbitrary SQL (select) and return a DataTable. Parameters must be OleDb-compatible.
         /// </summary>
-        public async Task<DataTable> ExecuteExportAsync(string sql, IEnumerable<DbParameter> parameters, CancellationToken cancellationToken = default)
+        public async Task<System.Data.DataTable> ExecuteExportAsync(string sql, IEnumerable<DbParameter> parameters, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(sql)) throw new ArgumentNullException(nameof(sql));
 
@@ -665,7 +670,7 @@ namespace RecoTool.Services
                     using (var adapter = new OleDbDataAdapter(cmd))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        var table = new DataTable();
+                        var table = new System.Data.DataTable();
                         adapter.Fill(table);
                         return table;
                     }
@@ -1682,7 +1687,7 @@ namespace RecoTool.Services
         /// <summary>
         /// Get one snapshot by date and country. Returns JSON strings as stored.
         /// </summary>
-        public async Task<DataTable> GetKpiSnapshotAsync(DateTime date, string countryId, CancellationToken cancellationToken = default)
+        public async Task<System.Data.DataTable> GetKpiSnapshotAsync(DateTime date, string countryId, CancellationToken cancellationToken = default)
         {
             using (var connection = new OleDbConnection(GetControlConnectionString()))
             {
@@ -1693,7 +1698,7 @@ namespace RecoTool.Services
                 cmd.Parameters.AddWithValue("@p2", countryId ?? string.Empty);
                 using (var adapter = new OleDbDataAdapter(cmd))
                 {
-                    var table = new DataTable();
+                    var table = new System.Data.DataTable();
                     adapter.Fill(table);
                     return table;
                 }
@@ -1703,7 +1708,7 @@ namespace RecoTool.Services
         /// <summary>
         /// Get snapshots in a date range for a country (inclusive).
         /// </summary>
-        public async Task<DataTable> GetKpiSnapshotsAsync(DateTime from, DateTime to, string countryId, CancellationToken cancellationToken = default)
+        public async Task<System.Data.DataTable> GetKpiSnapshotsAsync(DateTime from, DateTime to, string countryId, CancellationToken cancellationToken = default)
         {
             using (var connection = new OleDbConnection(GetControlConnectionString()))
             {
@@ -1715,7 +1720,7 @@ namespace RecoTool.Services
                 cmd.Parameters.AddWithValue("@p3", to.Date);
                 using (var adapter = new OleDbDataAdapter(cmd))
                 {
-                    var table = new DataTable();
+                    var table = new System.Data.DataTable();
                     adapter.Fill(table);
                     return table;
                 }

@@ -32,11 +32,11 @@ namespace RecoTool.Services
         private DateTime _lastRemoteReconCheckUtc = DateTime.MinValue;
         private readonly ConcurrentDictionary<string, (long Length, DateTime LastWriteUtcDate)> _remoteReconFingerprint = new ConcurrentDictionary<string, (long, DateTime)>(StringComparer.OrdinalIgnoreCase);
 
-        public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(3);
-        public TimeSpan SuggestCooldown { get; set; } = TimeSpan.FromSeconds(15);
+        public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(60);
+        public TimeSpan SuggestCooldown { get; set; } = TimeSpan.FromSeconds(90);
         public TimeSpan ForwardCooldown { get; set; } = TimeSpan.FromMilliseconds(300);
         public TimeSpan PeriodicPushInterval { get; set; } = TimeSpan.FromMinutes(5);
-        public TimeSpan RemoteReconCheckInterval { get; set; } = TimeSpan.FromMinutes(1);
+        public TimeSpan RemoteReconCheckInterval { get; set; } = TimeSpan.FromMinutes(2);
 
         // Events
         public event Action<bool> LockStateChanged;              // arg: isActive

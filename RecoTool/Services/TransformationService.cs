@@ -188,7 +188,7 @@ namespace RecoTool.Services
                 return string.Empty;
 
             // Extraction de l'ID d'invoice (format BGIYYYYMMXXXXXXX)
-            var invoiceMatch = Regex.Match(label, @"BGI\d{6,}", RegexOptions.IgnoreCase);
+            var invoiceMatch = Regex.Match(label, @"BGI\d{13}", RegexOptions.IgnoreCase);
             if (invoiceMatch.Success)
                 return invoiceMatch.Value.ToUpper();
 

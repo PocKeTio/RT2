@@ -744,7 +744,11 @@
                             <DataGridTextColumn Header="Reconciliation Origin Num" Binding="{Binding ReconciliationOrigin_Num}" Width="150" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Signed Amount" Binding="{Binding SignedAmount, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Value Date" Binding="{Binding Value_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True"/>
-
+                            <DataGridTextColumn Header="Guarantee Type" Width="130" IsReadOnly="True" SortMemberPath="G_GUARANTEE_TYPE">
+                                <DataGridTextColumn.Binding>
+                                    <Binding Path="G_GUARANTEE_TYPE" Converter="{StaticResource GuaranteeTypeDisplayConverter}"/>
+                                </DataGridTextColumn.Binding>
+                            </DataGridTextColumn>
                             <!-- Colonnes T_Reconciliation (données combinées à plat dans ReconciliationViewData) -->
 
                             <!-- Action: editable ComboBox filtered by category and account type -->
@@ -931,23 +935,10 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
-                            <!-- Risky Item: tri-state CheckBox for nullable bool -->
-                            <DataGridTemplateColumn Header="Risky Item" Width="100" SortMemberPath="RiskyItem">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <CheckBox IsThreeState="True" IsEnabled="False"
-                                                  IsChecked="{Binding RiskyItem}" HorizontalAlignment="Center"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                                <DataGridTemplateColumn.CellEditingTemplate>
-                                    <DataTemplate>
-                                        <CheckBox IsThreeState="True"
-                                                  IsChecked="{Binding RiskyItem, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  HorizontalAlignment="Center"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellEditingTemplate>
-                            </DataGridTemplateColumn>
-
+                            <DataGridCheckBoxColumn Header="Risky Item"
+                                                    Width="100"
+                                                    Binding="{Binding RiskyItem, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, TargetNullValue=False}"
+                                                    IsThreeState="False"/>
                             <!-- Reason Non Risky: editable ComboBox bound to referential filtered by RISKY category -->
                             <DataGridTemplateColumn Header="Reason Non Risky" Width="180" SortMemberPath="ReasonNonRisky">
                                 <DataGridTemplateColumn.CellTemplate>
@@ -982,16 +973,9 @@
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
 
-                            <!-- Colonnes T_DW_Guarantee (propriétés DWINGS disponibles dans ReconciliationViewData) -->
-                            
                             <DataGridTextColumn Header="DW Syndicate" Binding="{Binding SYNDICATE}" Width="100"/>
                             <DataGridTextColumn Header="DW Currency" Binding="{Binding GUARANTEE_CURRENCY}" Width="80"/>
                             <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120"/>
-                            <DataGridTextColumn Header="Guarantee Type" Width="130" SortMemberPath="GUARANTEE_TYPE">
-                                <DataGridTextColumn.Binding>
-                                    <Binding Path="G_GUARANTEE_TYPE" Converter="{StaticResource GuaranteeTypeDisplayConverter}"/>
-                                </DataGridTextColumn.Binding>
-                            </DataGridTextColumn>
                             
                             <!-- DWINGS Guarantee extended fields -->
                             <DataGridTextColumn Header="G Nature" Binding="{Binding G_NATURE}" Width="110"/>
@@ -1007,6 +991,7 @@
                             <DataGridTextColumn Header="I End" Binding="{Binding I_END_DATE}" Width="110"/>
                             <DataGridTextColumn Header="I Status" Binding="{Binding I_T_INVOICE_STATUS}" Width="120"/>
                             <DataGridTextColumn Header="I BC Ref" Binding="{Binding I_BUSINESS_CASE_REFERENCE}" Width="150"/>
+
                         </DataGrid.Columns>
                     </DataGrid>
 

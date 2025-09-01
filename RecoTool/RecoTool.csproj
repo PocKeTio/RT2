@@ -81,7 +81,6 @@
     <Compile Include="Services\DatabaseRecreationService.cs" />
     <Compile Include="Services\Enums\IncidentType.cs" />
     <Compile Include="Services\Enums\RiskReason.cs" />
-    <Compile Include="Services\Enums\TriggerStatus.cs" />
     <Compile Include="Services\Helpers\EnumHelper.cs" />
     <Compile Include="Services\ExportService.cs" />
     <Compile Include="Helpers\ExcelHelper.cs" />
@@ -90,6 +89,7 @@
     <Compile Include="Models\UserFieldsPreference.cs" />
     <Compile Include="Services\DTOs\ImportResult.cs" />
     <Compile Include="Services\SyncMonitorService.cs" />
+    <Compile Include="Services\Enums\TransactionType.cs" />
     <Compile Include="Windows\DwingsButtonsWindow.xaml.cs">
       <DependentUpon>DwingsButtonsWindow.xaml</DependentUpon>
     </Compile>

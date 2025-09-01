@@ -32,18 +32,9 @@ namespace RecoTool.Models
         public int? IncidentType { get; set; }
         public bool? RiskyItem { get; set; }
         public int? ReasonNonRisky { get; set; }
-
-        // Sprint 1 labeling flags
-        public bool? PendingTrigger { get; set; }
-        public bool? PendingPricing { get; set; }
-        public bool? PendingToMatch { get; set; }
-        public bool? IsTransitory { get; set; }
-        public bool? IsManualOutgoing { get; set; }
-        public bool? IsAdjustment { get; set; }
+        
+        // Trigger date
         public DateTime? TriggerDate { get; set; }
-        public int? ReissuanceCount { get; set; }
-        // New: explicit trigger lifecycle status (kept alongside PendingTrigger for backward compatibility)
-        public TriggerStatus? TriggerStatus { get; set; }
 
         /// <summary>
         /// Effective risky flag for business logic: null is considered false.

@@ -29,12 +29,7 @@ namespace RecoTool.Services
         private readonly string _currentUser;
 
         // Heuristic constants (centralized)
-        private const decimal TransitoryEurThreshold = 350m;
         private const string KeywordTopaze = "TOPAZE";
-        private const string KeywordPricing = "PRICING";
-        private const string KeywordOutgoing = "OUTGOING";
-        private const string KeywordPayment = "PAYMENT";
-        private const string KeywordTrigger = "TRIGGER";
 
         /// <summary>
         /// Constructeur avec OfflineFirstService
@@ -343,9 +338,6 @@ namespace RecoTool.Services
             });
         }
 
-        /// <summary>
-        /// Transforme les données selon les règles de transformation
-        /// </summary>
         private async Task<List<DataAmbre>> TransformData(List<Dictionary<string, object>> rawData,
             IEnumerable<AmbreTransform> transforms, Country country)
         {
@@ -447,7 +439,7 @@ namespace RecoTool.Services
         private void ApplyAutomaticCategorization(DataAmbre dataAmbre, Country country)
         {
             var isPivot = dataAmbre.IsPivotAccount(country.CNT_AmbrePivot);
-            var transactionType = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot);
+            TransactionType? transactionType = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot);
             var creditDebit = _transformationService.DetermineCreditDebit(dataAmbre.SignedAmount);
 
             // Extraction du type de garantie pour les comptes Receivable
@@ -458,7 +450,7 @@ namespace RecoTool.Services
             }
 
             var (action, kpi) = _transformationService.ApplyAutomaticCategorization(
-                transactionType, creditDebit, isPivot, guaranteeType);
+                transactionType, dataAmbre.SignedAmount, isPivot, guaranteeType);
 
             // Note: Les actions et KPI seront appliqués dans la table T_Reconciliation
             // lors de la synchronisation
@@ -689,8 +681,8 @@ namespace RecoTool.Services
                 {
                     foreach (var entity in entities)
                     {
-                        if (entity.Properties.ContainsKey("DeleteDate") && entity.Properties["DeleteDate"] != null)
-                            continue; // Ignorer les données archivées
+                        //if (entity.Properties.ContainsKey("DeleteDate") && entity.Properties["DeleteDate"] != null)
+                        //    continue; // Ignorer les données archivées
                             
                         var dataAmbre = new DataAmbre
                         {
@@ -705,7 +697,16 @@ namespace RecoTool.Services
                             LocalSignedAmount = ConvertToDecimal(GetPropertyValue(entity.Properties, "LocalSignedAmount")),
                             Operation_Date = ConvertToDateTime(GetPropertyValue(entity.Properties, "Operation_Date")),
                             Value_Date = ConvertToDateTime(GetPropertyValue(entity.Properties, "Value_Date")),
-                            LastModified = ConvertToDateTime(GetPropertyValue(entity.Properties, "LastModified"))
+                            // Champs complémentaires nécessaires pour la clé métier et la détection de changements
+                            ReconciliationOrigin_Num = GetPropertyValue(entity.Properties, "ReconciliationOrigin_Num")?.ToString(),
+                            Reconciliation_Num = GetPropertyValue(entity.Properties, "Reconciliation_Num")?.ToString(),
+                            Receivable_InvoiceFromAmbre = GetPropertyValue(entity.Properties, "Receivable_InvoiceFromAmbre")?.ToString(),
+                            Receivable_DWRefFromAmbre = GetPropertyValue(entity.Properties, "Receivable_DWRefFromAmbre")?.ToString(),
+                            LastModified = ConvertToDateTime(GetPropertyValue(entity.Properties, "LastModified")),
+                            DeleteDate = ConvertToDateTime(GetPropertyValue(entity.Properties, "DeleteDate")),
+                            CreationDate = ConvertToDateTime(GetPropertyValue(entity.Properties, "CreationDate")),
+                            ModifiedBy = GetPropertyValue(entity.Properties, "ModifiedBy")?.ToString(),
+                            Version = int.TryParse(GetPropertyValue(entity.Properties, "Version")?.ToString(), out var v) ? v : 1
                         };
                         existingData.Add(dataAmbre);
                     }
@@ -732,8 +733,9 @@ namespace RecoTool.Services
                 
                 var changes = new ImportChanges();
                 
-                // Créer des dictionnaires pour accélérer les recherches
-                var existingByKey = existingData.ToDictionary(d => d.ID, d => d);
+                // Créer des dictionnaires pour accélérer les recherches (clé métier commune)
+                // IMPORTANT: utiliser la même clé des deux côtés pour éviter les faux "nouveaux" ou "supprimés".
+                var existingByKey = existingData.ToDictionary(d => d.GetUniqueKey(), d => d);
                 var newByKey = newData.ToDictionary(d => d.GetUniqueKey(), d => d);
                 
                 // Identifier les ajouts et modifications
@@ -741,11 +743,23 @@ namespace RecoTool.Services
                 {
                     var key = newItem.GetUniqueKey();
                     
-                    if (existingByKey.ContainsKey(key))
+                    if (existingByKey.TryGetValue(key, out var existingItem))
                     {
-                        // Enregistrement existant - vérifier s'il a changé
-                        var existingItem = existingByKey[key];
-                        
+                        // Enregistrement existant
+                        // Cas 1: l'existant est archivé -> "revival" : forcer une mise à jour qui remet DeleteDate à null
+                        if (existingItem.DeleteDate.HasValue)
+                        {
+                            newItem.ID = existingItem.ID;
+                            newItem.Version = existingItem.Version + 1; // Incrémenter la version
+                            newItem.CreationDate = existingItem.CreationDate; // Conserver la date de création
+                            newItem.DeleteDate = null; // UNDELETE côté AMBRE
+                            newItem.LastModified = DateTime.UtcNow;
+                            newItem.ModifiedBy = _currentUser;
+                            changes.ToUpdate.Add(newItem);
+                            continue;
+                        }
+
+                        // Cas 2: l'existant n'est pas archivé - vérifier s'il a changé
                         if (HasDataChanged(existingItem, newItem))
                         {
                             // Mise à jour nécessaire - conserver l'ID et la version de l'existant
@@ -775,7 +789,7 @@ namespace RecoTool.Services
                 // Identifier les suppressions (enregistrements présents dans existing mais pas dans new)
                 foreach (var existingItem in existingData)
                 {
-                    var key = existingItem.ID;
+                    var key = existingItem.GetUniqueKey();
                     
                     if (!newByKey.ContainsKey(key))
                     {
@@ -913,9 +927,6 @@ namespace RecoTool.Services
             }
         }
 
-        /// <summary>
-        /// Charge la configuration des champs d'import
-        /// </summary>
         private async Task<List<AmbreImportField>> LoadImportFieldsConfiguration()
         {
             try
@@ -929,9 +940,6 @@ namespace RecoTool.Services
             }
         }
 
-        /// <summary>
-        /// Charge les configurations de transformation
-        /// </summary>
         private async Task<List<AmbreTransform>> LoadTransformConfigurations()
         {
             try
@@ -971,13 +979,98 @@ namespace RecoTool.Services
                     toInsert.Add(rec);
                 }
 
+                // Diagnostics: log count and a sample of IDs
+                if ((toInsert?.Count ?? 0) == 0)
+                {
+                    LogManager.Info($"[Direct] Aucun enregistrement à insérer dans T_Reconciliation pour {countryId} (liste vide).");
+                }
+                else
+                {
+                    var sampleIds = string.Join(", ", toInsert.Take(5).Select(r => r.ID));
+                    LogManager.Debug($"[Direct] Préparation insertion T_Reconciliation - Total={toInsert.Count}, Exemples IDs=[{sampleIds}]");
+                }
+
                 // Connexion directe à la base du pays
                 var connectionString = _offlineFirstService.GetCountryConnectionString(countryId);
+                LogManager.Debug($"[Direct] Connexion T_Reconciliation via: {connectionString}");
                 using (var conn = new OleDbConnection(connectionString))
                 {
                     await conn.OpenAsync();
 
-                    // Construire un set d'IDs existants pour insert-only
+                    // 0) Désarchiver côté réconciliation les IDs "revenus" (présents en mises à jour)
+                    int unarchivedCount = 0;
+                    var toUnarchiveIds = (updatedRecords ?? new List<DataAmbre>()).
+                        Select(d => d?.ID).
+                        Where(id => !string.IsNullOrWhiteSpace(id)).
+                        Distinct(StringComparer.OrdinalIgnoreCase).
+                        ToList();
+                    if (toUnarchiveIds.Count > 0)
+                    {
+                        using (var txU = conn.BeginTransaction())
+                        {
+                            try
+                            {
+                                var nowUtc = DateTime.UtcNow;
+                                foreach (var id in toUnarchiveIds)
+                                {
+                                    using (var up = new OleDbCommand("UPDATE [T_Reconciliation] SET [DeleteDate]=NULL, [LastModified]=?, [ModifiedBy]=? WHERE [ID]=? AND [DeleteDate] IS NOT NULL", conn, txU))
+                                    {
+                                        var pMod = up.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = nowUtc;
+                                        up.Parameters.AddWithValue("@ModifiedBy", (object)(_currentUser ?? "System") ?? DBNull.Value);
+                                        up.Parameters.AddWithValue("@ID", id);
+                                        unarchivedCount += await up.ExecuteNonQueryAsync();
+                                    }
+                                }
+                                txU.Commit();
+                            }
+                            catch
+                            {
+                                txU.Rollback();
+                                throw;
+                            }
+                        }
+                        LogManager.Info($"[Direct] Désarchivage T_Reconciliation effectué: {unarchivedCount} ligne(s) réactivée(s)");
+                    }
+
+                    // 1) Archiver côté réconciliation les IDs supprimés côté AMBRE (DeleteDate)
+                    int archivedCount = 0;
+                    var toArchiveIds = (deletedRecords ?? new List<DataAmbre>())
+                        .Select(d => d?.ID)
+                        .Where(id => !string.IsNullOrWhiteSpace(id))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    if (toArchiveIds.Count > 0)
+                    {
+                        LogManager.Info($"[Direct] Archivage T_Reconciliation demandé pour {toArchiveIds.Count} ID(s) suite aux suppressions AMBRE");
+                        using (var txA = conn.BeginTransaction())
+                        {
+                            try
+                            {
+                                var nowUtc = DateTime.UtcNow;
+                                foreach (var id in toArchiveIds)
+                                {
+                                    using (var up = new OleDbCommand("UPDATE [T_Reconciliation] SET [DeleteDate]=?, [LastModified]=?, [ModifiedBy]=? WHERE [ID]=? AND [DeleteDate] IS NULL", conn, txA))
+                                    {
+                                        var pDel = up.Parameters.Add("@DeleteDate", OleDbType.Date); pDel.Value = nowUtc;
+                                        var pMod = up.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = nowUtc;
+                                        up.Parameters.AddWithValue("@ModifiedBy", (object)(_currentUser ?? "System") ?? DBNull.Value);
+                                        up.Parameters.AddWithValue("@ID", id);
+                                        archivedCount += await up.ExecuteNonQueryAsync();
+                                    }
+                                }
+                                txA.Commit();
+                            }
+                            catch
+                            {
+                                txA.Rollback();
+                                throw;
+                            }
+                        }
+                        LogManager.Info($"[Direct] Archivage T_Reconciliation effectué: {archivedCount} ligne(s) marquée(s) supprimée(s)");
+                    }
+
+                    // 2) Construire un set d'IDs existants pour insert-only
                     var ids = toInsert.Select(r => r.ID).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
                     var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     if (ids.Count > 0)
@@ -1002,6 +1095,7 @@ namespace RecoTool.Services
                                 }
                             }
                         }
+                        LogManager.Debug($"[Direct] IDs existants détectés dans T_Reconciliation: {existing.Count} / {ids.Count}");
                     }
 
                     int insertedCount = 0;
@@ -1069,326 +1163,6 @@ namespace RecoTool.Services
             }
         }
 
-        /// <summary>
-        /// Crée ou met à jour un enregistrement de réconciliation via les API natives d'OfflineFirstService
-        /// </summary>
-        private async Task CreateOrUpdateReconciliationAsync(DataAmbre dataAmbre, string countryId)
-        {
-            await CreateOrUpdateReconciliationAsync(dataAmbre, countryId, null);
-        }
-
-        // Overload that accepts a change-log session to batch change logging
-        private async Task CreateOrUpdateReconciliationAsync(DataAmbre dataAmbre, string countryId, OfflineFirstAccess.ChangeTracking.IChangeLogSession changeLogSession)
-        {
-            try
-            {
-                // Vérifier si un enregistrement existe déjà via l'API native
-                var existingEntity = await _offlineFirstService.GetEntityByIdAsync(countryId, "T_Reconciliation", "ID", dataAmbre.ID);
-                var country = await LoadCountryConfiguration(countryId);
-                var reconciliation = CreateReconciliationFromDataAmbre(dataAmbre, country);
-                var reconciliationEntity = ConvertReconciliationToEntity(reconciliation);
-                
-                if (existingEntity != null)
-                {
-                    // Mise à jour - conserver la version existante et l'incrémenter
-                    if (existingEntity.Properties.ContainsKey("Version") && existingEntity.Properties["Version"] != null)
-                    {
-                        reconciliationEntity.Properties["Version"] = Convert.ToInt32(existingEntity.Properties["Version"]) + 1;
-                    }
-                    else
-                    {
-                        reconciliationEntity.Properties["Version"] = 1;
-                    }
-                    
-                    // Ne jamais modifier CreationDate lors d'une mise à jour: conserver la valeur existante
-                    if (existingEntity.Properties.ContainsKey("CreationDate"))
-                    {
-                        reconciliationEntity.Properties["CreationDate"] = existingEntity.Properties["CreationDate"];
-                    }
-
-                    reconciliationEntity.Properties["LastModified"] = DateTime.UtcNow.ToOADate();
-                    reconciliationEntity.Properties["ModifiedBy"] = _currentUser;
-                    
-                    var success = changeLogSession != null
-                        ? await _offlineFirstService.UpdateEntityAsync(countryId, reconciliationEntity, changeLogSession)
-                        : await _offlineFirstService.UpdateEntityAsync(countryId, reconciliationEntity);
-                    if (!success)
-                    {
-                        LogManager.Warning($"Échec de la mise à jour de réconciliation pour {dataAmbre.ID}");
-                    }
-                }
-                else
-                {
-                    // Création - initialiser les champs de versionnage
-                    reconciliationEntity.Properties["Version"] = 1;
-                    reconciliationEntity.Properties["CreationDate"] = DateTime.UtcNow.ToOADate();
-                    reconciliationEntity.Properties["LastModified"] = DateTime.UtcNow.ToOADate();
-                    reconciliationEntity.Properties["ModifiedBy"] = _currentUser;
-                    
-                    var success = changeLogSession != null
-                        ? await _offlineFirstService.AddEntityAsync(countryId, reconciliationEntity, changeLogSession)
-                        : await _offlineFirstService.AddEntityAsync(countryId, reconciliationEntity);
-                    if (!success)
-                    {
-                        LogManager.Warning($"Échec de la création de réconciliation pour {dataAmbre.ID}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogManager.Error($"Erreur lors de la création/mise à jour de réconciliation pour {dataAmbre.ID}: {ex.Message}", ex);
-                throw;
-            }
-        }
-
-        /// <summary>
-        /// Convertit un objet Reconciliation en entité OfflineFirstAccess
-        /// </summary>
-        private OfflineFirstAccess.Models.Entity ConvertReconciliationToEntity(Reconciliation reconciliation)
-        {
-            var entity = new OfflineFirstAccess.Models.Entity
-            {
-                TableName = "T_Reconciliation",
-                PrimaryKeyColumn = "ID",
-                Properties = new Dictionary<string, object>
-                {
-                    ["ID"] = reconciliation.ID,
-                    ["DWINGS_GuaranteeID"] = reconciliation.DWINGS_GuaranteeID,
-                    ["DWINGS_InvoiceID"] = reconciliation.DWINGS_InvoiceID,
-                    ["DWINGS_CommissionID"] = reconciliation.DWINGS_CommissionID,
-                    ["Action"] = reconciliation.Action,
-                    ["KPI"] = reconciliation.KPI,
-                    ["CreationDate"] = reconciliation.CreationDate,
-                    ["LastModified"] = reconciliation.LastModified,
-                    ["ModifiedBy"] = reconciliation.ModifiedBy,
-                    ["Version"] = reconciliation.Version,
-                    ["DeleteDate"] = reconciliation.DeleteDate
-                }
-            };
-            
-            return entity;
-        }
-
-        /// <summary>
-        /// Archive un enregistrement de réconciliation via les API natives d'OfflineFirstService
-        /// </summary>
-        private async Task ArchiveReconciliationAsync(DataAmbre dataAmbre, string countryId)
-        {
-            await ArchiveReconciliationAsync(dataAmbre, countryId, null);
-        }
-
-        // Overload that accepts a change-log session to batch change logging
-        private async Task ArchiveReconciliationAsync(DataAmbre dataAmbre, string countryId, OfflineFirstAccess.ChangeTracking.IChangeLogSession changeLogSession)
-        {
-            try
-            {
-                // Récupérer l'enregistrement existant
-                var existingEntity = await _offlineFirstService.GetEntityByIdAsync(countryId, "T_Reconciliation", "ID", dataAmbre.ID);
-                
-                if (existingEntity != null)
-                {
-                    // Archivage logique - définir DeleteDate
-                    existingEntity.Properties["DeleteDate"] = DateTime.UtcNow;
-                    existingEntity.Properties["LastModified"] = DateTime.UtcNow;
-                    existingEntity.Properties["ModifiedBy"] = _currentUser;
-                    
-                    // Incrémenter la version
-                    if (existingEntity.Properties.ContainsKey("Version") && existingEntity.Properties["Version"] != null)
-                    {
-                        existingEntity.Properties["Version"] = Convert.ToInt32(existingEntity.Properties["Version"]) + 1;
-                    }
-                    else
-                    {
-                        existingEntity.Properties["Version"] = 1;
-                    }
-                    
-                    var success = changeLogSession != null
-                        ? await _offlineFirstService.UpdateEntityAsync(countryId, existingEntity, changeLogSession)
-                        : await _offlineFirstService.UpdateEntityAsync(countryId, existingEntity);
-                    if (!success)
-                    {
-                        LogManager.Warning($"Échec de l'archivage de réconciliation pour {dataAmbre.ID}");
-                    }
-                }
-                else
-                {
-                    LogManager.Warning($"Enregistrement de réconciliation non trouvé pour archivage: {dataAmbre.ID}");
-                }
-            }
-            catch (Exception ex)
-            {
-                LogManager.Error($"Erreur lors de l'archivage de réconciliation pour {dataAmbre.ID}: {ex.Message}", ex);
-                throw;
-            }
-        }
-
-
-
-        /// <summary>
-        /// Crée un objet Reconciliation à partir d'un DataAmbre avec les règles métiers appliquées
-        /// </summary>
-        private Reconciliation CreateReconciliationFromDataAmbre(DataAmbre dataAmbre, Country country)
-        {
-            var reconciliation = new Reconciliation
-            {
-                ID = dataAmbre.ID,
-                CreationDate = DateTime.UtcNow,
-                ModifiedBy = _currentUser ?? "System",
-                LastModified = DateTime.UtcNow,
-                Version = 1
-            };
-
-            // Appliquer les règles métiers selon le type de compte
-            ApplyBusinessRulesForReconciliation(reconciliation, dataAmbre, country);
-
-            return reconciliation;
-        }
-
-        /// <summary>
-        /// Applique les règles métiers pour déterminer les valeurs Action et KPI
-        /// </summary>
-        private void ApplyBusinessRulesForReconciliation(Reconciliation reconciliation, DataAmbre dataAmbre, Country country)
-        {
-            if (country == null) throw new ArgumentNullException(nameof(country));
-
-            bool isPivot = dataAmbre.IsPivotAccount(country.CNT_AmbrePivot);
-            bool isReceivable = dataAmbre.IsReceivableAccount(country.CNT_AmbreReceivable);
-
-            var transactionType = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot);
-            var creditDebit = _transformationService.DetermineCreditDebit(dataAmbre.SignedAmount);
-            string guaranteeType = !isPivot ? ExtractGuaranteeType(dataAmbre.RawLabel) : null;
-
-            var (action, kpi) = _transformationService.ApplyAutomaticCategorization(
-                transactionType, creditDebit, isPivot, guaranteeType);
-
-            reconciliation.Action = (int)action;
-            reconciliation.KPI = (int)kpi;
-
-            try { LogManager.Debug($"[Heuristics] ID={dataAmbre.ID} isPivot={isPivot} trx={transactionType} cd={creditDebit} action={(int)action} kpi={(int)kpi}"); } catch { }
-
-            // Apply flags based on account specifics (keep existing heuristics)
-            if (isPivot)
-            {
-                ApplyPivotAccountRules(reconciliation, dataAmbre);
-            }
-            else if (isReceivable)
-            {
-                ApplyReceivableAccountRules(reconciliation, dataAmbre);
-            }
-        }
-
-        /// <summary>
-        /// Applique les règles pour les comptes Pivot
-        /// </summary>
-        private void ApplyPivotAccountRules(Reconciliation reconciliation, DataAmbre dataAmbre)
-        {
-            bool isCredit = dataAmbre.SignedAmount > 0;
-            var raw = dataAmbre.RawLabel?.ToUpperInvariant() ?? string.Empty;
-
-            // Heuristics for Pivot debits/credits classification
-            // Pending pricing: outgoing payments without clear pricing indication
-            if (!isCredit && (raw.Contains(KeywordPayment) || raw.Contains(KeywordOutgoing)))
-            {
-                reconciliation.PendingPricing = true;
-                try { LogManager.Debug($"[Heuristics] PendingPricing=true (Pivot, debit, raw~{dataAmbre.RawLabel})"); } catch { }
-            }
-
-            // Pending to match: credits that are likely pricings triggered from receivables
-            if (isCredit && (raw.Contains(KeywordPricing) || raw.Contains(KeywordTrigger)))
-            {
-                reconciliation.PendingToMatch = true;
-                try { LogManager.Debug($"[Heuristics] PendingToMatch=true (Pivot, credit, raw~{dataAmbre.RawLabel})"); } catch { }
-            }
-
-            // Identify Topaze cases
-            if (raw.Contains(KeywordTopaze))
-            {
-                reconciliation.Action = (int)ActionType.Topaze;
-                try { LogManager.Debug($"[Heuristics] Action override -> TOPAZE (Pivot)"); } catch { }
-            }
-
-            // Sprint 1: transitory threshold for small EUR amounts
-            if (string.Equals(dataAmbre.CCY, "EUR", StringComparison.OrdinalIgnoreCase) && Math.Abs(dataAmbre.SignedAmount) < TransitoryEurThreshold)
-            {
-                reconciliation.IsTransitory = true;
-                try { LogManager.Debug($"[Heuristics] IsTransitory=true (Pivot, EUR < {TransitoryEurThreshold})"); } catch { }
-            }
-        }
-
-        /// <summary>
-        /// Applique les règles pour les comptes Receivable
-        /// </summary>
-        private void ApplyReceivableAccountRules(Reconciliation reconciliation, DataAmbre dataAmbre)
-        {
-            bool isCredit = dataAmbre.SignedAmount > 0;
-            bool hasInvoiceReference = !string.IsNullOrEmpty(dataAmbre.Receivable_InvoiceFromAmbre);
-            bool hasDWReference = !string.IsNullOrEmpty(dataAmbre.Receivable_DWRefFromAmbre);
-            var raw = dataAmbre.RawLabel?.ToUpperInvariant() ?? string.Empty;
-
-            if (isCredit)
-            {
-                // Credits could be pricing of outgoing payments or corrections
-                if (raw.Contains(KeywordPricing) || raw.Contains(KeywordOutgoing))
-                {
-                    reconciliation.IsManualOutgoing = true;
-                    reconciliation.PendingToMatch = true; // to be matched against pivot movement
-                    try { LogManager.Debug($"[Heuristics] IsManualOutgoing=true, PendingToMatch=true (Receivable, credit)"); } catch { }
-                }
-            }
-            else
-            {
-                // Sprint 1: mark pending trigger for receivable debits
-                reconciliation.PendingTrigger = true;
-                reconciliation.TriggerStatus = TriggerStatus.Pending;
-                try { LogManager.Debug($"[Heuristics] PendingTrigger=true (Receivable, debit)"); } catch { }
-
-                // Manual outgoing following pricing event in DWINGS after an outgoing payment
-                if (raw.Contains("MANUAL OUTGOING") || raw.Contains("OUTGOING PAYMENT") || raw.Contains(KeywordPricing))
-                {
-                    reconciliation.IsManualOutgoing = true;
-                    try { LogManager.Debug($"[Heuristics] IsManualOutgoing=true (Receivable, debit)"); } catch { }
-                }
-
-                // Adjustments
-                if (raw.Contains("ADJUSTMENT") || raw.Contains("ADJUST"))
-                {
-                    reconciliation.IsAdjustment = true;
-                    try { LogManager.Debug($"[Heuristics] IsAdjustment=true (Receivable, debit)"); } catch { }
-                }
-
-                // Reissuances – DEBITS
-                if (raw.Contains("REISSUANCE") || raw.Contains("REISSUE"))
-                {
-                    reconciliation.ReissuanceCount = (reconciliation.ReissuanceCount ?? 0) + 1;
-                    if (!reconciliation.FirstClaimDate.HasValue)
-                    {
-                        reconciliation.FirstClaimDate = dataAmbre.Operation_Date ?? DateTime.Today;
-                    }
-                    try { LogManager.Debug($"[Heuristics] ReissuanceCount++ (Receivable, debit)"); } catch { }
-                }
-            }
-
-            // Enrichir avec les références DWINGS si disponibles
-            if (hasInvoiceReference)
-            {
-                reconciliation.DWINGS_InvoiceID = dataAmbre.Receivable_InvoiceFromAmbre;
-            }
-
-            if (hasDWReference)
-            {
-                reconciliation.DWINGS_GuaranteeID = dataAmbre.Receivable_DWRefFromAmbre;
-            }
-
-            // Sprint 1: transitory threshold for small EUR amounts
-            if (string.Equals(dataAmbre.CCY, "EUR", StringComparison.OrdinalIgnoreCase) && Math.Abs(dataAmbre.SignedAmount) < TransitoryEurThreshold)
-            {
-                reconciliation.IsTransitory = true;
-            }
-        }
-
-        // Note: DetermineAccountType removed.
-        // Use authoritative country-based checks: dataAmbre.IsPivotAccount(country.CNT_AmbrePivot)
-        // and dataAmbre.IsReceivableAccount(country.CNT_AmbreReceivable).
 
         /// <summary>
         /// Filtre les lignes brutes pour ne conserver que celles dont Account_ID correspond
@@ -1426,6 +1200,37 @@ namespace RecoTool.Services
                     return false;
                 return Matches(val.ToString());
             }).ToList();
+        }
+
+        /// <summary>
+        /// Crée un objet Reconciliation à partir d'un DataAmbre avec les règles métiers appliquées
+        /// </summary>
+        private Reconciliation CreateReconciliationFromDataAmbre(DataAmbre dataAmbre, Country country)
+        {
+            var reconciliation = new Reconciliation
+            {
+                ID = dataAmbre.ID,
+                CreationDate = DateTime.UtcNow,
+                ModifiedBy = _currentUser ?? "System",
+                LastModified = DateTime.UtcNow,
+                Version = 1
+            };
+
+            // Appliquer les règles métiers selon le type de compte
+            bool isPivot = dataAmbre.IsPivotAccount(country.CNT_AmbrePivot);
+            bool isReceivable = dataAmbre.IsReceivableAccount(country.CNT_AmbreReceivable);
+
+            var transactionType = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot);
+            var creditDebit = _transformationService.DetermineCreditDebit(dataAmbre.SignedAmount);
+            string guaranteeType = !isPivot ? ExtractGuaranteeType(dataAmbre.RawLabel) : null;
+
+            var (action, kpi) = _transformationService.ApplyAutomaticCategorization(
+                transactionType, dataAmbre.SignedAmount, isPivot, guaranteeType);
+
+            reconciliation.Action = ((int)action);
+            reconciliation.KPI = ((int)kpi);
+
+            return reconciliation;
         }
 
         #region Méthodes utilitaires de conversion

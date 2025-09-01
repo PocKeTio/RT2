@@ -397,6 +397,17 @@ namespace RecoTool.Windows
             {
                 var monitor = SyncMonitorService.Instance;
                 monitor.Initialize(() => _offlineFirstService);
+
+                // Initialize the network indicator immediately so UI matches current availability
+                try
+                {
+                    var online = _offlineFirstService?.IsNetworkSyncAvailable == true;
+                    IsOffline = !online;
+                    NetworkStatusText = online ? "ONLINE" : "OFFLINE";
+                    NetworkStatusBrush = online ? Brushes.MediumSeaGreen : Brushes.OrangeRed;
+                }
+                catch { }
+
                 monitor.NetworkBecameAvailable += () => TryBackgroundPush();
                 monitor.LockReleased += () => TryBackgroundPush();
                 monitor.SyncSuggested += (_) => TryBackgroundPush();

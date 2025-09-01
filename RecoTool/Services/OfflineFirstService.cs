@@ -1808,7 +1808,7 @@ namespace RecoTool.Services
                         }
                         return true;
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         try { tx.Rollback(); } catch { }
                         throw;

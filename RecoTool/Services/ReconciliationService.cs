@@ -1063,7 +1063,7 @@ namespace RecoTool.Services
                                 [FirstClaimDate], [LastClaimDate], [ToRemind], [ToRemindDate],
                                 [ACK], [SwiftCode], [PaymentReference], [KPI],
                                 [IncidentType], [RiskyItem], [ReasonNonRisky],
-                                [MbawData], [SpiritData]
+                                [MbawData], [SpiritData], [TriggerDate]
                               FROM T_Reconciliation WHERE [ID] = ?", connection, transaction);
                     selectCmd.Parameters.AddWithValue("@ID", reconciliation.ID);
                     using (var rdr = await selectCmd.ExecuteReaderAsync().ConfigureAwait(false))
@@ -1108,6 +1108,7 @@ namespace RecoTool.Services
                             if (!Equal(DbVal(17), (object)reconciliation.ReasonNonRisky)) changed.Add("ReasonNonRisky");
                             if (!Equal(DbVal(18), (object)reconciliation.MbawData)) changed.Add("MbawData");
                             if (!Equal(DbVal(19), (object)reconciliation.SpiritData)) changed.Add("SpiritData");
+                            if (!Equal(DbVal(20), reconciliation.TriggerDate.HasValue ? (object)reconciliation.TriggerDate.Value : null)) changed.Add("TriggerDate");
 
                             if (changed.Count == 0)
                             {
@@ -1228,6 +1229,12 @@ namespace RecoTool.Services
                                         p.Value = reconciliation.ReasonNonRisky.HasValue ? (object)reconciliation.ReasonNonRisky.Value : DBNull.Value;
                                         break;
                                     }
+                                case "TriggerDate":
+                                    {
+                                        var p = cmd.Parameters.Add("@TriggerDate", OleDbType.Date);
+                                        p.Value = reconciliation.TriggerDate.HasValue ? (object)reconciliation.TriggerDate.Value : DBNull.Value;
+                                        break;
+                                    }
                             }
                         }
 
@@ -1273,8 +1280,8 @@ namespace RecoTool.Services
                              ([ID], [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_CommissionID],
                               [Action], [Assignee], [Comments], [InternalInvoiceReference], [FirstClaimDate], [LastClaimDate],
                               [ToRemind], [ToRemindDate], [ACK], [SwiftCode], [PaymentReference], [MbawData], [SpiritData], [KPI],
-                              [IncidentType], [RiskyItem], [ReasonNonRisky], [CreationDate], [ModifiedBy], [LastModified])
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                              [IncidentType], [RiskyItem], [ReasonNonRisky], [TriggerDate], [CreationDate], [ModifiedBy], [LastModified])
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
                     using (var cmd = new OleDbCommand(insertQuery, connection, transaction))
                     {
@@ -1327,6 +1334,8 @@ namespace RecoTool.Services
             pRisky.Value = reconciliation.RiskyItem.HasValue ? (object)reconciliation.RiskyItem.Value : DBNull.Value;
             var pReason = cmd.Parameters.Add("@ReasonNonRisky", OleDbType.Integer);
             pReason.Value = reconciliation.ReasonNonRisky.HasValue ? (object)reconciliation.ReasonNonRisky.Value : DBNull.Value;
+            var pTrigDate = cmd.Parameters.Add("@TriggerDate", OleDbType.Date);
+            pTrigDate.Value = reconciliation.TriggerDate.HasValue ? (object)reconciliation.TriggerDate.Value : DBNull.Value;
 
             if (isInsert)
             {

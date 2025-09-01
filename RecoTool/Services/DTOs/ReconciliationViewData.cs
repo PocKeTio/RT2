@@ -104,7 +104,7 @@ namespace RecoTool.Services
                 }
             }
         }
-        public bool? RiskyItem { get; set; }
+        public bool RiskyItem { get; set; }
         public int? ReasonNonRisky { get; set; }
         // ModifiedBy from T_Reconciliation (avoid collision with BaseEntity.ModifiedBy coming from Ambre)
         public string Reco_ModifiedBy { get; set; }
@@ -116,6 +116,7 @@ namespace RecoTool.Services
 
         // Propriétés DWINGS
         public string GUARANTEE_ID { get; set; }
+        public string G_GUARANTEE_TYPE { get; set; }
         public string INVOICE_ID { get; set; }
         public string COMMISSION_ID { get; set; }
         public string SYNDICATE { get; set; }

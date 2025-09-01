@@ -152,23 +152,24 @@ namespace RecoTool.Services
                     networkAvailable = false;
                     LogManager.Warning("[SYNC-MONITOR] Unable to query network availability", ex);
                 }
-                if (networkAvailable && !_lastNetworkAvailable)
+                // Publish changes and also periodically reaffirm the current state
+                if (networkAvailable != _lastNetworkAvailable)
                 {
-                    _lastNetworkAvailable = true;
-                    SafeInvoke(() => NetworkAvailabilityChanged?.Invoke(true));
-                    SafeInvoke(() => NetworkBecameAvailable?.Invoke());
-                    if (!_lastLockActive)
+                    _lastNetworkAvailable = networkAvailable;
+                    SafeInvoke(() => NetworkAvailabilityChanged?.Invoke(networkAvailable));
+                    if (networkAvailable)
                     {
-                        SuggestIfCooldownAllows("NetworkBecameAvailable");
+                        SafeInvoke(() => NetworkBecameAvailable?.Invoke());
+                        if (!_lastLockActive)
+                        {
+                            SuggestIfCooldownAllows("NetworkBecameAvailable");
+                        }
                     }
                 }
-                else if (!networkAvailable)
+                else
                 {
-                    if (_lastNetworkAvailable)
-                    {
-                        _lastNetworkAvailable = false;
-                        SafeInvoke(() => NetworkAvailabilityChanged?.Invoke(false));
-                    }
+                    // State unchanged: still echo it so UI can self-heal if it drifted due to non-network errors
+                    SafeInvoke(() => NetworkAvailabilityChanged?.Invoke(networkAvailable));
                 }
 
                 // Periodic best-effort push when online and not locked

@@ -216,41 +216,41 @@ namespace RecoTool.Services
         /// <param name="label">Libellé de la transaction</param>
         /// <param name="isPivot">True si c'est le compte Pivot</param>
         /// <returns>Type de transaction détecté</returns>
-        public string DetermineTransactionType(string label, bool isPivot)
+        public TransactionType? DetermineTransactionType(string label, bool isPivot)
         {
             if (string.IsNullOrEmpty(label))
-                return "UNKNOWN";
+                return null;
 
             var upperLabel = label.ToUpper();
 
             if (isPivot)
             {
                 if (upperLabel.Contains("COLLECTION"))
-                    return "COLLECTION";
+                    return TransactionType.COLLECTION;
                 if (upperLabel.Contains("PAYMENT") || upperLabel.Contains("AUTOMATIC REFUND"))
-                    return "PAYMENT/AUTOMATIC REFUND";
+                    return TransactionType.PAYMENT;
                 if (upperLabel.Contains("ADJUSTMENT"))
-                    return "ADJUSTMENT";
+                    return TransactionType.ADJUSTMENT;
                 if (upperLabel.Contains("XCL LOADER"))
-                    return "XCL LOADER";
+                    return TransactionType.XCL_LOADER;
                 if (upperLabel.Contains("TRIGGER"))
-                    return "TRIGGER";
+                    return TransactionType.TRIGGER;
             }
             else // Receivable
             {
                 if (upperLabel.Contains("INCOMING PAYMENT"))
-                    return "INCOMING PAYMENT";
+                    return TransactionType.INCOMING_PAYMENT;
                 if (upperLabel.Contains("DIRECT DEBIT"))
-                    return "DIRECT DEBIT";
+                    return TransactionType.DIRECT_DEBIT;
                 if (upperLabel.Contains("MANUAL OUTGOING"))
-                    return "MANUAL OUTGOING";
+                    return TransactionType.MANUAL_OUTGOING;
                 if (upperLabel.Contains("OUTGOING PAYMENT"))
-                    return "OUTGOING PAYMENT";
+                    return TransactionType.OUTGOING_PAYMENT;
                 if (upperLabel.Contains("EXTERNAL DEBIT PAYMENT"))
-                    return "EXTERNAL DEBIT PAYMENT";
+                    return TransactionType.EXTERNAL_DEBIT_PAYMENT;
             }
 
-            return "OTHER";
+            return null;
         }
 
         /// <summary>
@@ -267,43 +267,88 @@ namespace RecoTool.Services
         /// Applique la catégorisation automatique selon les règles métier
         /// </summary>
         /// <param name="transactionType">Type de transaction</param>
-        /// <param name="creditDebit">CREDIT ou DEBIT</param>
+        /// <param name="signedAmount">Montant de la transaction avec signe</param>
         /// <param name="isPivot">True si compte Pivot</param>
         /// <param name="guaranteeType">Type de garantie (pour Receivable)</param>
         /// <returns>Tuple (Action, KPI)</returns>
-        public (ActionType? action, KPIType? kpi) ApplyAutomaticCategorization(
-            string transactionType, string creditDebit, bool isPivot, string guaranteeType = null)
+        public (ActionType action, KPIType kpi) ApplyAutomaticCategorization(
+            TransactionType? transactionType, 
+            decimal signedAmount, 
+            bool isPivot,
+            string guaranteeType = null)
         {
+            bool isCredit = signedAmount > 0;
+            
             if (isPivot)
             {
-                return ApplyPivotRules(transactionType, creditDebit);
+                return (transactionType, isCredit) switch
+                {
+                    (TransactionType.COLLECTION, true) => 
+                        (ActionType.Match, KPIType.PaidButNotReconciled),
+                    (TransactionType.COLLECTION, false) => 
+                        (ActionType.NA, KPIType.ITIssues),
+                    (TransactionType.PAYMENT, true) => 
+                        (ActionType.NA, KPIType.ITIssues),
+                    (TransactionType.PAYMENT, false) => 
+                        (ActionType.DoPricing, KPIType.CorrespondentChargesToBeInvoiced),
+                    (TransactionType.ADJUSTMENT, true) => 
+                        (ActionType.Adjust, KPIType.PaidButNotReconciled),
+                    (TransactionType.ADJUSTMENT, false) => 
+                        (ActionType.Adjust, KPIType.PaidButNotReconciled),
+                    (TransactionType.XCL_LOADER, true) => 
+                        (ActionType.Match, KPIType.PaidButNotReconciled),
+                    (TransactionType.TRIGGER, true) => 
+                        (ActionType.Investigate, KPIType.UnderInvestigation),
+                    (TransactionType.TRIGGER, false) => 
+                        (ActionType.ToClaim, KPIType.UnderInvestigation),
+                    _ => (ActionType.NA, KPIType.ITIssues)
+                };
             }
             else
             {
-                return ApplyReceivableRules(transactionType, guaranteeType);
+                return (guaranteeType, transactionType) switch
+                {
+                    ("REISSUANCE", TransactionType.INCOMING_PAYMENT) => 
+                        (ActionType.Request, KPIType.NotClaimed),
+                    ("ISSUANCE", TransactionType.INCOMING_PAYMENT) => 
+                        (ActionType.NA, KPIType.ClaimedButNotPaid),
+                    ("ADVISING", TransactionType.INCOMING_PAYMENT) => 
+                        (ActionType.Trigger, KPIType.PaidButNotReconciled),
+                    (_, TransactionType.DIRECT_DEBIT) => 
+                        (ActionType.Investigate, KPIType.ITIssues),
+                    (_, TransactionType.MANUAL_OUTGOING) => 
+                        (ActionType.Trigger, KPIType.CorrespondentChargesPendingTrigger),
+                    (_, TransactionType.OUTGOING_PAYMENT) => 
+                        (ActionType.Trigger, KPIType.CorrespondentChargesPendingTrigger),
+                    (_, TransactionType.EXTERNAL_DEBIT_PAYMENT) => 
+                        (ActionType.Execute, KPIType.NotClaimed),
+                    _ => (ActionType.NA, KPIType.ITIssues)
+                };
             }
         }
 
-        private (ActionType? action, KPIType? kpi) ApplyPivotRules(string transactionType, string creditDebit)
+        private (ActionType action, KPIType kpi) ApplyPivotRules(TransactionType transactionType, decimal signedAmount)
         {
-            switch (transactionType.ToUpper())
+            bool isCredit = signedAmount > 0;
+            
+            switch (transactionType)
             {
-                case "COLLECTION" when creditDebit == "CREDIT":
+                case TransactionType.COLLECTION when isCredit:
                     return (ActionType.Match, KPIType.PaidButNotReconciled);
                 
-                case "PAYMENT/AUTOMATIC REFUND" when creditDebit == "DEBIT":
+                case TransactionType.PAYMENT when !isCredit:
                     return (ActionType.DoPricing, KPIType.CorrespondentChargesPendingTrigger);
                 
-                case "ADJUSTMENT":
+                case TransactionType.ADJUSTMENT:
                     return (ActionType.Adjust, KPIType.PaidButNotReconciled);
                 
-                case "XCL LOADER" when creditDebit == "CREDIT":
+                case TransactionType.XCL_LOADER when isCredit:
                     return (ActionType.Match, KPIType.PaidButNotReconciled);
                 
-                case "TRIGGER" when creditDebit == "CREDIT":
+                case TransactionType.TRIGGER when isCredit:
                     return (ActionType.Investigate, KPIType.UnderInvestigation);
                 
-                case "TRIGGER" when creditDebit == "DEBIT":
+                case TransactionType.TRIGGER when !isCredit:
                     return (ActionType.ToClaim, KPIType.UnderInvestigation);
                 
                 default:
@@ -311,27 +356,27 @@ namespace RecoTool.Services
             }
         }
 
-        private (ActionType? action, KPIType? kpi) ApplyReceivableRules(string transactionType, string guaranteeType)
+        private (ActionType action, KPIType kpi) ApplyReceivableRules(TransactionType transactionType, string guaranteeType)
         {
-            switch (transactionType.ToUpper())
+            switch (transactionType)
             {
-                case "INCOMING PAYMENT" when guaranteeType == "REISSUANCE":
+                case TransactionType.INCOMING_PAYMENT when guaranteeType == "REISSUANCE":
                     return (ActionType.Request, KPIType.NotClaimed);
                 
-                case "INCOMING PAYMENT" when guaranteeType == "ISSUANCE":
+                case TransactionType.INCOMING_PAYMENT when guaranteeType == "ISSUANCE":
                     return (ActionType.NA, KPIType.ClaimedButNotPaid);
                 
-                case "INCOMING PAYMENT" when guaranteeType == "ADVISING":
+                case TransactionType.INCOMING_PAYMENT when guaranteeType == "ADVISING":
                     return (ActionType.Trigger, KPIType.PaidButNotReconciled);
                 
-                case "DIRECT DEBIT":
+                case TransactionType.DIRECT_DEBIT:
                     return (ActionType.Investigate, KPIType.ITIssues);
                 
-                case "MANUAL OUTGOING":
-                case "OUTGOING PAYMENT":
+                case TransactionType.MANUAL_OUTGOING:
+                case TransactionType.OUTGOING_PAYMENT:
                     return (ActionType.Trigger, KPIType.CorrespondentChargesPendingTrigger);
                 
-                case "EXTERNAL DEBIT PAYMENT":
+                case TransactionType.EXTERNAL_DEBIT_PAYMENT:
                     return (ActionType.Execute, KPIType.NotClaimed);
                 
                 default:

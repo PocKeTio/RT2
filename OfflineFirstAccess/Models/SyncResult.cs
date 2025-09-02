@@ -13,7 +13,7 @@ namespace OfflineFirstAccess.Models
         /// </summary>
         public SyncResult()
         {
-            StartTime = DateTime.Now;
+            StartTime = DateTime.UtcNow;
         }
 
         /// <summary>
@@ -59,7 +59,7 @@ namespace OfflineFirstAccess.Models
         /// <summary>
         /// Date et heure de la synchronisation
         /// </summary>
-        public DateTime SyncTime { get; set; } = DateTime.Now;
+        public DateTime SyncTime { get; set; } = DateTime.UtcNow;
 
         /// <summary>
         /// Durée totale de la synchronisation en millisecondes
@@ -80,7 +80,7 @@ namespace OfflineFirstAccess.Models
             {
                 if (SyncTimeMs > 0)
                     return StartTime.AddMilliseconds(SyncTimeMs);
-                return DateTime.Now;
+                return DateTime.UtcNow;
             }
         }
 

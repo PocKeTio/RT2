@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data.OleDb;
+using System.Globalization;
 using System.Threading.Tasks;
 using OfflineFirstAccess.Helpers;
 using OfflineFirstAccess.Models;
@@ -62,8 +63,8 @@ namespace OfflineFirstAccess.Services
                                 Description = reader["CPA_Description"]?.ToString(),
                                 Category = reader["CPA_Category"]?.ToString(),
                                 LastModified = reader["CPA_LastModified"] != DBNull.Value
-                                    ? Convert.ToDateTime(reader["CPA_LastModified"])
-                                    : DateTime.Now,
+                                    ? Convert.ToDateTime(reader["CPA_LastModified"], CultureInfo.InvariantCulture).ToUniversalTime()
+                                    : DateTime.UtcNow,
                                 IsUserEditable = reader["CPA_IsUserEditable"] != DBNull.Value
                                     ? Convert.ToBoolean(reader["CPA_IsUserEditable"])
                                     : true
@@ -127,7 +128,7 @@ namespace OfflineFirstAccess.Services
                     }
                     else if (typeof(T) == typeof(DateTime))
                     {
-                        return (T)(object)Convert.ToDateTime(parameter.Value);
+                        return (T)(object)Convert.ToDateTime(parameter.Value, CultureInfo.InvariantCulture);
                     }
                     else
                     {
@@ -179,7 +180,7 @@ namespace OfflineFirstAccess.Services
                 var parameter = existingParam ?? new ConfigParameter { Key = key };
                 
                 parameter.Value = value;
-                parameter.LastModified = DateTime.Now;
+                parameter.LastModified = DateTime.UtcNow;
                 
                 if (description != null)
                     parameter.Description = description;

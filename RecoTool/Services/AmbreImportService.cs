@@ -13,6 +13,7 @@ using OfflineFirstAccess.Models;
 using RecoTool.Helpers;
 using RecoTool.Models;
 using RecoTool.Services;
+using System.Globalization;
 
 namespace RecoTool.Services
 {
@@ -1264,7 +1265,7 @@ namespace RecoTool.Services
             if (value == null || value == DBNull.Value)
                 return null;
                 
-            if (DateTime.TryParse(value.ToString(), out DateTime result))
+            if (DateTime.TryParse(value.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime result))
                 return result;
                 
             return null;

@@ -16,6 +16,7 @@ using RecoTool.Services;
 using System.Threading;
 using Excel = Microsoft.Office.Interop.Excel;
 using System.Runtime.InteropServices;
+using System.Globalization;
 
 namespace RecoTool.Windows
 {
@@ -120,8 +121,8 @@ namespace RecoTool.Windows
         {
             
             // Dates par défaut : mois courant
-            StartDate = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1);
-            EndDate = DateTime.Now;
+            StartDate = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            EndDate = DateTime.UtcNow;
             
             // Répertoire de sortie par défaut
             OutputPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "RecoTool_Reports");
@@ -258,7 +259,7 @@ namespace RecoTool.Windows
                     Title = "Custom Export",
                     Filter = "Excel Files (*.xlsx)|*.xlsx|CSV Files (*.csv)|*.csv",
                     DefaultExt = "xlsx",
-                    FileName = $"RecoTool_Custom_{DateTime.Now:yyyyMMdd_HHmmss}"
+                    FileName = $"RecoTool_Custom_{DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture)}"
                 };
 
                 if (saveFileDialog.ShowDialog() == true)
@@ -326,7 +327,7 @@ namespace RecoTool.Windows
                 Directory.CreateDirectory(OutputPath);
 
                 // Nom du fichier
-                var fileName = $"{reportType}_Report_{CurrentCountry?.CNT_Id}_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+                var fileName = $"{reportType}_Report_{CurrentCountry?.CNT_Id}_{DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture)}.xlsx";
                 var fullPath = Path.Combine(OutputPath, fileName);
 
                 // Récupération des données
@@ -367,7 +368,7 @@ namespace RecoTool.Windows
                 Directory.CreateDirectory(OutputPath);
 
                 // Nom du fichier
-                var fileName = $"{exportType}_Export_{CurrentCountry?.CNT_Id}_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+                var fileName = $"{exportType}_Export_{CurrentCountry?.CNT_Id}_{DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture)}.xlsx";
                 var fullPath = Path.Combine(OutputPath, fileName);
 
                 await ExportDataToFile(fullPath, exportType);
@@ -417,7 +418,7 @@ namespace RecoTool.Windows
             await Task.Delay(2000);
 
             // Écriture basique d'un fichier de test
-            var content = $"Report {reportType}\nCountry: {CurrentCountry?.CNT_Name}\nPeriod: {StartDate:dd/MM/yyyy} - {EndDate:dd/MM/yyyy}\nNumber of rows: {data.Count}\nGenerated on: {DateTime.Now}";
+            var content = FormattableString.Invariant($"Report {reportType}\nCountry: {CurrentCountry?.CNT_Name}\nPeriod: {StartDate:dd/MM/yyyy} - {EndDate:dd/MM/yyyy}\nNumber of rows: {data.Count}\nGenerated on: {DateTime.UtcNow:o}");
             File.WriteAllText(filePath.Replace(".xlsx", ".txt"), content);
         }
 
@@ -446,7 +447,7 @@ namespace RecoTool.Windows
             await Task.Delay(1500);
 
             // Écriture basique d'un fichier de test
-            var content = $"Export {exportType}\nCountry: {CurrentCountry?.CNT_Name}\nPeriod: {StartDate:dd/MM/yyyy} - {EndDate:dd/MM/yyyy}\nNumber of rows: {data.Count}\nExported on: {DateTime.Now}";
+            var content = FormattableString.Invariant($"Export {exportType}\nCountry: {CurrentCountry?.CNT_Name}\nPeriod: {StartDate:dd/MM/yyyy} - {EndDate:dd/MM/yyyy}\nNumber of rows: {data.Count}\nExported on: {DateTime.UtcNow:o}");
             File.WriteAllText(filePath.Replace(".xlsx", ".txt").Replace(".csv", ".txt"), content);
         }
 

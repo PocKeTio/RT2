@@ -60,7 +60,7 @@ namespace RecoTool.Services
                     {
                         if (!reader.IsDBNull(0))
                         {
-                            var dt = Convert.ToDateTime(reader.GetValue(0));
+                            var dt = Convert.ToDateTime(reader.GetValue(0), CultureInfo.InvariantCulture);
                             dates.Add(dt.Date);
                         }
                     }
@@ -90,7 +90,7 @@ namespace RecoTool.Services
                 var obj = await cmd.ExecuteScalarAsync(cancellationToken);
                 if (obj != null && obj != DBNull.Value)
                 {
-                    try { return Convert.ToDateTime(obj).Date; } catch { return null; }
+                    try { return Convert.ToDateTime(obj, CultureInfo.InvariantCulture).Date; } catch { return null; }
                 }
             }
             return null;
@@ -2112,10 +2112,10 @@ namespace RecoTool.Services
             string Norm(string s)
             {
                 if (string.IsNullOrWhiteSpace(s)) return s;
-                if (TryParseDwingsDate(s, out var dt)) return dt.ToString("yyyy-MM-dd");
-                if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd");
-                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd");
-                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("it-IT"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd");
+                if (TryParseDwingsDate(s, out var dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("it-IT"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                 return s;
             }
 

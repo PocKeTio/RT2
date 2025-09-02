@@ -1786,7 +1786,7 @@ namespace RecoTool.Windows
                 {
                     Title = "Export",
                     Filter = "CSV Files (*.csv)|*.csv|Excel Workbook (*.xlsx)|*.xlsx",
-                    FileName = $"reconciliation_export_{DateTime.Now:yyyyMMdd_HHmmss}"
+                    FileName = $"reconciliation_export_{DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture)}"
                 };
                 if (dlg.ShowDialog() != true) return;
 
@@ -1989,7 +1989,7 @@ namespace RecoTool.Windows
 
                 // Basic formatting similar to grid
                 if (raw is DateTime dt)
-                    return dt.ToString("yyyy-MM-dd");
+                    return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                 if (raw is bool bval)
                     return bval ? "True" : "False";
                 if (raw is decimal dec)
@@ -2473,7 +2473,7 @@ namespace RecoTool.Windows
 
                 sw.Stop();
                 // Throttle perf log to once every ScrollLogThrottleMs
-                var now = DateTime.Now;
+                var now = DateTime.UtcNow;
                 if ((now - _lastScrollPerfLog).TotalMilliseconds >= ScrollLogThrottleMs)
                 {
                     try
@@ -2905,7 +2905,7 @@ namespace RecoTool.Windows
                 var dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RecoTool");
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 var path = System.IO.Path.Combine(dir, "actions.log");
-                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}\t{user}\t{action}\t{details}";
+                var line = string.Format(CultureInfo.InvariantCulture, "{0:yyyy-MM-dd HH:mm:ss}\t{1}\t{2}\t{3}", DateTime.UtcNow, user, action, details);
                 System.IO.File.AppendAllLines(path, new[] { line }, Encoding.UTF8);
             }
             catch
@@ -2922,7 +2922,7 @@ namespace RecoTool.Windows
                 var dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RecoTool");
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 var path = System.IO.Path.Combine(dir, "perf.log");
-                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}\t{area}\t{details}";
+                var line = string.Format(CultureInfo.InvariantCulture, "{0:yyyy-MM-dd HH:mm:ss}\t{1}\t{2}", DateTime.UtcNow, area, details);
                 System.IO.File.AppendAllLines(path, new[] { line }, Encoding.UTF8);
             }
             catch { }
@@ -2932,7 +2932,7 @@ namespace RecoTool.Windows
         private string GenerateWhereClause()
         {
             string Esc(string s) => string.IsNullOrEmpty(s) ? s : s.Replace("'", "''");
-            string DateLit(DateTime d) => "#" + d.ToString("yyyy-MM-dd") + "#"; // Access date literal
+            string DateLit(DateTime d) => "#" + d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "#"; // Access date literal
             string MapUiToDb(string s)
             {
                 switch ((s ?? string.Empty).Trim().ToUpperInvariant())
@@ -3017,7 +3017,7 @@ namespace RecoTool.Windows
                 var m = Regex.Match(s, pattern, RegexOptions.IgnoreCase);
                 if (!m.Success) return null;
                 var v = m.Groups[1].Value; // yyyy-MM-dd
-                return DateTime.TryParse(v, out var dt) ? dt : (DateTime?)null;
+                return DateTime.TryParse(v, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt) ? dt : (DateTime?)null;
             }
 
             FilterAccountId = GetString(@"Account_ID\s*=\s*'([^']*)'");
@@ -3064,7 +3064,7 @@ namespace RecoTool.Windows
                 var m1 = Regex.Match(s, @"a\.DeleteDate\s*>=\s*#([0-9]{4}-[0-9]{2}-[0-9]{2})#", RegexOptions.IgnoreCase);
                 if (m1.Success)
                 {
-                    if (DateTime.TryParse(m1.Groups[1].Value, out var dd))
+                    if (DateTime.TryParse(m1.Groups[1].Value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dd))
                         FilterDeletedDate = dd.Date;
                 }
             }

@@ -16,6 +16,7 @@ using RecoTool.Services;
 using System.Threading;
 using Excel = Microsoft.Office.Interop.Excel;
 using System.Runtime.InteropServices;
+using System.Globalization;
 
 namespace RecoTool.Windows
 {
@@ -417,7 +418,7 @@ namespace RecoTool.Windows
             await Task.Delay(2000);
 
             // Écriture basique d'un fichier de test
-            var content = $"Report {reportType}\nCountry: {CurrentCountry?.CNT_Name}\nPeriod: {StartDate:dd/MM/yyyy} - {EndDate:dd/MM/yyyy}\nNumber of rows: {data.Count}\nGenerated on: {DateTime.Now}";
+            var content = $"Report {reportType}\nCountry: {CurrentCountry?.CNT_Name}\nPeriod: {StartDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)} - {EndDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}\nNumber of rows: {data.Count}\nGenerated on: {DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)}";
             File.WriteAllText(filePath.Replace(".xlsx", ".txt"), content);
         }
 
@@ -446,7 +447,7 @@ namespace RecoTool.Windows
             await Task.Delay(1500);
 
             // Écriture basique d'un fichier de test
-            var content = $"Export {exportType}\nCountry: {CurrentCountry?.CNT_Name}\nPeriod: {StartDate:dd/MM/yyyy} - {EndDate:dd/MM/yyyy}\nNumber of rows: {data.Count}\nExported on: {DateTime.Now}";
+            var content = $"Export {exportType}\nCountry: {CurrentCountry?.CNT_Name}\nPeriod: {StartDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)} - {EndDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}\nNumber of rows: {data.Count}\nExported on: {DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)}";
             File.WriteAllText(filePath.Replace(".xlsx", ".txt").Replace(".csv", ".txt"), content);
         }
 

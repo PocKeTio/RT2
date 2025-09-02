@@ -14,6 +14,7 @@ using RecoTool.Models;
 using OfflineFirstAccess.Data;
 using OfflineFirstAccess.Models;
 using System.Data.OleDb;
+using System.Globalization;
 
 namespace RecoTool.Windows
 {
@@ -163,7 +164,7 @@ namespace RecoTool.Windows
             try
             {
                 var fi = new FileInfo(path);
-                target.Text = $"File: {fi.Name} ({fi.Length / 1024:N0} KB) - Modified: {fi.LastWriteTime:dd/MM/yyyy HH:mm}";
+                target.Text = $"File: {fi.Name} ({(fi.Length / 1024).ToString("N0", CultureInfo.InvariantCulture)} KB) - Modified: {fi.LastWriteTime.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture)}";
             }
             catch
             {
@@ -324,9 +325,9 @@ namespace RecoTool.Windows
                     try
                     {
                         if (v == null) return null;
-                        if (v is DateTime dt) return dt.ToString("dd/MM/yyyy");
-                        if (v is double d) return DateTime.FromOADate(d).ToString("dd/MM/yyyy");
-                        if (DateTime.TryParse(v.ToString(), out var parsed)) return parsed.ToString("dd/MM/yyyy");
+                        if (v is DateTime dt) return dt.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+                        if (v is double d) return DateTime.FromOADate(d).ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+                        if (DateTime.TryParse(v.ToString(), out var parsed)) return parsed.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
                     }
                     catch { }
                     return null;
@@ -845,7 +846,7 @@ namespace RecoTool.Windows
         {
             Dispatcher.Invoke(() =>
             {
-                var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                var timestamp = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
                 var prefix = isError ? "[ERROR]" : "[INFO]";
                 ImportLogText.Text += $"{timestamp} {prefix} {message}\n";
                 LogScrollViewer.ScrollToEnd();

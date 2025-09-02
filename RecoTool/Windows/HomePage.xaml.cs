@@ -15,6 +15,7 @@ using System.Reflection;
 using System.Windows.Media;
 using System.Text.Json;
 using System.Text;
+using System.Globalization;
 
 namespace RecoTool.Windows
 {
@@ -305,7 +306,7 @@ namespace RecoTool.Windows
                 for (int i = 0; i < dayCount; i++)
                 {
                     var day = minDay.AddDays(i);
-                    labels.Add(day.ToString("dd/MM"));
+                    labels.Add(day.ToString("dd/MM", CultureInfo.InvariantCulture));
                     int newCount = creations.Count(r => r.CreationDate.Value.Date == day);
                     int delCount = deletions.Count(r => r.DeleteDate.Value.Date == day);
                     newPerDay.Add(newCount);
@@ -502,7 +503,7 @@ namespace RecoTool.Windows
             _actionDistributionSeries = new SeriesCollection();
             _kpiRiskSeries = new SeriesCollection();
             _statusMessage = "Ready";
-            _lastUpdateTime = DateTime.Now.ToString("HH:mm:ss");
+            _lastUpdateTime = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
             
             // Initialiser les nouvelles propriétés de graphiques
             _receivableChartData = new ChartValues<double>();
@@ -880,7 +881,7 @@ namespace RecoTool.Windows
                 if (table == null || table.Rows.Count == 0)
                 {
                     _usingSnapshot = false;
-                    StatusMessage = $"No snapshot found for {date:dd/MM/yyyy}. Showing live data.";
+                    StatusMessage = $"No snapshot found for {date.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}. Showing live data.";
                     return false;
                 }
 
@@ -898,8 +899,8 @@ namespace RecoTool.Windows
                 ApplySnapshotCharts(row);
 
                 _usingSnapshot = true;
-                StatusMessage = $"Snapshot loaded for {date:dd/MM/yyyy}.";
-                LastUpdateTime = DateTime.Now.ToString("HH:mm:ss");
+                StatusMessage = $"Snapshot loaded for {date.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}.";
+                LastUpdateTime = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
                 return true;
             }
             catch (Exception ex)
@@ -1205,7 +1206,7 @@ namespace RecoTool.Windows
                     return;
                 }
 
-                string subject = $"Missing invoices report - {CurrentCountryName ?? "Unknown Country"} - {DateTime.Today:yyyy-MM-dd}";
+                string subject = $"Missing invoices report - {CurrentCountryName ?? "Unknown Country"} - {DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
 
                 var sb = new StringBuilder();
                 sb.Append("<html><body>");
@@ -1311,7 +1312,7 @@ namespace RecoTool.Windows
         private static string FormatCsvValue(object v)
         {
             if (v == null || v == DBNull.Value) return string.Empty;
-            if (v is DateTime dt) return dt.ToString("yyyy-MM-dd");
+            if (v is DateTime dt) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             return v.ToString();
         }
 
@@ -1642,7 +1643,7 @@ namespace RecoTool.Windows
                 AnalyzeAccountDistribution();
 
                 StatusMessage = $"Data loaded: {_reconciliationViewData.Count} rows";
-                LastUpdateTime = DateTime.Now.ToString("HH:mm:ss");
+                LastUpdateTime = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 
                 System.Diagnostics.Debug.WriteLine($"Data loaded via ReconciliationService: {_reconciliationViewData.Count} rows for {_offlineFirstService.CurrentCountryId}");
             }
@@ -2245,7 +2246,7 @@ namespace RecoTool.Windows
             try
             {
                 UpdateTextBlock("CountryNameText", _offlineFirstService.CurrentCountryId ?? "N/A");
-                UpdateTextBlock("LastUpdateText", DateTime.Now.ToString("dd/MM/yyyy HH:mm"));
+                UpdateTextBlock("LastUpdateText", DateTime.Now.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture));
             }
             catch (Exception ex)
             {

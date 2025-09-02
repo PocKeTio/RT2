@@ -4357,7 +4357,7 @@ namespace RecoTool.Services
                 if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
 
                 string baseName = Path.GetFileNameWithoutExtension(localDbPath);
-                string timeStamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+                string timeStamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
                 string suffix = string.IsNullOrWhiteSpace(label) ? "PreImport" : label.Trim();
                 string backupPath = Path.Combine(savedDir, $"{baseName}_{suffix}_{timeStamp}.accdb");
 

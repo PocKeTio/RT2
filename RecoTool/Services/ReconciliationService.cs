@@ -2112,10 +2112,10 @@ namespace RecoTool.Services
             string Norm(string s)
             {
                 if (string.IsNullOrWhiteSpace(s)) return s;
-                if (TryParseDwingsDate(s, out var dt)) return dt.ToString("yyyy-MM-dd");
-                if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd");
-                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd");
-                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("it-IT"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd");
+                if (TryParseDwingsDate(s, out var dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("it-IT"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                 return s;
             }
 

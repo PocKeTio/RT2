@@ -576,11 +576,11 @@ namespace RecoTool.Services
                             LogManager.Warning($"Cleanup of ChangeLog/compaction failed (non-blocking): {cleanupEx.Message}");
                         }
 
-                        // Refresh the local databases from network atomically (under the same global lock)
-                        try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
-                        await _offlineFirstService.CopyNetworkToLocalAmbreAsync(countryId);
-                        await _offlineFirstService.CopyNetworkToLocalReconciliationAsync(countryId);
-                        
+                        // AMBRE database is already synchronized when selecting the country,
+                        // so no additional refresh is required here. T_Reconciliation will
+                        // be synchronized separately via SynchronizeData after releasing
+                        // the global lock.
+
                         // Completed
                         try { await _offlineFirstService.SetSyncStatusAsync("Completed"); } catch { }
                     }
@@ -637,7 +637,8 @@ namespace RecoTool.Services
                     {
                         LogManager.Info($"Starting network synchronization for {countryId}");
 
-                        // Synchroniser avec la base réseau via OfflineFirstService
+                        // AMBRE database is already in sync when the country is selected.
+                        // SynchronizeData refreshes only T_Reconciliation.
                         bool syncSuccess = await _offlineFirstService.SynchronizeData();
 
                         if (syncSuccess)

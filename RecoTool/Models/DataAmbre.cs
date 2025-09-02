@@ -1,5 +1,6 @@
 using System;
 using System.Windows.Markup;
+using System.Globalization;
 
 namespace RecoTool.Models
 {
@@ -49,7 +50,7 @@ namespace RecoTool.Models
         /// </summary>
         public string GetUniqueKey()
         {
-            return $"{Event_Num}_{RawLabel}_{ReconciliationOrigin_Num}_{Operation_Date?.ToString("yyyyMMdd")}_{SignedAmount}";
+            return $"{Event_Num}_{RawLabel}_{ReconciliationOrigin_Num}_{Operation_Date?.ToString("yyyyMMdd", CultureInfo.InvariantCulture)}_{SignedAmount}";
         }
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Globalization;
 
 namespace OfflineFirstAccess.Helpers
 {
@@ -89,7 +90,7 @@ namespace OfflineFirstAccess.Helpers
 
             var entry = new LogEntry
             {
-                Timestamp = DateTime.Now,
+                Timestamp = DateTime.UtcNow,
                 Level = level,
                 Message = message,
                 Exception = exception,
@@ -116,7 +117,7 @@ namespace OfflineFirstAccess.Helpers
             await _logSemaphore.WaitAsync();
             try
             {
-                string logFile = Path.Combine(_logDirectory, $"OfflineFirstAccess_{DateTime.Now:yyyyMMdd}.log");
+                string logFile = Path.Combine(_logDirectory, $"OfflineFirstAccess_{DateTime.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture)}.log");
 
                 using (var writer = new StreamWriter(logFile, append: true))
                 {
@@ -151,7 +152,7 @@ namespace OfflineFirstAccess.Helpers
         /// </summary>
         private static string FormatLogEntry(LogEntry entry)
         {
-            string baseMessage = $"{entry.Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{entry.Level,-7}] [Thread:{entry.ThreadId:D3}] {entry.Message}";
+            string baseMessage = string.Format(CultureInfo.InvariantCulture, "{0:yyyy-MM-dd HH:mm:ss.fff} [{1,-7}] [Thread:{2:D3}] {3}", entry.Timestamp, entry.Level, entry.ThreadId, entry.Message);
 
             if (entry.Exception != null)
             {
@@ -168,7 +169,7 @@ namespace OfflineFirstAccess.Helpers
         {
             try
             {
-                var cutoffDate = DateTime.Now.AddDays(-30);
+                var cutoffDate = DateTime.UtcNow.AddDays(-30);
                 var files = Directory.GetFiles(_logDirectory, "OfflineFirstAccess_*.log");
 
                 foreach (var file in files)

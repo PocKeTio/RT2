@@ -14,6 +14,7 @@ using RecoTool.Models;
 using OfflineFirstAccess.Data;
 using OfflineFirstAccess.Models;
 using System.Data.OleDb;
+using System.Globalization;
 
 namespace RecoTool.Windows
 {
@@ -324,9 +325,9 @@ namespace RecoTool.Windows
                     try
                     {
                         if (v == null) return null;
-                        if (v is DateTime dt) return dt.ToString("dd/MM/yyyy");
-                        if (v is double d) return DateTime.FromOADate(d).ToString("dd/MM/yyyy");
-                        if (DateTime.TryParse(v.ToString(), out var parsed)) return parsed.ToString("dd/MM/yyyy");
+                        if (v is DateTime dt) return dt.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+                        if (v is double d) return DateTime.FromOADate(d).ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+                        if (DateTime.TryParse(v.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)) return parsed.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
                     }
                     catch { }
                     return null;
@@ -622,7 +623,7 @@ namespace RecoTool.Windows
                 var dropped = beforeCount - toApply.Count;
 
                 // Ensure at least one updatable field by setting LastModified; this also timestamps the update
-                var now = DateTime.Now;
+                var now = DateTime.UtcNow;
                 foreach (var rec in toApply)
                 {
                     rec["LastModified"] = now;
@@ -783,7 +784,7 @@ namespace RecoTool.Windows
                 {
                     if (value is DateTime dt) return dt;
                     if (value is double d) return DateTime.FromOADate(d);
-                    if (DateTime.TryParse(value.ToString(), out var parsed)) return parsed;
+                    if (DateTime.TryParse(value.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)) return parsed;
                     return DBNull.Value;
                 }
                 if (IsBoolKey(key))
@@ -845,7 +846,7 @@ namespace RecoTool.Windows
         {
             Dispatcher.Invoke(() =>
             {
-                var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                var timestamp = DateTime.UtcNow.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
                 var prefix = isError ? "[ERROR]" : "[INFO]";
                 ImportLogText.Text += $"{timestamp} {prefix} {message}\n";
                 LogScrollViewer.ScrollToEnd();

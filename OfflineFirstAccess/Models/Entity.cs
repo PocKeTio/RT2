@@ -112,8 +112,8 @@ namespace OfflineFirstAccess.Models
         /// </summary>
         public void UpdateVersionAndTimestamp()
         {
-            // Mettre à jour la date de dernière modification
-            Properties[LastModifiedColumn] = DateTime.Now;
+            // Mettre à jour la date de dernière modification (UTC)
+            Properties[LastModifiedColumn] = DateTime.UtcNow;
             
             // Incrémenter le numéro de version
             IncrementVersion();

@@ -79,7 +79,7 @@ namespace RecoTool.Helpers
             if (data.ContainsKey(fieldName) && data[fieldName] != null)
             {
                 var value = data[fieldName].ToString();
-                if (!string.IsNullOrWhiteSpace(value) && !DateTime.TryParse(value, out _))
+                if (!string.IsNullOrWhiteSpace(value) && !DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
                 {
                     errors.Add($"Le champ '{fieldName}' doit être une date valide.");
                 }

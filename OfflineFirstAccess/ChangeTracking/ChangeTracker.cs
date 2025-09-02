@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Globalization;
 using OfflineFirstAccess.Data;
 using OfflineFirstAccess.Models;
 
@@ -230,7 +231,7 @@ namespace OfflineFirstAccess.ChangeTracking
                                 OperationType = reader["OperationType"].ToString(),
                                 TimestampUTC = reader["TimestampUTC"] is double d
                                     ? DateTime.FromOADate(d)
-                                    : Convert.ToDateTime(reader["TimestampUTC"]).ToUniversalTime()
+                                    : Convert.ToDateTime(reader["TimestampUTC"], CultureInfo.InvariantCulture).ToUniversalTime()
                             });
                             cnt++;
                             if (cnt % 50 == 0) Debug.WriteLine($"[ChangeTracker] GetUnsyncedChangesAsync: {cnt} rows read...");

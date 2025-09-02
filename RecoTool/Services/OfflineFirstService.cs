@@ -4357,7 +4357,7 @@ namespace RecoTool.Services
                 if (!Directory.Exists(savedDir)) Directory.CreateDirectory(savedDir);
 
                 string baseName = Path.GetFileNameWithoutExtension(localDbPath);
-                string timeStamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+                string timeStamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
                 string suffix = string.IsNullOrWhiteSpace(label) ? "PreImport" : label.Trim();
                 string backupPath = Path.Combine(savedDir, $"{baseName}_{suffix}_{timeStamp}.accdb");
 
@@ -5049,7 +5049,7 @@ namespace RecoTool.Services
                                     else if (v is string s)
                                     {
                                         if (double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var od)) v = DateTime.FromOADate(od);
-                                        else if (DateTime.TryParse(s, out var dt2)) v = dt2;
+                                        else if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt2)) v = dt2;
                                     }
                                     else if (v is DateTimeOffset dto) v = dto.UtcDateTime;
                                 }

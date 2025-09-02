@@ -42,7 +42,7 @@ namespace OfflineFirstAccess.Models
         /// </summary>
         public ConfigParameter()
         {
-            LastModified = DateTime.Now;
+            LastModified = DateTime.UtcNow;
             IsUserEditable = true;
         }
         
@@ -55,7 +55,7 @@ namespace OfflineFirstAccess.Models
             Value = value;
             Description = description;
             Category = category;
-            LastModified = DateTime.Now;
+            LastModified = DateTime.UtcNow;
             IsUserEditable = true;
         }
     }

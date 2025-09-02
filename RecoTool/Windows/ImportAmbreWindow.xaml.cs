@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using RecoTool.Models;
 using RecoTool.Services;
 using RecoTool.Helpers;
+using System.Globalization;
 
 namespace RecoTool.Windows
 {
@@ -778,7 +779,7 @@ namespace RecoTool.Windows
         {
             Dispatcher.Invoke(() =>
             {
-                var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                var timestamp = DateTime.UtcNow.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
                 var prefix = isError ? "[ERREUR]" : "[INFO]";
                 var logEntry = $"{timestamp} {prefix} {message}\n";
                 

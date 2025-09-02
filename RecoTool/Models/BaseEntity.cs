@@ -15,7 +15,7 @@ namespace RecoTool.Models
 
         protected BaseEntity()
         {
-            CreationDate = DateTime.Now;
+            CreationDate = DateTime.UtcNow;
             Version = 1;
         }
 
@@ -29,7 +29,7 @@ namespace RecoTool.Models
         /// </summary>
         public virtual void MarkAsDeleted()
         {
-            DeleteDate = DateTime.Now;
+            DeleteDate = DateTime.UtcNow;
         }
 
         /// <summary>
@@ -39,7 +39,7 @@ namespace RecoTool.Models
         public virtual void UpdateModification(string modifiedBy)
         {
             ModifiedBy = modifiedBy;
-            LastModified = DateTime.Now;
+            LastModified = DateTime.UtcNow;
             Version++;
         }
     }

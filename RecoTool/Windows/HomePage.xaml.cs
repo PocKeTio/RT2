@@ -15,6 +15,7 @@ using System.Reflection;
 using System.Windows.Media;
 using System.Text.Json;
 using System.Text;
+using System.Globalization;
 
 namespace RecoTool.Windows
 {
@@ -502,7 +503,7 @@ namespace RecoTool.Windows
             _actionDistributionSeries = new SeriesCollection();
             _kpiRiskSeries = new SeriesCollection();
             _statusMessage = "Ready";
-            _lastUpdateTime = DateTime.Now.ToString("HH:mm:ss");
+            _lastUpdateTime = DateTime.UtcNow.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
             
             // Initialiser les nouvelles propriétés de graphiques
             _receivableChartData = new ChartValues<double>();
@@ -880,7 +881,7 @@ namespace RecoTool.Windows
                 if (table == null || table.Rows.Count == 0)
                 {
                     _usingSnapshot = false;
-                    StatusMessage = $"No snapshot found for {date:dd/MM/yyyy}. Showing live data.";
+                    StatusMessage = FormattableString.Invariant($"No snapshot found for {date:dd/MM/yyyy}. Showing live data.");
                     return false;
                 }
 
@@ -898,8 +899,8 @@ namespace RecoTool.Windows
                 ApplySnapshotCharts(row);
 
                 _usingSnapshot = true;
-                StatusMessage = $"Snapshot loaded for {date:dd/MM/yyyy}.";
-                LastUpdateTime = DateTime.Now.ToString("HH:mm:ss");
+                StatusMessage = FormattableString.Invariant($"Snapshot loaded for {date:dd/MM/yyyy}.");
+                LastUpdateTime = DateTime.UtcNow.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
                 return true;
             }
             catch (Exception ex)
@@ -1311,7 +1312,7 @@ namespace RecoTool.Windows
         private static string FormatCsvValue(object v)
         {
             if (v == null || v == DBNull.Value) return string.Empty;
-            if (v is DateTime dt) return dt.ToString("yyyy-MM-dd");
+            if (v is DateTime dt) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             return v.ToString();
         }
 
@@ -1641,8 +1642,8 @@ namespace RecoTool.Windows
                 // Analyser la répartition des comptes pour diagnostic
                 AnalyzeAccountDistribution();
 
-                StatusMessage = $"Data loaded: {_reconciliationViewData.Count} rows";
-                LastUpdateTime = DateTime.Now.ToString("HH:mm:ss");
+                StatusMessage = FormattableString.Invariant($"Data loaded: {_reconciliationViewData.Count} rows");
+                LastUpdateTime = DateTime.UtcNow.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 
                 System.Diagnostics.Debug.WriteLine($"Data loaded via ReconciliationService: {_reconciliationViewData.Count} rows for {_offlineFirstService.CurrentCountryId}");
             }
@@ -1732,7 +1733,7 @@ namespace RecoTool.Windows
         private DateTime? ConvertToDateTime(object value)
         {
             if (value == null || value == DBNull.Value) return null;
-            if (DateTime.TryParse(value.ToString(), out DateTime result)) return result;
+            if (DateTime.TryParse(value.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime result)) return result;
             return null;
         }
 
@@ -2245,7 +2246,7 @@ namespace RecoTool.Windows
             try
             {
                 UpdateTextBlock("CountryNameText", _offlineFirstService.CurrentCountryId ?? "N/A");
-                UpdateTextBlock("LastUpdateText", DateTime.Now.ToString("dd/MM/yyyy HH:mm"));
+                UpdateTextBlock("LastUpdateText", DateTime.UtcNow.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture));
             }
             catch (Exception ex)
             {

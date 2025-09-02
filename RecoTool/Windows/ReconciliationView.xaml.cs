@@ -41,8 +41,6 @@ namespace RecoTool.Windows
         private bool _canRefresh = true;
         private bool _initialLoaded;
         private DispatcherTimer _filterDebounceTimer;
-        private DispatcherTimer _pushDebounceTimer; // coalesces multiple push triggers
-        private const int PushDebounceMs = 400;
         // Transient highlight clear timer
         private DispatcherTimer _highlightClearTimer;
         private bool _isSyncRefreshInProgress;
@@ -618,7 +616,7 @@ namespace RecoTool.Windows
                 // Background sync best effort
                 try
                 {
-                    SchedulePushDebounced();
+                    QueueBulkPush();
                 }
                 catch { }
             }
@@ -692,7 +690,7 @@ namespace RecoTool.Windows
                 // Background sync best effort
                 try
                 {
-                    SchedulePushDebounced();
+                    QueueBulkPush();
                 }
                 catch { }
             }
@@ -945,32 +943,11 @@ namespace RecoTool.Windows
             catch { }
         }
 
-        private void InitializePushDebounce()
-        {
-            _pushDebounceTimer = new DispatcherTimer
-            {
-                Interval = TimeSpan.FromMilliseconds(PushDebounceMs)
-            };
-            _pushDebounceTimer.Tick += (s, e) =>
-            {
-                _pushDebounceTimer.Stop();
-                try
-                {
-                    if (_offlineFirstService?.IsInitialized == true)
-                    {
-                        _ = _offlineFirstService.PushReconciliationIfPendingAsync(_currentCountryId);
-                    }
-                }
-                catch { }
-            };
-        }
-
-        private void SchedulePushDebounced()
+        public void QueueBulkPush()
         {
             try
             {
-                _pushDebounceTimer?.Stop();
-                _pushDebounceTimer?.Start();
+                SyncMonitorService.Instance?.QueueBulkPush(_currentCountryId);
             }
             catch { }
         }
@@ -1146,7 +1123,6 @@ namespace RecoTool.Windows
             Loaded += ReconciliationView_Loaded;
             Unloaded += ReconciliationView_Unloaded;
             InitializeFilterDebounce();
-            InitializePushDebounce();
             SubscribeToSyncEvents();
             RefreshCompleted += (s, e) => _hasLoadedOnce = true;
         }
@@ -1496,7 +1472,7 @@ namespace RecoTool.Windows
                 // background sync
                 try
                 {
-                    SchedulePushDebounced();
+                    QueueBulkPush();
                 }
                 catch { }
             }
@@ -2210,7 +2186,7 @@ namespace RecoTool.Windows
                 // Fire-and-forget background sync to network DB to reduce sync debt
                 try
                 {
-                    SchedulePushDebounced();
+                    QueueBulkPush();
                 }
                 catch { /* ignore any scheduling errors */ }
             }
@@ -2316,7 +2292,7 @@ namespace RecoTool.Windows
             // Best-effort background sync
             try
             {
-                SchedulePushDebounced();
+                QueueBulkPush();
             }
             catch { }
         }
@@ -2676,7 +2652,7 @@ namespace RecoTool.Windows
                         // After successful detail save, push pending changes best-effort
                         try
                         {
-                            SchedulePushDebounced();
+                            QueueBulkPush();
                         }
                         catch { }
                     }

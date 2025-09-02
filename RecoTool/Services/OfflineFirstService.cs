@@ -4012,6 +4012,7 @@ namespace RecoTool.Services
             {
                 _syncService = new SynchronizationService();
             }
+            try { await _syncService.InitializeAsync(_syncConfig); } catch { }
             onProgress?.Invoke(30, "Configuration de synchronisation initialisée");
 
             // 1.b) Positionner également l'objet Country courant depuis les référentiels
@@ -4025,34 +4026,32 @@ namespace RecoTool.Services
             }
             onProgress?.Invoke(35, "Référentiels pays chargés");
 
-            // 2) Pousser d'éventuels changements locaux en attente (sauf si suppression demandée)
+            // 2) Synchronisation complète (PUSH puis PULL) des tables configurées (ici: T_Reconciliation)
+            //    Évite tout push fire-and-forget et garantit que la base locale est alignée proprement.
             if (!suppressPush)
             {
                 try
                 {
-                    onProgress?.Invoke(40, "Vérification des changements locaux en attente...");
-                    var pending = await GetUnsyncedChangeCountAsync(countryId);
-                    if (pending > 0)
+                    onProgress?.Invoke(40, "Synchronisation des changements (push + pull)...");
+                    var syncResult = await _syncService.SynchronizeAsync((pct, msg) =>
                     {
-                        System.Diagnostics.Debug.WriteLine($"[{nameof(SetCurrentCountryAsync)}] Pending changes detected ({pending}) for {countryId}. Pushing to network (background)...");
-                        onProgress?.Invoke(45, "Push en arrière-plan des changements...");
-                        _ = PushReconciliationIfPendingAsync(countryId);
+                        try { onProgress?.Invoke(Math.Min(49, Math.Max(41, pct)), msg); } catch { }
+                    });
+                    if (!(syncResult?.Success ?? false))
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[{nameof(SetCurrentCountryAsync)}] Synchronization failed for {countryId}: {syncResult?.ErrorDetails}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[{nameof(SetCurrentCountryAsync)}] Erreur lors du push des changements en attente pour {countryId}: {ex.Message}");
-                    // Ne pas interrompre: on va quand même tenter de réaligner local depuis réseau
+                    System.Diagnostics.Debug.WriteLine($"[{nameof(SetCurrentCountryAsync)}] Error during synchronization for {countryId}: {ex.Message}");
                 }
             }
 
             // 3) Après le push, rafraîchir toutes les bases locales depuis le réseau (best-effort)
-            try
-            {
-                onProgress?.Invoke(50, "Mise à jour locale: RECON...");
-                await CopyNetworkToLocalReconciliationAsync(countryId);
-            }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"RECON: échec copie réseau->local pour {countryId}: {ex.Message}"); }
+            // 3) Ne plus recouvrir la base locale de rapprochement juste après la sync.
+            //    La synchronisation a déjà aligné local et réseau pour T_Reconciliation.
+            onProgress?.Invoke(50, "Vérifications post-synchronisation pour RECON...");
 
             try
             {

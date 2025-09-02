@@ -45,7 +45,7 @@ namespace RecoTool.Windows
         private int _autoSyncRunningFlag; // 0 = idle, 1 = running (atomic)
         private bool _prevNetworkAvailable;
         private DateTime _lastAutoSyncUtc = DateTime.MinValue;
-        private static readonly TimeSpan AutoSyncCooldown = TimeSpan.FromSeconds(15);
+        private static readonly TimeSpan AutoSyncCooldown = TimeSpan.FromMinutes(1);
         private Action<bool> _onLockStateChanged;
         private Action<string> _onSyncSuggested;
         private bool _isLoadingViews; // Guard for SavedViews repopulation

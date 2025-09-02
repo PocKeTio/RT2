@@ -276,7 +276,7 @@ namespace RecoTool.Services
             }
 
             try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
-            await _offlineFirstService.CopyNetworkToLocalReconciliationAsync(countryId);
+            await _offlineFirstService.CopyNetworkToLocalAsync(countryId);
             return true;
         }
 
@@ -559,8 +559,7 @@ namespace RecoTool.Services
 
                         // Publier les bases locales vers le réseau tant que le verrou global est détenu
                         try { await _offlineFirstService.SetSyncStatusAsync("Publishing"); } catch { }
-                        await _offlineFirstService.CopyLocalToNetworkAmbreAsync(countryId);
-                        await _offlineFirstService.CopyLocalToNetworkReconciliationAsync(countryId);
+                        await _offlineFirstService.CopyLocalToNetworkAsync(countryId);
 
                         // Finalize: import changes are already published (file copy). Mark them as synced in ChangeLog.
                         try { await _offlineFirstService.SetSyncStatusAsync("Finalizing"); } catch { }

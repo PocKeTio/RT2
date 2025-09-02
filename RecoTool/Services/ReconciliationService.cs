@@ -1009,25 +1009,13 @@ namespace RecoTool.Services
                             catch
                             {
                                 // Swallow change-log errors to not block user saves
+                                // Diagnostic only: log once here to help track missing pushes (background sync reads ChangeLog)
+                                try { LogManager.Warning("ChangeLog recording failed in SaveReconciliationsAsync; background sync will skip these rows unless reconstructed."); } catch { }
                             }
 
-                            // Background push of reconciliation changes via serialized queue
-                            try
-                            {
-                                if (_offlineFirstService != null)
-                                {
-                                    var cid = _offlineFirstService.CurrentCountryId;
-                                    if (!string.IsNullOrWhiteSpace(cid))
-                                    {
-                                        BackgroundTaskQueue.Instance.Enqueue(async () =>
-                                        {
-                                            try { await _offlineFirstService.PushReconciliationIfPendingAsync(cid).ConfigureAwait(false); }
-                                            catch { }
-                                        });
-                                    }
-                                }
-                            }
-                            catch { }
+                            // Synchronization is handled by background services (e.g., SyncMonitor),
+                            // which read pending items from ChangeLog and then perform PUSH followed by PULL.
+                            // No direct push is triggered here.
                             return true;
                         }
                         catch

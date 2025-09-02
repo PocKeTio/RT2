@@ -576,12 +576,7 @@ namespace RecoTool.Services
                             LogManager.Warning($"Cleanup of ChangeLog/compaction failed (non-blocking): {cleanupEx.Message}");
                         }
 
-                        // Refresh the local databases from network atomically (under the same global lock)
-                        try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
-                        await _offlineFirstService.CopyNetworkToLocalAmbreAsync(countryId);
-                        await _offlineFirstService.CopyNetworkToLocalReconciliationAsync(countryId);
-                        
-                        // Completed
+                        // Completed: the workflow ends after publishing without refreshing from network
                         try { await _offlineFirstService.SetSyncStatusAsync("Completed"); } catch { }
                     }
                     catch (Exception ex)

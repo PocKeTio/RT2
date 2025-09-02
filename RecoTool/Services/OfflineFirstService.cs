@@ -3668,12 +3668,23 @@ namespace RecoTool.Services
                 tables.Add("T_Reconciliation");
             }
 
+            // Dynamic toggle from T_Param: EnableSyncLog or SYNCLOG (true/false)
+            bool enableSyncLog = false;
+            try
+            {
+                var p = GetParameter("EnableSyncLog");
+                if (string.IsNullOrWhiteSpace(p)) p = GetParameter("SYNCLOG");
+                if (!string.IsNullOrWhiteSpace(p)) bool.TryParse(p.Trim(), out enableSyncLog);
+            }
+            catch { }
+
             return new SyncConfiguration
             {
                 LocalDatabasePath = localDbPath,
                 RemoteDatabasePath = remoteDbPath,
                 LockDatabasePath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}_lock.accdb"),
-                TablesToSync = tables
+                TablesToSync = tables,
+                EnableSyncLog = enableSyncLog
             };
         }
 
@@ -3693,12 +3704,22 @@ namespace RecoTool.Services
             string remoteDir = Path.GetDirectoryName(remoteDbPath);
             string countryPrefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
 
+            bool enableSyncLogAmbre = false;
+            try
+            {
+                var p = GetParameter("EnableSyncLog");
+                if (string.IsNullOrWhiteSpace(p)) p = GetParameter("SYNCLOG");
+                if (!string.IsNullOrWhiteSpace(p)) bool.TryParse(p.Trim(), out enableSyncLogAmbre);
+            }
+            catch { }
+
             return new SyncConfiguration
             {
                 LocalDatabasePath = localDbPath,
                 RemoteDatabasePath = remoteDbPath,
                 LockDatabasePath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}_lock.accdb"),
-                TablesToSync = ambreTables
+                TablesToSync = ambreTables,
+                EnableSyncLog = enableSyncLogAmbre
             };
         }
 
@@ -3717,13 +3738,23 @@ namespace RecoTool.Services
             string remoteDir = Path.GetDirectoryName(remoteDbPath);
             string countryPrefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
 
+            bool enableSyncLogRecon = false;
+            try
+            {
+                var p = GetParameter("EnableSyncLog");
+                if (string.IsNullOrWhiteSpace(p)) p = GetParameter("SYNCLOG");
+                if (!string.IsNullOrWhiteSpace(p)) bool.TryParse(p.Trim(), out enableSyncLogRecon);
+            }
+            catch { }
+
             return new SyncConfiguration
             {
                 LocalDatabasePath = localDbPath,
                 RemoteDatabasePath = remoteDbPath,
                 LockDatabasePath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}_lock.accdb"),
                 ChangeLogConnectionString = GetChangeLogConnectionString(countryId),
-                TablesToSync = reconTables
+                TablesToSync = reconTables,
+                EnableSyncLog = enableSyncLogRecon
             };
         }
 
@@ -4816,13 +4847,10 @@ namespace RecoTool.Services
             var task = _activePushes.GetOrAdd(countryId, _ => { created = true; return RunAsync(); });
             if (!created)
             {
-                if (diag)
-                {
-                    var src = string.IsNullOrWhiteSpace(source) ? "-" : source;
-                    System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Another push is already running. Skipping this invocation. src={src}");
-                    try { LogManager.Info($"[PUSH][{countryId}] Skip: push already running (src={src})"); } catch { }
-                }
-                return 0; // best-effort: let the ongoing push finish; caller proceeds without blocking
+                // A push is already in progress for this country: wait for it to finish and return its result
+                // Do not start a new push and avoid extra logs/noise.
+                try { return await task; }
+                finally { /* no-op: the remover will run when original creator finishes */ }
             }
             try { return await task; }
             finally { _activePushes.TryRemove(countryId, out _); }

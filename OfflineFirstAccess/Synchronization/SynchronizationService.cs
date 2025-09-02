@@ -42,10 +42,13 @@ namespace OfflineFirstAccess.Synchronization
             // 4. Assemble the Orchestrator
             _orchestrator = new SyncOrchestrator(localProvider, remoteProvider, changeTracker, conflictResolver, _config);
 
-            // 5. Ensure SyncLog table exists in Lock DB
-            await EnsureSyncLogTableExistsAsync();
-            // Optionally check for interrupted syncs
-            await CheckAndResumeInterruptedSyncAsync();
+            // 5. Optional SyncLog initialization
+            if (_config.EnableSyncLog)
+            {
+                await EnsureSyncLogTableExistsAsync();
+                // Optionally check for interrupted syncs
+                await CheckAndResumeInterruptedSyncAsync();
+            }
         }
 
         public Task<SyncResult> SynchronizeAsync(Action<int, string> onProgress = null)
@@ -60,34 +63,47 @@ namespace OfflineFirstAccess.Synchronization
 
         private async Task<SyncResult> RunWithLoggingAsync(Action<int, string> onProgress)
         {
-            await EnsureSyncLogTableExistsAsync();
-            await LogSyncOperationAsync("Sync", "Started", "Starting synchronization");
+            if (_config.EnableSyncLog)
+            {
+                await EnsureSyncLogTableExistsAsync();
+                await LogSyncOperationAsync("Sync", "Started", "Starting synchronization");
+            }
             try
             {
                 // Wrap provided progress to also persist to SyncLog
                 Action<int, string> progress = (pct, msg) =>
                 {
                     try { onProgress?.Invoke(pct, msg); } catch { }
-                    // fire-and-forget persistence of progress message
-                    try { _ = LogSyncOperationAsync("Progress", "Info", $"{pct}% | {msg}"); } catch { }
+                    if (_config.EnableSyncLog)
+                    {
+                        // fire-and-forget persistence of progress message
+                        try { _ = LogSyncOperationAsync("Progress", "Info", $"{pct}% | {msg}"); } catch { }
+                    }
                 };
 
                 var result = await _orchestrator.SynchronizeAsync(progress);
                 var details = result.Success
                     ? $"Completed. UnresolvedConflicts={result.UnresolvedConflicts?.Count ?? 0}"
                     : $"Completed with errors: {result.ErrorDetails}";
-                await LogSyncOperationAsync("Sync", result.Success ? "Completed" : "Failed", details);
+                if (_config.EnableSyncLog)
+                {
+                    await LogSyncOperationAsync("Sync", result.Success ? "Completed" : "Failed", details);
+                }
                 return result;
             }
             catch (Exception ex)
             {
-                await LogSyncOperationAsync("Sync", "Failed", ex.Message);
+                if (_config.EnableSyncLog)
+                {
+                    await LogSyncOperationAsync("Sync", "Failed", ex.Message);
+                }
                 return new SyncResult { Success = false, ErrorDetails = ex.Message, Message = ex.Message };
             }
         }
 
         private async Task EnsureSyncLogTableExistsAsync()
         {
+            if (!_config.EnableSyncLog) return; // disabled
             using (var connection = new OleDbConnection(LockConnStr))
             {
                 await connection.OpenAsync();
@@ -116,6 +132,7 @@ namespace OfflineFirstAccess.Synchronization
 
         public async Task CheckAndResumeInterruptedSyncAsync()
         {
+            if (!_config.EnableSyncLog) return; // disabled
             // Simple heuristic: if last entry is a Started without a subsequent Completed/Failed, log Resuming.
             using (var connection = new OleDbConnection(LockConnStr))
             {
@@ -138,6 +155,7 @@ namespace OfflineFirstAccess.Synchronization
 
         private async Task LogSyncOperationAsync(string operation, string status, string details)
         {
+            if (!_config.EnableSyncLog) return; // disabled
             using (var connection = new OleDbConnection(LockConnStr))
             {
                 await connection.OpenAsync();

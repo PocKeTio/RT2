@@ -30,6 +30,7 @@ namespace RecoTool.Windows
         private UserControl _currentPage;
         private bool _isChangingCountrySelection;
         private bool _isCountryInitializing;
+        private bool _closingPushHandled; // guard to avoid re-entrancy on Closing
 
         // La DI appelle ce constructeur en fournissant les services nécessaires (ici OfflineFirstService)
         public MainWindow(
@@ -52,26 +53,47 @@ namespace RecoTool.Windows
             {
                 try
                 {
-                    // Final short-timeout push if there are pending local changes
                     var cid = _currentCountryId;
+                    if (_closingPushHandled)
+                    {
+                        // Already handled once: allow close to proceed
+                        return;
+                    }
+
                     if (!string.IsNullOrWhiteSpace(cid))
                     {
+                        // Block first close, attempt to finish pending push (or start one) before exit
+                        e.Cancel = true;
+                        _closingPushHandled = true;
+                        Mouse.OverrideCursor = Cursors.Wait;
                         try
                         {
                             var pushTask = _offlineFirstService?.PushReconciliationIfPendingAsync(cid);
                             if (pushTask != null)
                             {
-                                // Wait up to 5 seconds; do not block shutdown indefinitely
-                                await Task.WhenAny(pushTask, Task.Delay(TimeSpan.FromSeconds(5)));
+                                // Wait up to 15 seconds; then proceed with shutdown regardless
+                                await Task.WhenAny(pushTask, Task.Delay(TimeSpan.FromSeconds(15)));
                             }
                         }
                         catch { /* ignore on shutdown */ }
+                        finally
+                        {
+                            Mouse.OverrideCursor = null;
+                            try { SyncMonitorService.Instance.Stop(); } catch { }
+                        }
+
+                        // Trigger actual close on UI thread; guard prevents loop
+                        try { this.Dispatcher.Invoke(() => this.Close()); } catch { }
+                        return;
                     }
                 }
                 catch { }
                 finally
                 {
-                    try { SyncMonitorService.Instance.Stop(); } catch { }
+                    if (!_closingPushHandled)
+                    {
+                        try { SyncMonitorService.Instance.Stop(); } catch { }
+                    }
                 }
             };
         }
@@ -1048,7 +1070,7 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
         /// <summary>
         /// Navigation vers la page de réconciliation
         /// </summary>
-        private void ReconciliationButton_Click(object sender, RoutedEventArgs e)
+        private async void ReconciliationButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
@@ -1058,13 +1080,20 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
                     return;
                 }
 
+                Mouse.OverrideCursor = Cursors.Wait;
                 var reconciliationPage = App.ServiceProvider.GetRequiredService<ReconciliationPage>();
                 NavigateToPage(reconciliationPage);
                 UpdateNavigationButtons("Reconciliation");
+                // Wait a bit for the page to finish its initial refresh if it exposes it
+                await WaitForCurrentPageRefreshAsync(TimeSpan.FromSeconds(10));
             }
             catch (Exception ex)
             {
                 ShowError("Navigation error", $"Unable to open reconciliation page: {ex.Message}");
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
             }
         }
 

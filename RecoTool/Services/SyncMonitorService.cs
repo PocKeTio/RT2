@@ -4,6 +4,7 @@ using System.Timers;
 using System.IO;
 using System.Collections.Concurrent;
 using System.Threading;
+using System.Linq;
 using OfflineFirstAccess.Helpers;
 
 namespace RecoTool.Services
@@ -31,6 +32,7 @@ namespace RecoTool.Services
         private DateTime _lastPeriodicPushUtc = DateTime.MinValue;
         private DateTime _lastRemoteReconCheckUtc = DateTime.MinValue;
         private readonly ConcurrentDictionary<string, (long Length, DateTime LastWriteUtcDate)> _remoteReconFingerprint = new ConcurrentDictionary<string, (long, DateTime)>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, bool> _bulkPushQueue = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
         public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(60);
         public TimeSpan SuggestCooldown { get; set; } = TimeSpan.FromSeconds(90);
@@ -115,6 +117,12 @@ namespace RecoTool.Services
             }
         }
 
+        public void QueueBulkPush(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) return;
+            _bulkPushQueue[countryId] = true;
+        }
+
         private async Task OnTimerElapsed(ElapsedEventArgs e)
         {
             if (Interlocked.CompareExchange(ref _isTickRunning, 1, 0) == 1) return;
@@ -172,11 +180,19 @@ namespace RecoTool.Services
                     SafeInvoke(() => NetworkAvailabilityChanged?.Invoke(networkAvailable));
                 }
 
-                // Periodic best-effort push when online and not locked
+                // Process queued bulk pushes and periodic best-effort push when online and not locked
                 try
                 {
                     if (networkAvailable && !lockActive)
                     {
+                        foreach (var cid in _bulkPushQueue.Keys.ToArray())
+                        {
+                            if (_bulkPushQueue.TryRemove(cid, out _))
+                            {
+                                try { _ = svc.PushReconciliationIfPendingAsync(cid); } catch { }
+                            }
+                        }
+
                         var nowUtc = DateTime.UtcNow;
                         if (nowUtc - _lastPeriodicPushUtc >= PeriodicPushInterval)
                         {

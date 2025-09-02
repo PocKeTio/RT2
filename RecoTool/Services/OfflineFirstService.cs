@@ -512,17 +512,6 @@ namespace RecoTool.Services
                     System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Enter PushReconciliationIfPendingAsync. NowUtc={DateTime.UtcNow:o}, LastPushUtc={lastDbg:o}");
                     try { LogManager.Info($"[PUSH][{cid}] Enter PushReconciliationIfPendingAsync"); } catch { }
                 }
-                // Re-check debounce quickly
-                last = _lastPushTimesUtc.TryGetValue(cid, out t) ? t : DateTime.MinValue;
-                if (DateTime.UtcNow - last < _pushCooldown)
-                {
-                    if (diag)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Skipped after debounce. SinceLast={(DateTime.UtcNow - last).TotalSeconds:F1}s");
-                        try { LogManager.Info($"[PUSH][{cid}] Skipped after debounce"); } catch { }
-                    }
-                    return false;
-                }
 
                     // Vérifier réseau et lock
                     if (!IsNetworkSyncAvailable)
@@ -4966,6 +4955,46 @@ namespace RecoTool.Services
                 var appliedIds = new List<long>();
 
                 // Préparer connexions
+                // Preflight: ensure network reconciliation DB exists; if missing, create and publish it.
+                _pushStages[countryId] = "EnsureNetworkDb";
+                try
+                {
+                    var networkDbPathPre = GetNetworkReconciliationDbPath(countryId);
+                    if (string.IsNullOrWhiteSpace(networkDbPathPre)) throw new InvalidOperationException("Network DB path is empty");
+                    if (!File.Exists(networkDbPathPre))
+                    {
+                        if (diag)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Network DB missing. Recreating...");
+                            try { LogManager.Info($"[PUSH][{countryId}] Network DB missing. Recreating..."); } catch { }
+                        }
+                        var recreator = new DatabaseRecreationService();
+                        var rep = await recreator.RecreateReconciliationAsync(this, countryId);
+                        if (!rep.Success)
+                        {
+                            throw new InvalidOperationException($"Failed to (re)create network reconciliation DB: {string.Join(" | ", rep.Errors ?? new System.Collections.Generic.List<string>())}");
+                        }
+                        if (diag)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] Network DB recreated successfully.");
+                            try { LogManager.Info($"[PUSH][{countryId}] Network DB recreated successfully."); } catch { }
+                        }
+                    }
+                }
+                catch (Exception exEnsure)
+                {
+                    // Fail fast: cannot proceed without a network DB
+                    try { watchdogCts.Cancel(); } catch { }
+                    try { watchdogCts.Dispose(); } catch { }
+                    try { if (_pushRunIds.TryGetValue(countryId, out var id) && id == runId) _pushRunIds.TryRemove(countryId, out _); } catch { }
+                    if (diag)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[PUSH][{countryId}] EnsureNetworkDb failed: {exEnsure.Message}");
+                        try { LogManager.Error($"[PUSH][{countryId}] EnsureNetworkDb failed: {exEnsure.Message}", exEnsure); } catch { }
+                    }
+                    throw;
+                }
+
                 using (var localConn = new OleDbConnection(GetCountryConnectionString(countryId)))
                 using (var netConn = new OleDbConnection(GetNetworkCountryConnectionString(countryId)))
                 {

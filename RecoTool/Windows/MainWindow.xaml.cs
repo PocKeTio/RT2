@@ -48,15 +48,24 @@ namespace RecoTool.Windows
             InitializeServices();
             SetupEventHandlers();
             SetupSyncMonitor();
-            this.Closed += (s, e) =>
+            this.Closing += async (s, e) =>
             {
                 try
                 {
-                    // Best-effort final push on app exit
+                    // Final short-timeout push if there are pending local changes
                     var cid = _currentCountryId;
                     if (!string.IsNullOrWhiteSpace(cid))
                     {
-                        try { _ = _offlineFirstService?.PushReconciliationIfPendingAsync(cid); } catch { }
+                        try
+                        {
+                            var pushTask = _offlineFirstService?.PushReconciliationIfPendingAsync(cid);
+                            if (pushTask != null)
+                            {
+                                // Wait up to 5 seconds; do not block shutdown indefinitely
+                                await Task.WhenAny(pushTask, Task.Delay(TimeSpan.FromSeconds(5)));
+                            }
+                        }
+                        catch { /* ignore on shutdown */ }
                     }
                 }
                 catch { }

@@ -47,6 +47,8 @@ namespace RecoTool.Windows
         private const int HighlightDurationMs = 4000;
         private bool _syncEventsHooked;
         private bool _hasLoadedOnce; // set after first RefreshCompleted to avoid double-load on startup
+        // Debounce timer for background push (avoid immediate sync on rapid edits)
+        private DispatcherTimer _pushDebounceTimer;
 
         // Collections pour l'affichage (vue combinée)
         private ObservableCollection<ReconciliationViewData> _viewData;
@@ -170,6 +172,13 @@ namespace RecoTool.Windows
                 }
 
                 await _reconciliationService.SaveReconciliationsAsync(updates);
+
+                // Background sync best effort (debounced), to ensure comment changes reach the network
+                try
+                {
+                    ScheduleBulkPushDebounced();
+                }
+                catch { }
             }
             catch (Exception ex)
             {
@@ -613,10 +622,10 @@ namespace RecoTool.Windows
                 }
                 await _reconciliationService.SaveReconciliationsAsync(updates);
 
-                // Background sync best effort
+                // Schedule debounced background sync (avoid immediate network push)
                 try
                 {
-                    QueueBulkPush();
+                    ScheduleBulkPushDebounced();
                 }
                 catch { }
             }
@@ -687,10 +696,10 @@ namespace RecoTool.Windows
                 }
                 await _reconciliationService.SaveReconciliationsAsync(updates);
 
-                // Background sync best effort
+                // Background sync best effort (debounced)
                 try
                 {
-                    QueueBulkPush();
+                    ScheduleBulkPushDebounced();
                 }
                 catch { }
             }
@@ -746,6 +755,37 @@ namespace RecoTool.Windows
                 _filterDebounceTimer.Stop();
                 try { ApplyFilters(); } catch { }
             };
+        }
+
+        // Ensure the push debounce timer exists
+        private void EnsurePushDebounceTimer()
+        {
+            if (_pushDebounceTimer != null) return;
+            _pushDebounceTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(400)
+            };
+            _pushDebounceTimer.Tick += (s, e) =>
+            {
+                try
+                {
+                    _pushDebounceTimer.Stop();
+                    QueueBulkPush();
+                }
+                catch { }
+            };
+        }
+
+        // Public entry to schedule a debounced background push
+        public void ScheduleBulkPushDebounced()
+        {
+            try
+            {
+                EnsurePushDebounceTimer();
+                _pushDebounceTimer.Stop();
+                _pushDebounceTimer.Start();
+            }
+            catch { }
         }
 
         private void SubscribeToSyncEvents()
@@ -1469,10 +1509,10 @@ namespace RecoTool.Windows
 
                 await _reconciliationService.SaveReconciliationsAsync(updates);
 
-                // background sync
+                // background sync (debounced)
                 try
                 {
-                    QueueBulkPush();
+                    ScheduleBulkPushDebounced();
                 }
                 catch { }
             }
@@ -2183,10 +2223,10 @@ namespace RecoTool.Windows
 
                 await _reconciliationService.SaveReconciliationAsync(reco);
 
-                // Fire-and-forget background sync to network DB to reduce sync debt
+                // Fire-and-forget background sync to network DB to reduce sync debt (debounced)
                 try
                 {
-                    QueueBulkPush();
+                    ScheduleBulkPushDebounced();
                 }
                 catch { /* ignore any scheduling errors */ }
             }
@@ -2289,10 +2329,10 @@ namespace RecoTool.Windows
 
             await _reconciliationService.SaveReconciliationAsync(reco);
 
-            // Best-effort background sync
+            // Best-effort background sync (debounced)
             try
             {
-                QueueBulkPush();
+                ScheduleBulkPushDebounced();
             }
             catch { }
         }
@@ -2649,10 +2689,10 @@ namespace RecoTool.Windows
                     if (result == true)
                     {
                         await RefreshAsync();
-                        // After successful detail save, push pending changes best-effort
+                        // After successful detail save, push pending changes best-effort (debounced)
                         try
                         {
-                            QueueBulkPush();
+                            ScheduleBulkPushDebounced();
                         }
                         catch { }
                     }

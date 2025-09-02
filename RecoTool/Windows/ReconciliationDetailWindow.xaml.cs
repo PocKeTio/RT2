@@ -311,6 +311,10 @@ namespace RecoTool.UI.Views.Windows
                 // Preselect reason
                 SelectedReasonId = _reconciliation?.ReasonNonRisky ?? SelectedReasonId;
 
+                // Trigger Date
+                if (TriggerDatePicker != null)
+                    TriggerDatePicker.SelectedDate = _reconciliation?.TriggerDate;
+
                 // Initialize KPI selection from persisted reconciliation
                 if (_reconciliation != null)
                 {
@@ -533,6 +537,10 @@ namespace RecoTool.UI.Views.Windows
                     var v = SpiritDataTextBox.Text?.Trim();
                     reco.SpiritData = string.IsNullOrWhiteSpace(v) ? null : v;
                 }
+
+                // Persist Trigger Date
+                if (TriggerDatePicker != null)
+                    reco.TriggerDate = TriggerDatePicker.SelectedDate;
 
                 // Persist
                 await _reconciliationService.SaveReconciliationAsync(reco);

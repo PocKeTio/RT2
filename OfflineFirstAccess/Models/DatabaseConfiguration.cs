@@ -289,7 +289,7 @@ namespace OfflineFirstAccess.Models
                             DWINGS_GuaranteeID     TEXT(255),
                             DWINGS_InvoiceID       TEXT(255),
                             DWINGS_CommissionID    TEXT(255),
-                            Action                 BIT,               
+                            Action                 LONG,               
                             Comments               TEXT(255),
                             InternalInvoiceReference TEXT(255),
                             FirstClaimDate         DATETIME,
@@ -301,8 +301,12 @@ namespace OfflineFirstAccess.Models
                             PaymentReference       TEXT(255),
                             KPI                    LONG,     
                             IncidentType           LONG,     
-                            RiskyItem              LONG,
-                            ReasonNonRisky         TEXT(255),
+                            RiskyItem              BIT,
+                            ReasonNonRisky         LONG,
+                            Assignee               TEXT(50),
+                            MbawData               LONGTEXT,
+                            SpiritData             LONGTEXT,
+                            TriggerDate            DATETIME,
                             CreationDate           DATETIME,
                             DeleteDate             DATETIME,
                             ModifiedBy             TEXT(100),
@@ -318,7 +322,7 @@ namespace OfflineFirstAccess.Models
             reconciliationTable.Columns.Add(new ColumnDefinition("DWINGS_InvoiceID", typeof(string), "TEXT(255)", true));
             reconciliationTable.Columns.Add(new ColumnDefinition("DWINGS_CommissionID", typeof(string), "TEXT(255)", true));
 
-            reconciliationTable.Columns.Add(new ColumnDefinition("Action", typeof(bool), "BIT", false));
+            reconciliationTable.Columns.Add(new ColumnDefinition("Action", typeof(int), "LONG", false));
             reconciliationTable.Columns.Add(new ColumnDefinition("Comments", typeof(string), "TEXT(255)", true));
             reconciliationTable.Columns.Add(new ColumnDefinition("InternalInvoiceReference", typeof(string), "TEXT(255)", true));
 
@@ -334,8 +338,12 @@ namespace OfflineFirstAccess.Models
 
             reconciliationTable.Columns.Add(new ColumnDefinition("KPI", typeof(int), "LONG", true));
             reconciliationTable.Columns.Add(new ColumnDefinition("IncidentType", typeof(int), "LONG", true));
-            reconciliationTable.Columns.Add(new ColumnDefinition("RiskyItem", typeof(int), "LONG", true));
-            reconciliationTable.Columns.Add(new ColumnDefinition("ReasonNonRisky", typeof(string), "TEXT(255)", true));
+            reconciliationTable.Columns.Add(new ColumnDefinition("RiskyItem", typeof(bool), "BIT", true));
+            reconciliationTable.Columns.Add(new ColumnDefinition("ReasonNonRisky", typeof(int), "LONG", true));
+            reconciliationTable.Columns.Add(new ColumnDefinition("Assignee", typeof(string), "TEXT(50)", true));
+            reconciliationTable.Columns.Add(new ColumnDefinition("MbawData", typeof(string), "LONGTEXT", true));
+            reconciliationTable.Columns.Add(new ColumnDefinition("SpiritData", typeof(string), "LONGTEXT", true));
+            reconciliationTable.Columns.Add(new ColumnDefinition("TriggerDate", typeof(DateTime), "DATETIME", true));
 
             // Champs BaseEntity
             reconciliationTable.Columns.Add(new ColumnDefinition("CreationDate", typeof(DateTime), "DATETIME", true));

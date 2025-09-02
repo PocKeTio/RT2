@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using RecoTool.Models;
 using RecoTool.Services;
 using RecoTool.Helpers;
+using System.Globalization;
 
 namespace RecoTool.Windows
 {
@@ -154,7 +155,7 @@ namespace RecoTool.Windows
                     try
                     {
                         var fi = new FileInfo(_selectedFilePath1);
-                        FileInfoText1.Text = $"File: {fi.Name} ({fi.Length / 1024:N0} KB) - Modified: {fi.LastWriteTime:dd/MM/yyyy HH:mm}";
+                        FileInfoText1.Text = $"File: {fi.Name} ({(fi.Length / 1024).ToString("N0", CultureInfo.InvariantCulture)} KB) - Modified: {fi.LastWriteTime.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture)}";
                     }
                     catch { FileInfoText1.Text = string.Empty; }
 
@@ -189,7 +190,7 @@ namespace RecoTool.Windows
                     try
                     {
                         var fi = new FileInfo(_selectedFilePath2);
-                        FileInfoText2.Text = $"File: {fi.Name} ({fi.Length / 1024:N0} KB) - Modified: {fi.LastWriteTime:dd/MM/yyyy HH:mm}";
+                        FileInfoText2.Text = $"File: {fi.Name} ({(fi.Length / 1024).ToString("N0", CultureInfo.InvariantCulture)} KB) - Modified: {fi.LastWriteTime.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture)}";
                     }
                     catch { FileInfoText2.Text = string.Empty; }
 
@@ -778,7 +779,7 @@ namespace RecoTool.Windows
         {
             Dispatcher.Invoke(() =>
             {
-                var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                var timestamp = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
                 var prefix = isError ? "[ERREUR]" : "[INFO]";
                 var logEntry = $"{timestamp} {prefix} {message}\n";
                 

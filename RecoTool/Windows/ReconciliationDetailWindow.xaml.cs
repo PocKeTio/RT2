@@ -145,7 +145,7 @@ namespace RecoTool.UI.Views.Windows
         {
             if (_item == null) return;
 
-            OperationDateValue.Text = _item.Operation_Date?.ToString("yyyy-MM-dd") ?? "";
+            OperationDateValue.Text = _item.Operation_Date?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "";
             DescriptionValue.Text = _item.RawLabel ?? "";
             AmountValue.Text = _item.SignedAmount.ToString("N2", CultureInfo.InvariantCulture);
             CurrencyValue.Text = _item.CCY ?? "";
@@ -169,7 +169,7 @@ namespace RecoTool.UI.Views.Windows
                 : string.Empty;
 
             FXRateValue.Text = string.Empty; // Unknown without FX data
-            ValueDateValue.Text = _item.Value_Date?.ToString("yyyy-MM-dd") ?? "";
+            ValueDateValue.Text = _item.Value_Date?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "";
             TransactionTypeValue.Text = !string.IsNullOrWhiteSpace(_item.Pivot_TransactionCodesFromLabel)
                 ? _item.Pivot_TransactionCodesFromLabel
                 : _item.Pivot_TRNFromLabel;

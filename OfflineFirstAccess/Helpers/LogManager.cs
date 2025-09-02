@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Globalization;
 
 namespace OfflineFirstAccess.Helpers
 {
@@ -151,7 +152,7 @@ namespace OfflineFirstAccess.Helpers
         /// </summary>
         private static string FormatLogEntry(LogEntry entry)
         {
-            string baseMessage = $"{entry.Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{entry.Level,-7}] [Thread:{entry.ThreadId:D3}] {entry.Message}";
+            string baseMessage = $"{entry.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture)} [{entry.Level,-7}] [Thread:{entry.ThreadId:D3}] {entry.Message}";
 
             if (entry.Exception != null)
             {

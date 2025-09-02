@@ -1965,7 +1965,7 @@ namespace RecoTool.Windows
 
                 // Basic formatting similar to grid
                 if (raw is DateTime dt)
-                    return dt.ToString("yyyy-MM-dd");
+                    return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                 if (raw is bool bval)
                     return bval ? "True" : "False";
                 if (raw is decimal dec)
@@ -2881,7 +2881,7 @@ namespace RecoTool.Windows
                 var dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RecoTool");
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 var path = System.IO.Path.Combine(dir, "actions.log");
-                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}\t{user}\t{action}\t{details}";
+                var line = $"{DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)}\t{user}\t{action}\t{details}";
                 System.IO.File.AppendAllLines(path, new[] { line }, Encoding.UTF8);
             }
             catch
@@ -2898,7 +2898,7 @@ namespace RecoTool.Windows
                 var dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RecoTool");
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 var path = System.IO.Path.Combine(dir, "perf.log");
-                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}\t{area}\t{details}";
+                var line = $"{DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)}\t{area}\t{details}";
                 System.IO.File.AppendAllLines(path, new[] { line }, Encoding.UTF8);
             }
             catch { }
@@ -2908,7 +2908,7 @@ namespace RecoTool.Windows
         private string GenerateWhereClause()
         {
             string Esc(string s) => string.IsNullOrEmpty(s) ? s : s.Replace("'", "''");
-            string DateLit(DateTime d) => "#" + d.ToString("yyyy-MM-dd") + "#"; // Access date literal
+            string DateLit(DateTime d) => "#" + d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "#"; // Access date literal
             string MapUiToDb(string s)
             {
                 switch ((s ?? string.Empty).Trim().ToUpperInvariant())

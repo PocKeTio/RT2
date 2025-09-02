@@ -273,7 +273,7 @@ namespace RecoTool.Services
             // Tables à synchroniser par défaut
             if (string.IsNullOrEmpty(GetParameter("SyncTables")))
             {
-                SetParameter("SyncTables", "T_Data_Ambre,T_Reconciliation");
+                SetParameter("SyncTables", "T_Reconciliation");
             }
         }
         

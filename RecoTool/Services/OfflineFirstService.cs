@@ -3676,7 +3676,6 @@ namespace RecoTool.Services
             }
             if (tables.Count == 0)
             {
-                tables.Add("T_Data_Ambre");
                 tables.Add("T_Reconciliation");
             }
 

@@ -274,6 +274,9 @@ namespace RecoTool.Windows
                 var pivotConstants = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
                 var recvLetterToDest = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 var recvConstants = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                // Track duplicates: same Excel column letter used for multiple destinations
+                var pivotLetterToDestMulti = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+                var recvLetterToDestMulti = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
                 using (var mappingExcel = new ExcelHelper())
                 {
@@ -353,19 +356,49 @@ namespace RecoTool.Windows
                         return s.All(ch => (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'));
                     }
 
-                    void Assign(string headerPrefix, string dest, bool receivable)
+                    void Assign(string prefix, string dest, bool receivable)
                     {
-                        var val = GetStr(headerPrefix);
-                        if (string.IsNullOrWhiteSpace(val)) return;
-                        if (IsColumnLetter(val))
+                        var s = GetStr(prefix);
+                        if (string.IsNullOrWhiteSpace(s)) return;
+                        s = s.Trim();
+                        // If the mapping cell is a single letter -> it's a column letter
+                        if (s.Length == 1 && char.IsLetter(s[0]))
                         {
-                            if (receivable) recvLetterToDest[val.Trim()] = dest;
-                            else pivotLetterToDest[val.Trim()] = dest;
+                            var letter = s.ToUpperInvariant();
+                            if (receivable)
+                            {
+                                // Track all destinations pointing to this letter
+                                if (!recvLetterToDestMulti.TryGetValue(letter, out var list))
+                                {
+                                    list = new List<string>();
+                                    recvLetterToDestMulti[letter] = list;
+                                }
+                                if (!list.Contains(dest, StringComparer.OrdinalIgnoreCase)) list.Add(dest);
+
+                                // Keep the first destination as the primary for Excel read
+                                if (!recvLetterToDest.ContainsKey(letter))
+                                    recvLetterToDest[letter] = dest;
+                            }
+                            else
+                            {
+                                if (!pivotLetterToDestMulti.TryGetValue(letter, out var list))
+                                {
+                                    list = new List<string>();
+                                    pivotLetterToDestMulti[letter] = list;
+                                }
+                                if (!list.Contains(dest, StringComparer.OrdinalIgnoreCase)) list.Add(dest);
+
+                                if (!pivotLetterToDest.ContainsKey(letter))
+                                    pivotLetterToDest[letter] = dest;
+                            }
                         }
                         else
                         {
-                            if (receivable) recvConstants[dest] = val;
-                            else pivotConstants[dest] = val;
+                            // Otherwise it's a constant literal value
+                            if (receivable)
+                                recvConstants[dest] = s;
+                            else
+                                pivotConstants[dest] = s;
                         }
                     }
 
@@ -420,6 +453,20 @@ namespace RecoTool.Windows
                     LogMessage(DumpConsts("Pivot constants", pivotConstants));
                     LogMessage(DumpMap("Receivable letter->dest", recvLetterToDest));
                     LogMessage(DumpConsts("Receivable constants", recvConstants));
+
+                    // Duplicate mapping diagnostics
+                    string DumpDup(string title, Dictionary<string, List<string>> dup)
+                    {
+                        if (dup == null || dup.Count == 0) return $"{title}: (none)";
+                        var items = dup
+                            .Where(kv => kv.Value != null && kv.Value.Count > 1)
+                            .Select(kv => $"{kv.Key}->[" + string.Join(", ", kv.Value) + "]");
+                        var s = string.Join(", ", items);
+                        if (string.IsNullOrWhiteSpace(s)) s = "(none)";
+                        return $"{title}: {s}";
+                    }
+                    LogMessage(DumpDup("Pivot duplicate letters", pivotLetterToDestMulti));
+                    LogMessage(DumpDup("Receivable duplicate letters", recvLetterToDestMulti));
                 }
                 catch { }
 
@@ -449,9 +496,53 @@ namespace RecoTool.Windows
                     dataExcel.OpenFile(DataFilePath);
 
                     // Read PIVOT
-                    // Only capture cell color for Comments (not Action)
-                    var colorFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Comments" };
+                    // Only capture cell color for Comments (not Action) unless Comments isn't mapped, then capture Action color as fallback
+                    bool pivotHasComments = pivotLetterToDest.Values.Any(v => string.Equals(v, "Comments", StringComparison.OrdinalIgnoreCase));
+                    var colorFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { pivotHasComments ? "Comments" : "Action" };
                     var pivotRows = dataExcel.ReadSheetByColumns("PIVOT", pivotLetterToDest, pivotStartRow, idColumnLetter: "A", colorForDestinations: colorFields);
+                    // Post-read fallback: if Comments missing/empty but Action has non-numeric text, copy to Comments and color too
+                    int pivotFallbacks = 0;
+                    foreach (var row in pivotRows)
+                    {
+                        var hasComments = row.TryGetValue("Comments", out var cmt) && !(cmt == null || string.IsNullOrWhiteSpace(cmt.ToString()));
+                        if (!hasComments && row.TryGetValue("Action", out var av) && av != null)
+                        {
+                            var s = av.ToString()?.Trim();
+                            if (!string.IsNullOrWhiteSpace(s) && !int.TryParse(s, out _))
+                            {
+                                row["Comments"] = s;
+                                // propagate color if available
+                                if (!row.ContainsKey("Comments__Color") || row["Comments__Color"] == null)
+                                {
+                                    if (row.TryGetValue("Action__Color", out var ac) && ac != null)
+                                        row["Comments__Color"] = ac;
+                                }
+                                pivotFallbacks++;
+                            }
+                        }
+                    }
+                    if (pivotFallbacks > 0)
+                        LogMessage($"PIVOT fallback applied for {pivotFallbacks} rows: copied Action text to Comments.");
+                    // Propagate duplicate letter values to secondary destinations
+                    foreach (var row in pivotRows)
+                    {
+                        foreach (var kv in pivotLetterToDestMulti)
+                        {
+                            var letter = kv.Key;
+                            var dests = kv.Value;
+                            if (dests == null || dests.Count <= 1) continue;
+                            var primaryDest = pivotLetterToDest.TryGetValue(letter, out var pd) ? pd : dests[0];
+                            if (row.TryGetValue(primaryDest, out var v))
+                            {
+                                foreach (var d in dests)
+                                {
+                                    if (string.Equals(d, primaryDest, StringComparison.OrdinalIgnoreCase)) continue;
+                                    if (!row.ContainsKey(d) || row[d] == null)
+                                        row[d] = v;
+                                }
+                            }
+                        }
+                    }
                     // Sample diagnostics for PIVOT
                     if (pivotRows.Count > 0)
                     {
@@ -490,7 +581,51 @@ namespace RecoTool.Windows
                     totalRows += pivotRows.Count;
 
                     // Read RECEIVABLE (overrides pivot on conflicts)
+                    bool recvHasComments = recvLetterToDest.Values.Any(v => string.Equals(v, "Comments", StringComparison.OrdinalIgnoreCase));
+                    colorFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { recvHasComments ? "Comments" : "Action" };
                     var recvRows = dataExcel.ReadSheetByColumns("RECEIVABLE", recvLetterToDest, receivableStartRow, idColumnLetter: "A", colorForDestinations: colorFields);
+                    // Post-read fallback: if Comments missing/empty but Action has non-numeric text, copy to Comments and color too
+                    int recvFallbacks = 0;
+                    foreach (var row in recvRows)
+                    {
+                        var hasComments = row.TryGetValue("Comments", out var cmt) && !(cmt == null || string.IsNullOrWhiteSpace(cmt.ToString()));
+                        if (!hasComments && row.TryGetValue("Action", out var av) && av != null)
+                        {
+                            var s = av.ToString()?.Trim();
+                            if (!string.IsNullOrWhiteSpace(s) && !int.TryParse(s, out _))
+                            {
+                                row["Comments"] = s;
+                                if (!row.ContainsKey("Comments__Color") || row["Comments__Color"] == null)
+                                {
+                                    if (row.TryGetValue("Action__Color", out var ac) && ac != null)
+                                        row["Comments__Color"] = ac;
+                                }
+                                recvFallbacks++;
+                            }
+                        }
+                    }
+                    if (recvFallbacks > 0)
+                        LogMessage($"RECEIVABLE fallback applied for {recvFallbacks} rows: copied Action text to Comments.");
+                    // Propagate duplicate letter values to secondary destinations
+                    foreach (var row in recvRows)
+                    {
+                        foreach (var kv in recvLetterToDestMulti)
+                        {
+                            var letter = kv.Key;
+                            var dests = kv.Value;
+                            if (dests == null || dests.Count <= 1) continue;
+                            var primaryDest = recvLetterToDest.TryGetValue(letter, out var pd) ? pd : dests[0];
+                            if (row.TryGetValue(primaryDest, out var v))
+                            {
+                                foreach (var d in dests)
+                                {
+                                    if (string.Equals(d, primaryDest, StringComparison.OrdinalIgnoreCase)) continue;
+                                    if (!row.ContainsKey(d) || row[d] == null)
+                                        row[d] = v;
+                                }
+                            }
+                        }
+                    }
                     // Sample diagnostics for RECEIVABLE
                     if (recvRows.Count > 0)
                     {

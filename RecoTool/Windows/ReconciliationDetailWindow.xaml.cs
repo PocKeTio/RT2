@@ -7,8 +7,11 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using RecoTool.Models;
 using RecoTool.Services;
+using System.Text.RegularExpressions;
+using System.Text;
 
 namespace RecoTool.UI.Views.Windows
 {
@@ -22,6 +25,7 @@ namespace RecoTool.UI.Views.Windows
         private readonly ReconciliationService _reconciliationService;
         private readonly OfflineFirstService _offlineFirstService;
         private Reconciliation _reconciliation;
+        private bool _autoSearched;
 
         public event PropertyChangedEventHandler PropertyChanged;
         private void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
@@ -89,16 +93,17 @@ namespace RecoTool.UI.Views.Windows
             set { _selectedReasonId = value; OnPropertyChanged(nameof(SelectedReasonId)); }
         }
 
-        public class MatchingItem
+
+        public class DwingsResult
         {
-            public string Id { get; set; }
-            public DateTime? OperationDate { get; set; }
+            public string Type { get; set; } // "Invoice" or "Guarantee"
+            public string Id { get; set; }   // INVOICE_ID or GUARANTEE_ID
             public string Description { get; set; }
-            public decimal Amount { get; set; }
-            public string Currency { get; set; }
             public string Status { get; set; }
-            public string DwingsRef { get; set; }
-            public string DebtorName { get; set; }
+            public string Amount { get; set; }
+            public string Currency { get; set; }
+            public string BGPMT { get; set; }
+            public string BusinessCase { get; set; }
         }
 
         public ReconciliationDetailWindow(ReconciliationViewData item, IEnumerable<ReconciliationViewData> all)
@@ -119,7 +124,8 @@ namespace RecoTool.UI.Views.Windows
             PopulateTopDetails();
             PopulateReferentialOptions();
             _ = LoadReconciliationAsync();
-            BuildMatchingAssistance();
+            // Initial badge state (may be refined once reconciliation is loaded)
+            UpdateLinkStatusBadge();
         }
 
         private void PopulateHeader()
@@ -323,11 +329,123 @@ namespace RecoTool.UI.Views.Windows
                     SelectedIncidentTypeId = _reconciliation.IncidentType ?? SelectedIncidentTypeId;
                     SelectedReasonId = _reconciliation.ReasonNonRisky ?? SelectedReasonId;
                 }
+                // Refresh badge once reconciliation is known
+                UpdateLinkStatusBadge();
+
+                // Show linked item if already linked; otherwise auto-search
+                var linkedInvoiceId = _reconciliation?.DWINGS_InvoiceID ?? _item?.DWINGS_InvoiceID;
+                var linkedGuaranteeId = _reconciliation?.DWINGS_GuaranteeID ?? _item?.DWINGS_GuaranteeID;
+                if (!string.IsNullOrWhiteSpace(linkedInvoiceId) || !string.IsNullOrWhiteSpace(linkedGuaranteeId))
+                {
+                    _ = ShowLinkedInDwingsGridAsync(linkedInvoiceId, linkedGuaranteeId);
+                }
+                else if (!_autoSearched)
+                {
+                    _ = AutoSearchAsync();
+                }
             }
             catch
             {
                 // ignore load errors in UI
             }
+        }
+
+        private async System.Threading.Tasks.Task ShowLinkedInDwingsGridAsync(string invoiceId, string guaranteeId)
+        {
+            try
+            {
+                var rows = new List<DwingsResult>();
+                if (!string.IsNullOrWhiteSpace(invoiceId))
+                {
+                    var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
+                    var i = invoices.FirstOrDefault(x => string.Equals(x.INVOICE_ID, invoiceId, StringComparison.OrdinalIgnoreCase));
+                    if (i != null)
+                    {
+                        rows.Add(new DwingsResult
+                        {
+                            Type = "Invoice",
+                            Id = i.INVOICE_ID,
+                            Status = i.T_INVOICE_STATUS,
+                            Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                            Currency = i.BILLING_CURRENCY,
+                            BGPMT = i.BGPMT,
+                            BusinessCase = i.BUSINESS_CASE_REFERENCE,
+                            Description = $"Invoice {i.INVOICE_ID}"
+                        });
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(guaranteeId))
+                {
+                    var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
+                    var g = guarantees.FirstOrDefault(x => string.Equals(x.GUARANTEE_ID, guaranteeId, StringComparison.OrdinalIgnoreCase));
+                    if (g != null)
+                    {
+                        rows.Add(new DwingsResult
+                        {
+                            Type = "Guarantee",
+                            Id = g.GUARANTEE_ID,
+                            Status = g.GUARANTEE_STATUS,
+                            Amount = null,
+                            Currency = null,
+                            BGPMT = null,
+                            BusinessCase = null,
+                            Description = $"Guarantee {g.GUARANTEE_ID}"
+                        });
+                    }
+                }
+
+                DwingsResultsGrid.ItemsSource = new ObservableCollection<DwingsResult>(rows);
+                StatusText.Text = rows.Count > 0 ? "DWINGS: 1 linked item." : "DWINGS: linked item not found.";
+                if (rows.Count > 0)
+                {
+                    DwingsResultsGrid.SelectedIndex = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"DWINGS display error: {ex.Message}";
+            }
+        }
+
+        private void UpdateLinkStatusBadge()
+        {
+            try
+            {
+                if (LinkStatusBadge == null || LinkStatusBadgeContainer == null) return;
+
+                var linkedInvoiceId = _reconciliation?.DWINGS_InvoiceID ?? _item?.DWINGS_InvoiceID;
+                var linkedGuaranteeId = _reconciliation?.DWINGS_GuaranteeID ?? _item?.DWINGS_GuaranteeID;
+                bool linked = !string.IsNullOrWhiteSpace(linkedInvoiceId) || !string.IsNullOrWhiteSpace(linkedGuaranteeId);
+
+                if (linked)
+                {
+                    LinkStatusBadge.Text = "LINKED";
+                    LinkStatusBadge.Foreground = (SolidColorBrush)(new BrushConverter().ConvertFromString("#0F5132"));
+                    LinkStatusBadgeContainer.Background = (SolidColorBrush)(new BrushConverter().ConvertFromString("#E8F8EE"));
+                    if (!string.IsNullOrWhiteSpace(linkedInvoiceId) && !string.IsNullOrWhiteSpace(linkedGuaranteeId))
+                        LinkStatusBadgeContainer.ToolTip = $"Linked to Invoice {linkedInvoiceId} and Guarantee {linkedGuaranteeId}";
+                    else if (!string.IsNullOrWhiteSpace(linkedInvoiceId))
+                        LinkStatusBadgeContainer.ToolTip = $"Linked to Invoice {linkedInvoiceId}";
+                    else
+                        LinkStatusBadgeContainer.ToolTip = $"Linked to Guarantee {linkedGuaranteeId}";
+                }
+                else
+                {
+                    LinkStatusBadge.Text = "NOT LINKED";
+                    LinkStatusBadge.Foreground = (SolidColorBrush)(new BrushConverter().ConvertFromString("#B00020"));
+                    LinkStatusBadgeContainer.Background = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FCE8E6"));
+                    LinkStatusBadgeContainer.ToolTip = "No DWINGS invoice linked";
+                }
+            }
+            catch
+            {
+                // ignore badge errors
+            }
+        }
+
+        private void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            UpdateLinkStatusBadge();
         }
 
         private static bool IsMatched(ReconciliationViewData x)
@@ -337,115 +455,387 @@ namespace RecoTool.UI.Views.Windows
                    || !string.IsNullOrWhiteSpace(x?.DWINGS_CommissionID);
         }
 
-        private void BuildMatchingAssistance()
+
+        private async void DwingsSearchButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                var matches = FindPotentialMatches(_item);
-                MatchingDataGrid.ItemsSource = new ObservableCollection<MatchingItem>(matches);
-                StatusText.Text = $"{matches.Count} matching line(s)";
+                if (_offlineFirstService == null)
+                {
+                    StatusText.Text = "DWINGS search unavailable: service not ready.";
+                    return;
+                }
+
+                var dwPath = _offlineFirstService.GetLocalDWDatabasePath();
+                if (string.IsNullOrWhiteSpace(dwPath) || !System.IO.File.Exists(dwPath))
+                {
+                    StatusText.Text = "DWINGS DB not found locally.";
+                    return;
+                }
+
+                string key = DwingsSearchTextBox?.Text?.Trim();
+                var typeItem = DwingsSearchTypeComboBox is ComboBox cb && cb.SelectedItem is ComboBoxItem ci ? (ci.Content?.ToString() ?? "BGPMT") : "BGPMT";
+
+                // Auto-extract if empty
+                if (string.IsNullOrWhiteSpace(key) && _item != null)
+                {
+                    if (typeItem.StartsWith("BGPMT", StringComparison.OrdinalIgnoreCase))
+                    {
+                        key = ExtractBgpmtToken(_item.RawLabel) ?? ExtractBgpmtToken(_item.Reconciliation_Num);
+                    }
+                    else if (typeItem.StartsWith("BGI", StringComparison.OrdinalIgnoreCase))
+                    {
+                        key = ExtractBgiToken(_item.RawLabel) ?? ExtractBgiToken(_item.Reconciliation_Num);
+                    }
+                    else if (typeItem.StartsWith("Guarantee", StringComparison.OrdinalIgnoreCase))
+                    {
+                        key = ExtractGuaranteeId(_item.RawLabel) ?? ExtractGuaranteeId(_item.Reconciliation_Num);
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    StatusText.Text = "Enter a search key or place it in the label/reference.";
+                    return;
+                }
+
+                var results = await SearchDwingsAsync(typeItem, key);
+                DwingsResultsGrid.ItemsSource = new ObservableCollection<DwingsResult>(results);
+                StatusText.Text = $"DWINGS: {results.Count} result(s).";
             }
             catch (Exception ex)
             {
-                StatusText.Text = $"Matching error: {ex.Message}";
+                StatusText.Text = $"DWINGS search error: {ex.Message}";
             }
         }
 
-        private List<MatchingItem> FindPotentialMatches(ReconciliationViewData source)
+        private async System.Threading.Tasks.Task<List<DwingsResult>> SearchDwingsAsync(string typeItem, string key)
         {
-            var result = new List<MatchingItem>();
-            if (source == null || _all == null) return result;
+            var results = new List<DwingsResult>();
+            if (string.IsNullOrWhiteSpace(key)) return results;
 
-            // Basic heuristics:
-            // 1) Same Reconciliation number (if present) but different account
-            // 2) Same Event_Num but different account
-            // 3) Opposite amount with similar absolute value and close operation date (±7 days)
-            // 4) Same DWINGS ref if any exists on either side
-
-            var tol = 0.01m; // amount tolerance
-            var maxDays = 7;
-
-            var q = _all.Where(x => x.ID != source.ID);
-
-            // Same reconciliation ref
-            if (!string.IsNullOrWhiteSpace(source.Reconciliation_Num))
+            // Guarantees: find guarantee, then related invoices via Business Case ref/id
+            if (typeItem.StartsWith("Guarantee", StringComparison.OrdinalIgnoreCase))
             {
-                q = q.Where(x => x.Reconciliation_Num == source.Reconciliation_Num || x.ReconciliationOrigin_Num == source.Reconciliation_Num);
+                var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
+                var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
+                var g = guarantees.FirstOrDefault(x => string.Equals(x.GUARANTEE_ID, key, StringComparison.OrdinalIgnoreCase));
+
+                IEnumerable<RecoTool.Services.ReconciliationService.DwingsInvoiceDto> related = Enumerable.Empty<RecoTool.Services.ReconciliationService.DwingsInvoiceDto>();
+
+                if (g != null)
+                {
+                    // First try exact match on Business Case fields
+                    related = invoices.Where(i => string.Equals(i.BUSINESS_CASE_REFERENCE, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase)
+                                               || string.Equals(i.BUSINESS_CASE_ID, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase));
+
+                    // If none, try contains as a fallback (some data may embed the ID in a longer ref)
+                    if (!related.Any())
+                    {
+                        related = invoices.Where(i => (!string.IsNullOrEmpty(i.BUSINESS_CASE_REFERENCE) && i.BUSINESS_CASE_REFERENCE.IndexOf(g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase) >= 0)
+                                                    || (!string.IsNullOrEmpty(i.BUSINESS_CASE_ID) && i.BUSINESS_CASE_ID.IndexOf(g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase) >= 0));
+                    }
+                }
+                else
+                {
+                    // Guarantee ID not found in the guarantees list: treat the key as a business case ref/id directly
+                    related = invoices.Where(i => string.Equals(i.BUSINESS_CASE_REFERENCE, key, StringComparison.OrdinalIgnoreCase)
+                                               || string.Equals(i.BUSINESS_CASE_ID, key, StringComparison.OrdinalIgnoreCase));
+
+                    if (!related.Any())
+                    {
+                        related = invoices.Where(i => (!string.IsNullOrEmpty(i.BUSINESS_CASE_REFERENCE) && i.BUSINESS_CASE_REFERENCE.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0)
+                                                    || (!string.IsNullOrEmpty(i.BUSINESS_CASE_ID) && i.BUSINESS_CASE_ID.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0));
+                    }
+                }
+
+                foreach (var i in related.Take(200))
+                {
+                    results.Add(new DwingsResult
+                    {
+                        Type = "Invoice",
+                        Id = i.INVOICE_ID,
+                        Status = i.T_INVOICE_STATUS,
+                        Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                        Currency = i.BILLING_CURRENCY,
+                        BGPMT = i.BGPMT,
+                        BusinessCase = i.BUSINESS_CASE_REFERENCE,
+                        Description = g != null ? $"Invoice {i.INVOICE_ID} (from Guarantee {g.GUARANTEE_ID})" : $"Invoice {i.INVOICE_ID} (by Business Case)"
+                    });
+                }
+                return results;
             }
 
-            // Prefer other account
-            q = q.Where(x => x.Account_ID != source.Account_ID);
-
-            // Score candidates
-            var candidates = q.Select(x => new
+            // Invoices by BGPMT/BGI/Business Case
+            var list = await _reconciliationService.GetDwingsInvoicesAsync();
+            IEnumerable<RecoTool.Services.ReconciliationService.DwingsInvoiceDto> filtered = list;
+            if (typeItem.StartsWith("BGPMT", StringComparison.OrdinalIgnoreCase))
             {
-                Item = x,
-                Score = (source.Event_Num != null && x.Event_Num == source.Event_Num ? 3 : 0)
-                        + (HasCommonDwingsRef(source, x) ? 3 : 0)
-                        + (IsOppositeAmountClose(source.SignedAmount, x.SignedAmount, tol) ? 2 : 0)
-                        + (IsCloseDate(source.Operation_Date, x.Operation_Date, maxDays) ? 1 : 0)
-            })
-            .Where(s => s.Score > 0)
-            .OrderByDescending(s => s.Score)
-            .Take(100)
-            .ToList();
-
-            foreach (var c in candidates)
+                filtered = filtered.Where(i => string.Equals(i.BGPMT, key, StringComparison.OrdinalIgnoreCase));
+                if (!filtered.Any())
+                    filtered = list.Where(i => !string.IsNullOrEmpty(i.BGPMT) && i.BGPMT.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0);
+            }
+            else if (typeItem.StartsWith("BGI", StringComparison.OrdinalIgnoreCase))
             {
-                result.Add(new MatchingItem
+                filtered = filtered.Where(i => string.Equals(i.INVOICE_ID, key, StringComparison.OrdinalIgnoreCase));
+                if (!filtered.Any())
+                    filtered = list.Where(i => !string.IsNullOrEmpty(i.INVOICE_ID) && i.INVOICE_ID.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0);
+            }
+            else if (typeItem.StartsWith("Business Case Ref", StringComparison.OrdinalIgnoreCase))
+            {
+                filtered = filtered.Where(i => string.Equals(i.BUSINESS_CASE_REFERENCE, key, StringComparison.OrdinalIgnoreCase));
+                if (!filtered.Any())
+                    filtered = list.Where(i => !string.IsNullOrEmpty(i.BUSINESS_CASE_REFERENCE) && i.BUSINESS_CASE_REFERENCE.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0);
+            }
+            else if (typeItem.StartsWith("Business Case ID", StringComparison.OrdinalIgnoreCase))
+            {
+                filtered = filtered.Where(i => string.Equals(i.BUSINESS_CASE_ID, key, StringComparison.OrdinalIgnoreCase));
+                if (!filtered.Any())
+                    filtered = list.Where(i => !string.IsNullOrEmpty(i.BUSINESS_CASE_ID) && i.BUSINESS_CASE_ID.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0);
+            }
+
+            foreach (var i in filtered.Take(200))
+            {
+                results.Add(new DwingsResult
                 {
-                    Id = c.Item.ID,
-                    OperationDate = c.Item.Operation_Date,
-                    Description = c.Item.RawLabel,
-                    Amount = c.Item.SignedAmount,
-                    Currency = c.Item.CCY,
-                    Status = IsMatched(c.Item) ? "Matched" : "Unmatched",
-                    DwingsRef = c.Item.DWINGS_GuaranteeID ?? c.Item.DWINGS_InvoiceID ?? c.Item.DWINGS_CommissionID ?? c.Item.Receivable_DWRefFromAmbre,
-                    DebtorName = !string.IsNullOrWhiteSpace(c.Item.Pivot_TRNFromLabel) ? c.Item.Pivot_TRNFromLabel : c.Item.Folder,
+                    Type = "Invoice",
+                    Id = i.INVOICE_ID,
+                    Status = i.T_INVOICE_STATUS,
+                    Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                    Currency = i.BILLING_CURRENCY,
+                    BGPMT = i.BGPMT,
+                    BusinessCase = i.BUSINESS_CASE_REFERENCE,
+                    Description = $"Invoice {i.INVOICE_ID}"
                 });
             }
-
-            return result;
+            return results;
         }
 
-        private static bool HasCommonDwingsRef(ReconciliationViewData a, ReconciliationViewData b)
+        private void SetSearchType(string content)
         {
-            var refsA = new[] { a.DWINGS_GuaranteeID, a.DWINGS_InvoiceID, a.DWINGS_CommissionID, a.Receivable_DWRefFromAmbre }
-                .Where(r => !string.IsNullOrWhiteSpace(r)).ToHashSet();
-            var refsB = new[] { b.DWINGS_GuaranteeID, b.DWINGS_InvoiceID, b.DWINGS_CommissionID, b.Receivable_DWRefFromAmbre }
-                .Where(r => !string.IsNullOrWhiteSpace(r)).ToHashSet();
-            return refsA.Overlaps(refsB);
-        }
-
-        private static bool IsOppositeAmountClose(decimal a, decimal b, decimal tolerance)
-        {
-            return Math.Abs(a + b) <= tolerance * Math.Max(1m, Math.Max(Math.Abs(a), Math.Abs(b)));
-        }
-
-        private static bool IsCloseDate(DateTime? a, DateTime? b, int maxDays)
-        {
-            if (!a.HasValue || !b.HasValue) return false;
-            return Math.Abs((a.Value.Date - b.Value.Date).TotalDays) <= maxDays;
-        }
-
-        private void RefreshMatching_Click(object sender, RoutedEventArgs e)
-        {
-            BuildMatchingAssistance();
-        }
-
-        private void ViewDetail_Click(object sender, RoutedEventArgs e)
-        {
-            if (MatchingDataGrid?.SelectedItem is MatchingItem mi)
+            try
             {
-                // Do not show internal IDs in dialogs
-                MessageBox.Show($"Item: {mi.Description}", "Detail", MessageBoxButton.OK, MessageBoxImage.Information);
+                if (DwingsSearchTypeComboBox is ComboBox cb)
+                {
+                    foreach (var item in cb.Items)
+                    {
+                        if (item is ComboBoxItem cbi && string.Equals(cbi.Content?.ToString(), content, StringComparison.OrdinalIgnoreCase))
+                        {
+                            cb.SelectedItem = cbi;
+                            break;
+                        }
+                    }
+                }
+            }
+            catch { /* ignore */ }
+        }
+
+        private void SetDiagnostics(string text, bool expand = false)
+        {
+            try
+            {
+                if (DiagnosticsText != null)
+                    DiagnosticsText.Text = text ?? string.Empty;
+                if (expand && DiagnosticsExpander != null)
+                    DiagnosticsExpander.IsExpanded = true;
+            }
+            catch { /* ignore diagnostics UI errors */ }
+        }
+
+        private async System.Threading.Tasks.Task AutoSearchAsync(bool force = false)
+        {
+            if (_autoSearched && !force) return;
+            _autoSearched = true;
+
+            try
+            {
+                // Accumulate candidates from multiple sources
+                var candidates = new List<(string Type, string Key)>();
+
+                // From label / reconciliation / payment refs
+                var fromLabel = _item?.RawLabel;
+                var fromRecoNum = _item?.Reconciliation_Num;
+                var fromPayRef = _item?.PaymentReference ?? _reconciliation?.PaymentReference;
+                var fromAmbreRef = _item?.Receivable_DWRefFromAmbre;
+
+                // BGPMT
+                string tryBgpmt(string s) => ExtractBgpmtToken(s);
+                var bgpmt = tryBgpmt(fromLabel) ?? tryBgpmt(fromRecoNum) ?? tryBgpmt(fromPayRef) ?? tryBgpmt(fromAmbreRef);
+                if (!string.IsNullOrWhiteSpace(bgpmt)) candidates.Add(("BGPMT", bgpmt));
+
+                // BGI (invoice id)
+                string tryBgi(string s) => ExtractBgiToken(s);
+                var bgi = tryBgi(fromLabel) ?? tryBgi(fromRecoNum) ?? tryBgi(fromAmbreRef) ?? _item?.INVOICE_ID;
+                if (!string.IsNullOrWhiteSpace(bgi)) candidates.Add(("BGI", bgi));
+
+                // Guarantee ID
+                string tryGid(string s) => ExtractGuaranteeId(s);
+                var gid = tryGid(fromLabel) ?? tryGid(fromRecoNum) ?? tryGid(fromAmbreRef) ?? _item?.GUARANTEE_ID;
+                if (!string.IsNullOrWhiteSpace(gid)) candidates.Add(("Guarantee ID", gid));
+                // Also try raw Ambre ref directly as a Guarantee ID
+                if (!string.IsNullOrWhiteSpace(fromAmbreRef)) candidates.Add(("Guarantee ID", fromAmbreRef));
+
+                // Business Case Ref
+                var bcRef = _item?.I_BUSINESS_CASE_REFERENCE;
+                if (!string.IsNullOrWhiteSpace(bcRef)) candidates.Add(("Business Case Ref", bcRef));
+                if (!string.IsNullOrWhiteSpace(fromAmbreRef)) candidates.Add(("Business Case Ref", fromAmbreRef));
+                // Business Case ID (try with Ambre ref as well, to capture either field)
+                if (!string.IsNullOrWhiteSpace(fromAmbreRef)) candidates.Add(("Business Case ID", fromAmbreRef));
+
+                // Prepare diagnostics
+                var sb = new StringBuilder();
+                sb.AppendLine("[Auto Search Diagnostics]");
+                try
+                {
+                    if (_reconciliationService != null)
+                    {
+                        var invCount = (await _reconciliationService.GetDwingsInvoicesAsync())?.Count ?? 0;
+                        var gCount = (await _reconciliationService.GetDwingsGuaranteesAsync())?.Count ?? 0;
+                        sb.AppendLine($"Datasets: invoices={invCount}, guarantees={gCount}");
+                    }
+                }
+                catch { /* ignore dataset count issues */ }
+
+                if (candidates.Count == 0)
+                {
+                    sb.AppendLine("No candidate keys extracted.");
+                }
+                else
+                {
+                    sb.AppendLine("Candidate keys:");
+                    foreach (var c in candidates)
+                    {
+                        sb.AppendLine($"- {c.Type}: {c.Key}");
+                    }
+                }
+
+                // Aggregate results from all candidates
+                var map = new Dictionary<string, DwingsResult>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var (Type, Key) in candidates)
+                {
+                    var effectiveType = Type == "BGI" ? "BGI (INVOICE_ID)" : Type;
+                    var results = await SearchDwingsAsync(effectiveType, Key);
+                    sb.AppendLine($"Results for {effectiveType} '{Key}': {results.Count}");
+                    foreach (var r in results)
+                    {
+                        var k = r.Type + "|" + r.Id;
+                        if (!map.ContainsKey(k)) map[k] = r;
+                    }
+                }
+
+                // Enrich with related guarantees from invoice results
+                if (map.Count > 0)
+                {
+                    var invoices = map.Values.Where(v => string.Equals(v.Type, "Invoice", StringComparison.OrdinalIgnoreCase)).ToList();
+                    if (invoices.Count > 0)
+                    {
+                        var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
+                        var byId = guarantees.ToDictionary(g => g.GUARANTEE_ID, StringComparer.OrdinalIgnoreCase);
+                        foreach (var inv in invoices)
+                        {
+                            if (!string.IsNullOrWhiteSpace(inv.BusinessCase) && byId.TryGetValue(inv.BusinessCase, out var g))
+                            {
+                                var key = "Guarantee|" + g.GUARANTEE_ID;
+                                if (!map.ContainsKey(key))
+                                {
+                                    map[key] = new DwingsResult
+                                    {
+                                        Type = "Guarantee",
+                                        Id = g.GUARANTEE_ID,
+                                        Status = g.GUARANTEE_STATUS,
+                                        Description = $"Guarantee {g.GUARANTEE_ID}",
+                                        BusinessCase = null,
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+
+                var aggregate = map.Values.ToList();
+                DwingsResultsGrid.ItemsSource = new ObservableCollection<DwingsResult>(aggregate);
+                StatusText.Text = $"DWINGS: {aggregate.Count} result(s).";
+                sb.AppendLine($"Final aggregate: {aggregate.Count} unique result(s).");
+                SetDiagnostics(sb.ToString(), expand: aggregate.Count == 0);
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"DWINGS auto-search error: {ex.Message}";
+                SetDiagnostics($"Auto-search exception: {ex}", expand: true);
             }
         }
 
-        private void LinkItems_Click(object sender, RoutedEventArgs e)
+        private async void ReRunAutoSearch_Click(object sender, RoutedEventArgs e)
         {
-            // Placeholder for link action
-            MessageBox.Show("Link action not implemented yet.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+            try
+            {
+                // Force a new run regardless of the _autoSearched flag
+                await AutoSearchAsync(force: true);
+            }
+            catch (Exception ex)
+            {
+                SetDiagnostics($"Re-run auto-search error: {ex.Message}", expand: true);
+            }
+        }
+
+        private async void LinkDwingsItem_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_item == null || _reconciliationService == null) return;
+                var dr = DwingsResultsGrid?.SelectedItem as DwingsResult;
+                if (dr == null) return;
+
+                var reco = _reconciliation ?? await _reconciliationService.GetOrCreateReconciliationAsync(_item.ID);
+                reco.ID = _item.ID;
+
+                if (string.Equals(dr.Type, "Invoice", StringComparison.OrdinalIgnoreCase))
+                {
+                    reco.DWINGS_InvoiceID = dr.Id;
+                    if (!string.IsNullOrWhiteSpace(dr.BGPMT))
+                        reco.PaymentReference = dr.BGPMT; // BGPMT
+                    _item.DWINGS_InvoiceID = reco.DWINGS_InvoiceID;
+                    _item.PaymentReference = reco.PaymentReference;
+                }
+                else if (string.Equals(dr.Type, "Guarantee", StringComparison.OrdinalIgnoreCase))
+                {
+                    reco.DWINGS_GuaranteeID = dr.Id;
+                    _item.DWINGS_GuaranteeID = reco.DWINGS_GuaranteeID;
+                }
+
+                await _reconciliationService.SaveReconciliationAsync(reco);
+                _reconciliation = reco;
+                StatusText.Text = "Linked and saved.";
+                UpdateLinkStatusBadge();
+                await ShowLinkedInDwingsGridAsync(reco.DWINGS_InvoiceID, reco.DWINGS_GuaranteeID);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Link failed: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private static string ExtractBgpmtToken(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            var m = Regex.Match(s, @"\bBGPMT[A-Za-z0-9]{8,20}\b");
+            return m.Success ? m.Value : null;
+        }
+
+        private static string ExtractBgiToken(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            var m = Regex.Match(s, @"\bBGI\d{13}\b");
+            return m.Success ? m.Value : null;
+        }
+
+        private static string ExtractGuaranteeId(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            // Pattern: GXXXXYYZZZZZZZZZ (X,Z digits, Y letters)
+            var m = Regex.Match(s, @"\bG\d{4}[A-Za-z]{2}\d{9}\b");
+            return m.Success ? m.Value : null;
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)

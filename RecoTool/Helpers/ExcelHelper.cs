@@ -392,7 +392,8 @@ namespace RecoTool.Helpers
         public List<Dictionary<string, object>> ReadSheetByColumns(string sheetName,
             Dictionary<string, string> letterToDestination,
             int startRow,
-            string idColumnLetter = "A")
+            string idColumnLetter = "A",
+            HashSet<string> colorForDestinations = null)
         {
             if (_workbook == null)
                 throw new InvalidOperationException("Aucun fichier Excel ouvert.");
@@ -435,8 +436,15 @@ namespace RecoTool.Helpers
                 // 3) Read all required values in one block
                 object[,] blockVals = ReadDataBlock(worksheet, startRow, actualRows, minCol, maxCol);
 
+                // 3b) Optionally capture background colors for specific destination fields
+                Dictionary<string, int[,]> colorBlocks = null;
+                if (colorForDestinations != null && colorForDestinations.Count > 0)
+                {
+                    colorBlocks = ReadColorBlocks(worksheet, startRow, actualRows, minCol, destToOffset, colorForDestinations);
+                }
+
                 // 4) Materialize dictionaries from the block
-                return MaterializeRows(blockVals, actualRows, idColIndex, minCol, destToOffset);
+                return MaterializeRows(blockVals, colorBlocks, actualRows, idColIndex, minCol, destToOffset);
             }
             catch (Exception ex)
             {
@@ -601,6 +609,7 @@ namespace RecoTool.Helpers
 
         private List<Dictionary<string, object>> MaterializeRows(
             object[,] blockVals,
+            Dictionary<string, int[,]> colorBlocks,
             int actualRows,
             int idColIndex,
             int minCol,
@@ -625,12 +634,71 @@ namespace RecoTool.Helpers
                     int offset = kv.Value;
                     object v = blockVals[rRel, offset];
                     dict[dest] = v;
+
+                    if (colorBlocks != null && colorBlocks.TryGetValue(dest, out var cb))
+                    {
+                        try
+                        {
+                            dict[$"{dest}__Color"] = cb[rRel, 1];
+                        }
+                        catch { /* ignore color errors */ }
+                    }
                 }
 
                 rows.Add(dict);
             }
 
             return rows;
+        }
+
+        private Dictionary<string, int[,]> ReadColorBlocks(
+            Worksheet worksheet,
+            int startRow,
+            int actualRows,
+            int minCol,
+            Dictionary<string, int> destToOffset,
+            HashSet<string> colorForDestinations)
+        {
+            var result = new Dictionary<string, int[,]>(StringComparer.OrdinalIgnoreCase);
+            foreach (var dest in colorForDestinations)
+            {
+                if (!destToOffset.TryGetValue(dest, out var offset)) continue;
+                Range colRange = null;
+                try
+                {
+                    int colIndex = minCol + offset - 1;
+                    colRange = worksheet.Range[
+                        worksheet.Cells[startRow, colIndex],
+                        worksheet.Cells[startRow + actualRows - 1, colIndex]
+                    ];
+
+                    // Read displayed background color per cell (handles conditional formatting)
+                    var colors = new int[actualRows + 1, 2]; // 1-based to align with block vals
+                    for (int r = 1; r <= actualRows; r++)
+                    {
+                        try
+                        {
+                            var cell = colRange.Cells[r, 1] as Range;
+                            if (cell != null)
+                            {
+                                // DisplayFormat.Interior.Color is more representative for formatted cells
+                                var colorObj = cell.DisplayFormat?.Interior?.Color ?? cell.Interior?.Color;
+                                int color = 0;
+                                if (colorObj is int ci) color = ci;
+                                else if (colorObj != null) { int.TryParse(colorObj.ToString(), out color); }
+                                colors[r, 1] = color;
+                            }
+                        }
+                        catch { /* ignore cell color read errors */ }
+                    }
+                    result[dest] = colors;
+                }
+                finally
+                {
+                    try { if (colRange != null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(colRange); } catch { }
+                }
+            }
+            return result;
         }
 
         private static int ColumnLetterToIndex(string letter)

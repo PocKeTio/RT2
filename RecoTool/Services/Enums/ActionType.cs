@@ -36,7 +36,15 @@ namespace RecoTool.Services
         [Description("To Do SDD")]
         ToDoSDD = 10,
         [Description("Triggered")]
-        Triggered = 34
+        Triggered = 34,
+        [Description("TO DO")]
+        TODO = 35,
+        [Description("TO CHECK")]
+        TOCHECK= 36,
+        [Description("DONE")]
+        DONE= 37,
+        [Description("TO BE CLEANED")]
+        TOBECLEANED= 38
     }
 
     #endregion

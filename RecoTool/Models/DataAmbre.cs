@@ -21,6 +21,10 @@ namespace RecoTool.Models
         public string Pivot_TRNFromLabel { get; set; }
         public string RawLabel { get; set; }
         public string Receivable_DWRefFromAmbre { get; set; }
+        /// <summary>
+        /// Catégorie Ambre résolue depuis T_Ref_Ambre_TransactionCodes (INTEGER)
+        /// </summary>
+        public int? Category { get; set; }
         public decimal LocalSignedAmount { get; set; }
         public DateTime? Operation_Date { get; set; }
         public string Reconciliation_Num { get; set; }

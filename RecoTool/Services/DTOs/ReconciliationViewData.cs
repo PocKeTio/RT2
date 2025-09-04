@@ -240,6 +240,26 @@ namespace RecoTool.Services
                 }
             }
         }
+
+        // Display-only: human-friendly label for TransactionType stored in DataAmbre.Category
+        // Example: INCOMING_PAYMENT -> "INCOMING PAYMENT"
+        public string CategoryLabel
+        {
+            get
+            {
+                if (!this.Category.HasValue) return string.Empty;
+                try
+                {
+                    var name = Enum.GetName(typeof(TransactionType), this.Category.Value);
+                    if (string.IsNullOrWhiteSpace(name)) return string.Empty;
+                    return name.Replace('_', ' ');
+                }
+                catch
+                {
+                    return string.Empty;
+                }
+            }
+        }
     }
 
     #endregion

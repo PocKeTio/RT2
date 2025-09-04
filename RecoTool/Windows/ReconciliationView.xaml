@@ -365,14 +365,10 @@
                                     <TextBlock Grid.Column="0" Text="Transaction Type:" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
                                         <ComboBox x:Name="TransactionTypeComboBox" Margin="5,0" BorderThickness="0" Background="Transparent" Style="{StaticResource ModernComboBoxStyle}"
-                                                  SelectedValue="{Binding FilterTransactionType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  SelectedValuePath="Content">
-                                            <ComboBoxItem Content=""/>
-                                            <ComboBoxItem Content="INCOMING PAYMENT (RULE INVOICE/791)"/>
-                                            <ComboBoxItem Content="DIRECT DEBIT"/>
-                                            <ComboBoxItem Content="MANUAL OUTGOING"/>
-                                            <ComboBoxItem Content="OUTGOING PAYMENT"/>
-                                            <ComboBoxItem Content="EXTERNAL DEBIT PAYMENT"/>
+                                                  ItemsSource="{Binding TransactionTypeOptions}"
+                                                  DisplayMemberPath="Name"
+                                                  SelectedValuePath="Id"
+                                                  SelectedValue="{Binding FilterTransactionTypeId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
                                         </ComboBox>
                                     </Border>
                                 </Grid>
@@ -730,11 +726,11 @@
                             </Style>
                         </DataGrid.RowStyle>
                         <DataGrid.Columns>
-                            <!-- Colonnes Ambre / ViewData -->
                             <DataGridTextColumn Header="Event Num" Binding="{Binding Event_Num}" Width="100" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Folder" Binding="{Binding Folder}" Width="100" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Pivot Transaction Codes" Binding="{Binding Pivot_TransactionCodesFromLabel}" Width="150" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Pivot TRN" Binding="{Binding Pivot_TRNFromLabel}" Width="100" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Category" Binding="{Binding CategoryLabel}" Width="140" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Raw Label" Binding="{Binding RawLabel}" Width="200" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Receivable DW Ref" Binding="{Binding Receivable_DWRefFromAmbre}" Width="120" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Local Signed Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="130" IsReadOnly="True"/>

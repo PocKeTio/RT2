@@ -24,9 +24,11 @@ namespace RecoTool.Services
         #region Fields
 
         private readonly OfflineFirstService _offlineFirstService;
+        private ReconciliationService _reconciliationService; // for DWINGS in-memory cache access
         private TransformationService _transformationService;
         private bool _initialized;
         private readonly string _currentUser;
+        private Dictionary<string, TransactionType> _codeToCategory;
 
         // Heuristic constants (centralized)
         private const string KeywordTopaze = "TOPAZE";
@@ -45,7 +47,46 @@ namespace RecoTool.Services
             if (_initialized) return;
             var countries = await _offlineFirstService.GetCountries().ConfigureAwait(false);
             _transformationService = new TransformationService(countries);
+            // Charger le référentiel des codes de transaction Ambre -> catégorie
+            try
+            {
+                var codes = _offlineFirstService.GetAmbreTransactionCodes() ?? new List<AmbreTransactionCode>();
+                _codeToCategory = new Dictionary<string, TransactionType>(StringComparer.OrdinalIgnoreCase);
+                foreach (var c in codes)
+                {
+                    if (string.IsNullOrWhiteSpace(c?.ATC_CODE) || string.IsNullOrWhiteSpace(c?.ATC_TAG)) continue;
+                    var normalized = c.ATC_TAG.Replace(" ", "_").Replace("-", "_");
+                    if (Enum.TryParse<TransactionType>(normalized, ignoreCase: true, out var tx))
+                    {
+                        _codeToCategory[c.ATC_CODE.Trim()] = tx;
+                    }
+                    else
+                    {
+                        LogManager.Warning($"Unknown ATC_TAG '{c.ATC_TAG}' for code '{c.ATC_CODE}' in T_Ref_Ambre_TransactionCodes");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogManager.Error("Failed to load T_Ref_Ambre_TransactionCodes", ex);
+                _codeToCategory = new Dictionary<string, TransactionType>(StringComparer.OrdinalIgnoreCase);
+            }
             _initialized = true;
+        }
+
+        private async Task EnsureRecoServiceAsync()
+        {
+            if (_reconciliationService != null) return;
+            try
+            {
+                var cs = _offlineFirstService.GetCurrentLocalConnectionString();
+                var countries = await _offlineFirstService.GetCountries().ConfigureAwait(false);
+                _reconciliationService = new ReconciliationService(cs, Environment.UserName, countries, _offlineFirstService);
+            }
+            catch (Exception ex)
+            {
+                LogManager.Warning($"Unable to initialize ReconciliationService for DWINGS cache: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -179,6 +220,16 @@ namespace RecoTool.Services
                 progressCallback?.Invoke("Finalizing...", 100);
                 result.IsSuccess = true;
                 result.EndTime = DateTime.UtcNow;
+                // Invalidate DWINGS caches so next usage reloads after this import
+                try
+                {
+                    await EnsureRecoServiceAsync().ConfigureAwait(false);
+                    _reconciliationService?.InvalidateDwingsCaches();
+                }
+                catch (Exception invEx)
+                {
+                    LogManager.Warning($"Could not invalidate DWINGS cache post-import: {invEx.Message}");
+                }
                 return result;
             }
             catch (Exception ex)
@@ -189,8 +240,6 @@ namespace RecoTool.Services
                 return result;
             }
         }
-
-
 
         private string[] ValidateFiles(string[] filePaths, bool isMultiFile, ImportResult result)
         {
@@ -321,7 +370,6 @@ namespace RecoTool.Services
             result.ProcessedRecords = valid.Count;
         }
 
-
         /// <summary>
         /// Lit le fichier Excel en appliquant le mapping des champs
         /// </summary>
@@ -367,6 +415,9 @@ namespace RecoTool.Services
                     //}
 
                     // Application de la catégorisation automatique
+                    // 1) Déduire la catégorie Ambre depuis les codes extraits du label (si Pivot)
+                    SetCategoryFromTransactionCodes(dataAmbre);
+                    // 2) Appliquer la catégorisation
                     ApplyAutomaticCategorization(dataAmbre, country);
 
                     transformedData.Add(dataAmbre);
@@ -439,7 +490,7 @@ namespace RecoTool.Services
         private void ApplyAutomaticCategorization(DataAmbre dataAmbre, Country country)
         {
             var isPivot = dataAmbre.IsPivotAccount(country.CNT_AmbrePivot);
-            TransactionType? transactionType = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot);
+            TransactionType? transactionType = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot, dataAmbre.Category);
             var creditDebit = _transformationService.DetermineCreditDebit(dataAmbre.SignedAmount);
 
             // Extraction du type de garantie pour les comptes Receivable
@@ -474,6 +525,84 @@ namespace RecoTool.Services
                 return "ADVISING";
 
             return null;
+        }
+
+        private sealed class DwingsRef
+        {
+            public string Type { get; set; } // "BGPMT" or "BGI"
+            public string Code { get; set; } // e.g., "BGPMT123456" or "BGI123456"
+        }
+
+        /// <summary>
+        /// Extract DWINGS reference from Ambre row, preferring BGPMT over BGI.
+        /// Looks into both RawLabel and Reconciliation_Num.
+        /// Formats:
+        ///  - BGPMTXXXXXXXXXXX (alnum, typical 11+ chars)
+        ///  - BGIYYYYMMXXXXXXX (13 digits) -> see InvoiceIdExtractor
+        /// </summary>
+        private DwingsRef ExtractDwingsReference(DataAmbre ambre)
+        {
+            if (ambre == null) return null;
+            // 1) Try BGPMT in RawLabel then Reconciliation_Num
+            string bgpmt = ExtractBgpmtToken(ambre.RawLabel) ?? ExtractBgpmtToken(ambre.Reconciliation_Num);
+            if (!string.IsNullOrWhiteSpace(bgpmt))
+                return new DwingsRef { Type = "BGPMT", Code = bgpmt };
+
+            // 2) Try BGI (strict pattern BGI + 13 digits) using existing helper plus Reconciliation_Num
+            string bgi = InvoiceIdExtractor.ExtractInvoiceId(ambre.RawLabel) ?? InvoiceIdExtractor.ExtractInvoiceId(ambre.Reconciliation_Num);
+            if (!string.IsNullOrWhiteSpace(bgi))
+                return new DwingsRef { Type = "BGI", Code = bgi };
+
+            return null;
+        }
+
+        /// <summary>
+        /// Extract BGPMT token (BGPMT followed by 8-20 alnum chars) from a text.
+        /// </summary>
+        private string ExtractBgpmtToken(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            var match = new System.Text.RegularExpressions.Regex(@"BGPMT[0-9A-Z]{8,20}", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                .Match(text);
+            return match.Success ? match.Value.ToUpperInvariant() : null;
+        }
+
+        /// <summary>
+        /// Look up the payment method for a DWINGS reference (T_DW_Data as DWINGSInvoice).
+        /// BGPMT is unique; BGI can have multiple rows — we return the first match.
+        /// </summary>
+        private async Task<string> TryGetPaymentMethodFromDwingsAsync(string countryId, string refType, string refCode)
+        {
+            if (string.IsNullOrWhiteSpace(refType) || string.IsNullOrWhiteSpace(refCode))
+                return null;
+
+            // Use in-memory DWINGS cache via ReconciliationService
+            await EnsureRecoServiceAsync().ConfigureAwait(false);
+            var invoices = await _reconciliationService?.GetDwingsInvoicesAsync();
+            if (invoices == null || invoices.Count == 0) return null;
+
+            var code = refCode?.Trim();
+            if (string.IsNullOrEmpty(code)) return null;
+
+            ReconciliationService.DwingsInvoiceDto hit = null;
+            if (string.Equals(refType, "BGPMT", StringComparison.OrdinalIgnoreCase))
+            {
+                hit = invoices.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i?.BGPMT)
+                                                && string.Equals(i.BGPMT, code, StringComparison.OrdinalIgnoreCase));
+            }
+            else
+            {
+                // BGI can map to multiple reference columns; pick the first match
+                hit = invoices.FirstOrDefault(i =>
+                    (i.INVOICE_ID != null && string.Equals(i.INVOICE_ID, code, StringComparison.OrdinalIgnoreCase)) ||
+                    (i.SENDER_REFERENCE != null && string.Equals(i.SENDER_REFERENCE, code, StringComparison.OrdinalIgnoreCase)) ||
+                    (i.RECEIVER_REFERENCE != null && string.Equals(i.RECEIVER_REFERENCE, code, StringComparison.OrdinalIgnoreCase)) ||
+                    (i.BUSINESS_CASE_REFERENCE != null && string.Equals(i.BUSINESS_CASE_REFERENCE, code, StringComparison.OrdinalIgnoreCase))
+                );
+            }
+
+            var method = hit?.PAYMENT_METHOD;
+            return string.IsNullOrWhiteSpace(method) ? null : method;
         }
 
         /// <summary>
@@ -691,6 +820,7 @@ namespace RecoTool.Services
                             LocalSignedAmount = ConvertToDecimal(GetPropertyValue(entity.Properties, "LocalSignedAmount")),
                             Operation_Date = ConvertToDateTime(GetPropertyValue(entity.Properties, "Operation_Date")),
                             Value_Date = ConvertToDateTime(GetPropertyValue(entity.Properties, "Value_Date")),
+                            Category = int.TryParse(GetPropertyValue(entity.Properties, "Category")?.ToString(), out var cat) ? cat : (int?)null,
                             // Champs complémentaires nécessaires pour la clé métier et la détection de changements
                             ReconciliationOrigin_Num = GetPropertyValue(entity.Properties, "ReconciliationOrigin_Num")?.ToString(),
                             Reconciliation_Num = GetPropertyValue(entity.Properties, "Reconciliation_Num")?.ToString(),
@@ -822,6 +952,7 @@ namespace RecoTool.Services
                    existing.LocalSignedAmount != newData.LocalSignedAmount ||
                    existing.Operation_Date != newData.Operation_Date ||
                    existing.Value_Date != newData.Value_Date ||
+                   existing.Category != newData.Category ||
                    existing.Reconciliation_Num != newData.Reconciliation_Num ||
                    existing.Receivable_InvoiceFromAmbre != newData.Receivable_InvoiceFromAmbre ||
                    existing.Receivable_DWRefFromAmbre != newData.Receivable_DWRefFromAmbre;
@@ -890,6 +1021,7 @@ namespace RecoTool.Services
                     ["LocalSignedAmount"] = dataAmbre.LocalSignedAmount,
                     ["Operation_Date"] = dataAmbre.Operation_Date,
                     ["Value_Date"] = dataAmbre.Value_Date,
+                    ["Category"] = (object?)dataAmbre.Category ?? DBNull.Value,
                     ["Receivable_InvoiceFromAmbre"] = dataAmbre.Receivable_InvoiceFromAmbre,
                     ["Receivable_DWRefFromAmbre"] = dataAmbre.Receivable_DWRefFromAmbre,
                     ["Reconciliation_Num"] = dataAmbre.Reconciliation_Num,
@@ -904,6 +1036,51 @@ namespace RecoTool.Services
             };
             
             return entity;
+        }
+
+        /// <summary>
+        /// Règle DataAmbre.Category en utilisant Pivot_TransactionCodesFromLabel et le lookup référentiel.
+        /// </summary>
+        private void SetCategoryFromTransactionCodes(DataAmbre dataAmbre)
+        {
+            if (dataAmbre == null) return;
+            if (_codeToCategory == null || _codeToCategory.Count == 0) return;
+            if (string.IsNullOrWhiteSpace(dataAmbre.Pivot_TransactionCodesFromLabel)) return;
+
+            var label = dataAmbre.Pivot_TransactionCodesFromLabel.Trim();
+
+            // Ne pas splitter: les ATC_CODE peuvent contenir '/'. On tente un match exact case-insensitive.
+            if (_codeToCategory.TryGetValue(label, out var tx))
+            {
+                dataAmbre.Category = (int)tx;
+                return;
+            }
+
+            // Fallback optionnel: si le label contient un séparateur '|' listant plusieurs codes complets,
+            // on peut tenter un split minimal sur '|', sans toucher aux '/'.
+            if (label.Contains("|"))
+            {
+                var parts = label.Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries)
+                                  .Select(p => p.Trim())
+                                  .Where(p => !string.IsNullOrWhiteSpace(p));
+                TransactionType? found = null;
+                foreach (var p in parts)
+                {
+                    if (_codeToCategory.TryGetValue(p, out var c))
+                    {
+                        if (found == null) found = c;
+                        else if (found.Value != c)
+                        {
+                            LogManager.Warning($"Ambiguous ATC transaction types for codes '{label}'. Using first match '{found}'.");
+                            break;
+                        }
+                    }
+                }
+                if (found != null)
+                {
+                    dataAmbre.Category = (int)found.Value;
+                }
+            }
         }
 
         /// <summary>
@@ -964,12 +1141,44 @@ namespace RecoTool.Services
                 var toInsert = new List<Reconciliation>();
                 var country = await LoadCountryConfiguration(countryId);
 
+                // Prepare helper services/context
+                var countries = await _offlineFirstService.GetCountries();
+                var recoSvc = new ReconciliationService(_offlineFirstService.GetCurrentLocalConnectionString(), _currentUser, countries, _offlineFirstService);
+                var businessToday = DateTime.Today; // local time per spec
+
                 foreach (var dataAmbre in newRecords ?? new List<DataAmbre>())
                 {
                     var rec = CreateReconciliationFromDataAmbre(dataAmbre, country);
                     rec.CreationDate = now;
                     rec.LastModified = now;
                     rec.ModifiedBy = _currentUser;
+
+                    // Compute Action (auto) and KPI per deterministic mapping
+                    bool isPivot = dataAmbre.IsPivotAccount(country.CNT_AmbrePivot);
+                    var txType = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot, dataAmbre.Category);
+                    string guaranteeType = !isPivot ? ExtractGuaranteeType(dataAmbre.RawLabel) : null;
+                    // Try resolve PaymentMethod from DWINGS using BGPMT/INVOICE code in RawLabel
+                    string paymentMethod = null;
+                    var dwRef = ExtractDwingsReference(dataAmbre);
+                    if (dwRef != null)
+                    {
+                        try
+                        {
+                            paymentMethod = await TryGetPaymentMethodFromDwingsAsync(countryId, dwRef.Type, dwRef.Code).ConfigureAwait(false);
+                        }
+                        catch (Exception pmEx)
+                        {
+                            LogManager.Warning($"DWINGS payment method lookup failed for {dwRef.Type}={dwRef.Code}: {pmEx.Message}");
+                        }
+                    }
+                    // KPI from mapping
+                    var (_, kpi) = _transformationService.ApplyAutomaticCategorization(txType, dataAmbre.SignedAmount, isPivot, guaranteeType);
+                    rec.KPI = (int)kpi;
+                    // Auto Action using reconciliation-aware rules (do not override manual)
+                    var autoAction = recoSvc.ComputeAutoAction(txType, dataAmbre, rec, country, paymentMethod: paymentMethod, today: businessToday);
+                    if (autoAction.HasValue)
+                        rec.Action = (int)autoAction.Value;
+
                     toInsert.Add(rec);
                 }
 
@@ -1218,11 +1427,8 @@ namespace RecoTool.Services
             var creditDebit = _transformationService.DetermineCreditDebit(dataAmbre.SignedAmount);
             string guaranteeType = !isPivot ? ExtractGuaranteeType(dataAmbre.RawLabel) : null;
 
-            var (action, kpi) = _transformationService.ApplyAutomaticCategorization(
-                transactionType, dataAmbre.SignedAmount, isPivot, guaranteeType);
-
-            reconciliation.Action = ((int)action);
-            reconciliation.KPI = ((int)kpi);
+            // Defer Action/KPI assignment to UpdateReconciliationTable where we have reconciliation context (TriggerDate, reminders, etc.)
+            // and can apply automatic action rules without overwriting user-set values.
 
             return reconciliation;
         }

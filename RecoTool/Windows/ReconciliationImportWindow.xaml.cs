@@ -15,6 +15,7 @@ using OfflineFirstAccess.Data;
 using OfflineFirstAccess.Models;
 using System.Data.OleDb;
 using System.Globalization;
+using System.Drawing;
 
 namespace RecoTool.Windows
 {
@@ -38,6 +39,71 @@ namespace RecoTool.Windows
                 OnPropertyChanged(nameof(MappingFilePath));
                 OnFilePathChanged();
             }
+        }
+
+        private static int? InferActionFromComments(string comments)
+        {
+            if (string.IsNullOrWhiteSpace(comments)) return null;
+            var s = comments.Trim();
+            var u = s.ToUpperInvariant();
+
+            // Keyword-based mapping (extendable)
+            // Direct matches for explicit actions
+            if (u.Contains("REFUND")) return (int)ActionType.Refund;
+            if (u.Contains("REMIND")) return (int)ActionType.Remind;
+            if (u.Contains("TRIGGERED")) return (int)ActionType.Triggered;
+            if (u.Contains("TRIGGER")) return (int)ActionType.Trigger;
+            if (u.Contains("EXECUTE")) return (int)ActionType.Execute;
+            if (u.Contains("MATCH")) return (int)ActionType.Match;
+            if (u.Contains("ADJUST")) return (int)ActionType.Adjust;
+            if (u.Contains("REQUEST")) return (int)ActionType.Request;
+            if (u.Contains("INVESTIGATE") || u.Contains("CHECK")) return (int)ActionType.Investigate;
+            if (u.Contains("PRICING")) return (int)ActionType.DoPricing;
+            if (u.Contains("CLAIM")) return (int)ActionType.ToClaim;
+            if (u.Contains("SDD")) return (int)ActionType.ToDoSDD;
+
+            // Status-like keywords
+            if (u.Contains("DONE")) return (int)ActionType.Match; // treat as resolved/matched
+            if (u.Contains("TO DO") || u.Contains("TODO")) return (int)ActionType.Investigate; // pending work
+            if (u.Contains("TO BE CLEANED") || u.Contains("CLEAN")) return (int)ActionType.Adjust;
+
+            return null;
+        }
+
+        private static int? InferActionFromColor(int? oleColor)
+        {
+            if (oleColor == null || oleColor.Value == 0) return null;
+            try
+            {
+                var color = ColorTranslator.FromOle(oleColor.Value);
+                // Rough thresholds to classify main colors
+                bool isRed = color.R >= 200 && color.G <= 100 && color.B <= 100;
+                bool isGreen = color.G >= 200 && color.R <= 120 && color.B <= 120;
+                bool isBlue = color.B >= 200 && color.R <= 120 && color.G <= 150;
+                bool isYellow = color.R >= 200 && color.G >= 200 && color.B <= 120;
+
+                // Map to existing enum members
+                if (isRed) return (int)ActionType.Investigate;     // TO DO
+                if (isYellow) return (int)ActionType.Investigate;  // TO CHECK
+                if (isGreen) return (int)ActionType.Match;         // DONE
+                if (isBlue) return (int)ActionType.Adjust;         // TO BE CLEANED
+            }
+            catch { }
+            return null;
+        }
+
+        private static int? TryGetOleColor(Dictionary<string, object> row, string key)
+        {
+            if (row == null || key == null) return null;
+            if (!row.TryGetValue(key, out var v) || v == null) return null;
+            try
+            {
+                if (v is int i) return i;
+                if (v is double d) return (int)Math.Round(d);
+                if (int.TryParse(v.ToString(), out var p)) return p;
+            }
+            catch { }
+            return null;
         }
 
         public string DataFilePath
@@ -338,7 +404,8 @@ namespace RecoTool.Windows
                     dataExcel.OpenFile(DataFilePath);
 
                     // Read PIVOT
-                    var pivotRows = dataExcel.ReadSheetByColumns("PIVOT", pivotLetterToDest, pivotStartRow, idColumnLetter: "A");
+                    var colorFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Comments", "Action" };
+                    var pivotRows = dataExcel.ReadSheetByColumns("PIVOT", pivotLetterToDest, pivotStartRow, idColumnLetter: "A", colorForDestinations: colorFields);
                     foreach (var row in pivotRows)
                     {
                         // ID is ALWAYS column A. Do not recompute. Deduplicate identical A values (keep first).
@@ -369,7 +436,7 @@ namespace RecoTool.Windows
                     totalRows += pivotRows.Count;
 
                     // Read RECEIVABLE (overrides pivot on conflicts)
-                    var recvRows = dataExcel.ReadSheetByColumns("RECEIVABLE", recvLetterToDest, receivableStartRow, idColumnLetter: "A");
+                    var recvRows = dataExcel.ReadSheetByColumns("RECEIVABLE", recvLetterToDest, receivableStartRow, idColumnLetter: "A", colorForDestinations: colorFields);
                     foreach (var row in recvRows)
                     {
                         // ID is ALWAYS column A. For receivable, this contains Event_Num.
@@ -538,6 +605,49 @@ namespace RecoTool.Windows
                             }
                         }
                     }
+
+                    // Additional logic: infer Action from Comments text or cell color if Action not clearly mapped
+                    try
+                    {
+                        int? currentAction = null;
+                        if (rec.TryGetValue("Action", out var actVal) && actVal != null && actVal != DBNull.Value)
+                        {
+                            try { currentAction = Convert.ToInt32(actVal); } catch { currentAction = null; }
+                        }
+
+                        // Prefer text parsing from Comments when available
+                        var commentsText = rec.TryGetValue("Comments", out var comVal) ? comVal?.ToString() : null;
+                        if (currentAction == null)
+                        {
+                            var textInferred = InferActionFromComments(commentsText);
+                            if (textInferred != null)
+                            {
+                                rec["Action"] = textInferred.Value;
+                                currentAction = textInferred;
+                                LogMessage($"Action inferred from comments: {commentsText} -> {(ActionType)textInferred.Value}");
+                            }
+                        }
+
+                        // If still not set, fallback to cell color from Action or Comments columns
+                        if (currentAction == null)
+                        {
+                            int? actionColor = TryGetOleColor(row, "Action__Color");
+                            int? commentsColor = TryGetOleColor(row, "Comments__Color");
+                            var colorInferred = InferActionFromColor(actionColor ?? commentsColor);
+                            if (colorInferred != null)
+                            {
+                                rec["Action"] = colorInferred.Value;
+                                currentAction = colorInferred;
+                                var which = actionColor != null ? "Action" : "Comments";
+                                LogMessage($"Action inferred from {which} cell color -> {(ActionType)colorInferred.Value}");
+                            }
+                        }
+                    }
+                    catch { /* best effort inference */ }
+
+                    // Remove any temporary color keys before persisting
+                    var colorKeys = rec.Keys.Where(k => k.EndsWith("__Color", StringComparison.OrdinalIgnoreCase)).ToList();
+                    foreach (var ck in colorKeys) rec.Remove(ck);
 
                     // Resolve real DB ID using Excel column A value against indices (Pivot vs Receivable)
                     string TryResolveId(Dictionary<string, object> r)

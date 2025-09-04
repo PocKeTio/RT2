@@ -66,13 +66,35 @@ namespace RecoTool.Windows
                         e.Cancel = true;
                         _closingPushHandled = true;
                         Mouse.OverrideCursor = Cursors.Wait;
+                        ProgressWindow progressWindow = null;
                         try
                         {
+                            // Display a progress window to prevent users from forcing closure and to signal ongoing sync
+                            try
+                            {
+                                progressWindow = new ProgressWindow("Synchronization in progress...");
+                                if (this.IsVisible || this.IsLoaded)
+                                {
+                                    progressWindow.Owner = this;
+                                    progressWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+                                }
+                                else
+                                {
+                                    progressWindow.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                                }
+                                progressWindow.Topmost = true;
+                                progressWindow.ShowActivated = true;
+                                progressWindow.Show();
+                                progressWindow.Activate();
+                                try { progressWindow.UpdateProgress("Synchronisation en cours...", 10); } catch { }
+                            }
+                            catch { /* best effort UI */ }
+
                             var pushTask = _offlineFirstService?.PushReconciliationIfPendingAsync(cid);
                             if (pushTask != null)
                             {
-                                // Wait up to 15 seconds; then proceed with shutdown regardless
-                                await Task.WhenAny(pushTask, Task.Delay(TimeSpan.FromSeconds(15)));
+                                // Always sync fully if there are pending operations before closing
+                                await pushTask;
                             }
                         }
                         catch { /* ignore on shutdown */ }
@@ -80,10 +102,30 @@ namespace RecoTool.Windows
                         {
                             Mouse.OverrideCursor = null;
                             try { SyncMonitorService.Instance.Stop(); } catch { }
+                            // Ensure the progress window is closed
+                            try
+                            {
+                                if (progressWindow != null)
+                                {
+                                    progressWindow.Topmost = false;
+                                    progressWindow.Close();
+                                }
+                            }
+                            catch { }
                         }
 
-                        // Trigger actual close on UI thread; guard prevents loop
-                        try { this.Dispatcher.Invoke(() => this.Close()); } catch { }
+                        // Trigger a deferred Close() after leaving the Closing handler to avoid re-entrant Close()
+                        try
+                        {
+                            if (this.IsLoaded && !this.Dispatcher.HasShutdownStarted)
+                            {
+                                this.Dispatcher.BeginInvoke(new Action(() =>
+                                {
+                                    try { if (this.IsLoaded) this.Close(); } catch { }
+                                }), System.Windows.Threading.DispatcherPriority.Background);
+                            }
+                        }
+                        catch { }
                         return;
                     }
                 }
@@ -369,14 +411,16 @@ namespace RecoTool.Windows
             {
                 // Fermer la fenêtre avant d'afficher l'erreur
                 progressWindow.Topmost = false;
-                progressWindow.Close();
+                try { progressWindow.Close(); } catch { }
+
                 ShowError("Error", $"DW database copy failed: {ex.Message}");
                 return;
             }
 
             // Rétablir avant fermeture
             progressWindow.Topmost = false;
-            progressWindow.Close();
+            try { progressWindow.Close(); } catch { }
+
         }
 
         /// <summary>
@@ -1030,7 +1074,7 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
                     });
                 });
 
-            progressWindow.Close();
+            try { progressWindow.Close(); } catch { }
 
             if (result != null && result.Success)
             {
@@ -1193,7 +1237,7 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
                                 });
                             });
 
-                        progressWindow.Close();
+                        try { progressWindow.Close(); } catch { }
 
                         if (result.IsSuccess)
                         {
@@ -1263,7 +1307,17 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
         /// </summary>
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
-            Close();
+            try
+            {
+                if (this.IsLoaded && !this.Dispatcher.HasShutdownStarted)
+                {
+                    this.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        try { if (this.IsLoaded) this.Close(); } catch { }
+                    }), System.Windows.Threading.DispatcherPriority.Background);
+                }
+            }
+            catch { }
         }
 
 

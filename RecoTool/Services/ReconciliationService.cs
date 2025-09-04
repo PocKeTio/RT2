@@ -164,6 +164,147 @@ namespace RecoTool.Services
 
         #region Data Retrieval
 
+        // Simple in-memory DWINGS caches for UI assistance searches
+        public class DwingsInvoiceDto
+        {
+            public string INVOICE_ID { get; set; }
+            public string T_INVOICE_STATUS { get; set; }
+            public decimal? BILLING_AMOUNT { get; set; }
+            public string BILLING_CURRENCY { get; set; }
+            public string BGPMT { get; set; }
+            public string PAYMENT_METHOD { get; set; }
+            public string SENDER_REFERENCE { get; set; }
+            public string RECEIVER_REFERENCE { get; set; }
+            public string BUSINESS_CASE_REFERENCE { get; set; }
+            public string BUSINESS_CASE_ID { get; set; }
+            public DateTime? START_DATE { get; set; }
+            public DateTime? END_DATE { get; set; }
+            public string DEBTOR_PARTY_NAME { get; set; }
+            public string CREDITOR_PARTY_NAME { get; set; }
+        }
+
+        public class DwingsGuaranteeDto
+        {
+            public string GUARANTEE_ID { get; set; }
+            public string GUARANTEE_STATUS { get; set; }
+            public decimal? OUTSTANDING_AMOUNT { get; set; }
+            public string CURRENCYNAME { get; set; }
+            public string NAME1 { get; set; }
+        }
+
+        private List<DwingsInvoiceDto> _dwInvoicesCache;
+        private List<DwingsGuaranteeDto> _dwGuaranteesCache;
+        private string _dwCachePath;
+        private volatile bool _dwCacheInvalidated; // set true after AMBRE import to force reload
+
+        private async Task EnsureDwingsCachesAsync()
+        {
+            var dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
+            if (string.IsNullOrWhiteSpace(dwPath) || !File.Exists(dwPath))
+            {
+                _dwInvoicesCache = new List<DwingsInvoiceDto>();
+                _dwGuaranteesCache = new List<DwingsGuaranteeDto>();
+                _dwCachePath = null;
+                _dwCacheInvalidated = false;
+                return;
+            }
+
+            // Reload only if path changed or cache is empty (DWINGS DB is stable between big imports)
+            bool needReload = _dwCacheInvalidated
+                              || _dwInvoicesCache == null || _dwGuaranteesCache == null
+                              || !string.Equals(_dwCachePath, dwPath, StringComparison.OrdinalIgnoreCase);
+            if (!needReload) return;
+
+            var dwCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={dwPath};";
+            var invoices = new List<DwingsInvoiceDto>();
+            var guarantees = new List<DwingsGuaranteeDto>();
+
+            using (var connection = new OleDbConnection(dwCs))
+            {
+                await connection.OpenAsync().ConfigureAwait(false);
+                // Load invoices (include columns required for in-memory lookups)
+                using (var cmd = new OleDbCommand(@"SELECT INVOICE_ID, T_INVOICE_STATUS, BILLING_AMOUNT, BILLING_CURRENCY, BGPMT, PAYMENT_METHOD, SENDER_REFERENCE, RECEIVER_REFERENCE, BUSINESS_CASE_REFERENCE, BUSINESS_CASE_ID, START_DATE, END_DATE, DEBTOR_PARTY_NAME, CREDITOR_PARTY_NAME FROM T_DW_Data", connection))
+                using (var rd = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
+                {
+                    while (await rd.ReadAsync().ConfigureAwait(false))
+                    {
+                        invoices.Add(new DwingsInvoiceDto
+                        {
+                            INVOICE_ID = rd["INVOICE_ID"]?.ToString(),
+                            T_INVOICE_STATUS = rd["T_INVOICE_STATUS"]?.ToString(),
+                            BILLING_AMOUNT = TryToDecimal(rd["BILLING_AMOUNT"]),
+                            BILLING_CURRENCY = rd["BILLING_CURRENCY"]?.ToString(),
+                            BGPMT = rd["BGPMT"]?.ToString(),
+                            PAYMENT_METHOD = rd["PAYMENT_METHOD"]?.ToString(),
+                            SENDER_REFERENCE = rd["SENDER_REFERENCE"]?.ToString(),
+                            RECEIVER_REFERENCE = rd["RECEIVER_REFERENCE"]?.ToString(),
+                            BUSINESS_CASE_REFERENCE = rd["BUSINESS_CASE_REFERENCE"]?.ToString(),
+                            BUSINESS_CASE_ID = rd["BUSINESS_CASE_ID"]?.ToString(),
+                            START_DATE = TryToDate(rd["START_DATE"]),
+                            END_DATE = TryToDate(rd["END_DATE"]),
+                            DEBTOR_PARTY_NAME = rd["DEBTOR_PARTY_NAME"]?.ToString(),
+                            CREDITOR_PARTY_NAME = rd["CREDITOR_PARTY_NAME"]?.ToString(),
+                        });
+                    }
+                }
+
+                // Load guarantees (minimal shape)
+                using (var cmdG = new OleDbCommand(@"SELECT GUARANTEE_ID, GUARANTEE_STATUS, OUTSTANDING_AMOUNT, CURRENCYNAME, NAME1 FROM T_DW_Guarantee", connection))
+                using (var rdG = await cmdG.ExecuteReaderAsync().ConfigureAwait(false))
+                {
+                    while (await rdG.ReadAsync().ConfigureAwait(false))
+                    {
+                        guarantees.Add(new DwingsGuaranteeDto
+                        {
+                            GUARANTEE_ID = rdG["GUARANTEE_ID"]?.ToString(),
+                            GUARANTEE_STATUS = rdG["GUARANTEE_STATUS"]?.ToString(),
+                            OUTSTANDING_AMOUNT = TryToDecimal(rdG["OUTSTANDING_AMOUNT"]),
+                            CURRENCYNAME = rdG["CURRENCYNAME"]?.ToString(),
+                            NAME1 = rdG["NAME1"]?.ToString(),
+                        });
+                    }
+                }
+            }
+
+            _dwInvoicesCache = invoices;
+            _dwGuaranteesCache = guarantees;
+            _dwCachePath = dwPath;
+            _dwCacheInvalidated = false;
+        }
+
+        /// <summary>
+        /// Explicitly invalidate DWINGS caches so next access will reload from the DWINGS database.
+        /// Call this after an AMBRE import completes if the import affects DWINGS-derived linkages.
+        /// </summary>
+        public void InvalidateDwingsCaches()
+        {
+            _dwCacheInvalidated = true;
+        }
+
+        private static decimal? TryToDecimal(object o)
+        {
+            if (o == null || o == DBNull.Value) return null;
+            try { return Convert.ToDecimal(o, CultureInfo.InvariantCulture); } catch { return null; }
+        }
+
+        private static DateTime? TryToDate(object o)
+        {
+            if (o == null || o == DBNull.Value) return null;
+            try { return Convert.ToDateTime(o, CultureInfo.InvariantCulture); } catch { return null; }
+        }
+
+        public async Task<IReadOnlyList<DwingsInvoiceDto>> GetDwingsInvoicesAsync()
+        {
+            await EnsureDwingsCachesAsync().ConfigureAwait(false);
+            return _dwInvoicesCache ?? new List<DwingsInvoiceDto>();
+        }
+
+        public async Task<IReadOnlyList<DwingsGuaranteeDto>> GetDwingsGuaranteesAsync()
+        {
+            await EnsureDwingsCachesAsync().ConfigureAwait(false);
+            return _dwGuaranteesCache ?? new List<DwingsGuaranteeDto>();
+        }
+
         /// <summary>
         /// Récupère toutes les données Ambre pour un pays
         /// </summary>
@@ -299,7 +440,6 @@ namespace RecoTool.Services
             else
             {
                 // Build JOIN targets: use IN 'path' subqueries when external, otherwise direct tables
-                string dwDataJoinInv = string.IsNullOrEmpty(dwEsc) ? "T_DW_Data AS dInv" : $"(SELECT * FROM [{dwEsc}].T_DW_Data) AS dInv";
                 string dwGuaranteeJoin = string.IsNullOrEmpty(dwEsc) ? "T_DW_Guarantee AS g" : $"(SELECT * FROM [{dwEsc}].T_DW_Guarantee) AS g";
 
                 query = $@"SELECT
@@ -331,7 +471,7 @@ namespace RecoTool.Services
                                     g.GUARANTEE_TYPE AS GUARANTEE_TYPE,
                                     NULL AS COMMISSION_ID,
                                     g.GUARANTEE_ID,
-
+                                 
                                   g.NATURE AS G_NATURE,
                                   g.EVENT_STATUS AS G_EVENT_STATUS,
                                   g.EVENT_EFFECTIVEDATE AS G_EVENT_EFFECTIVEDATE,
@@ -359,8 +499,47 @@ namespace RecoTool.Services
                                   g.CONTROLER AS G_CONTROLER,
                                   g.AUTOMATICBOOKOFF AS G_AUTOMATICBOOKOFF,
                                   g.NATUREOFDEAL AS G_NATUREOFDEAL,
-                                  g.GUARANTEE_TYPE AS G_GUARANTEE_TYPE
+                                  g.GUARANTEE_TYPE AS G_GUARANTEE_TYPE,
 
+                                  NULL AS INVOICE_ID,
+                                  NULL AS I_REQUESTED_INVOICE_AMOUNT,
+                                  NULL AS I_SENDER_NAME,
+                                  NULL AS I_RECEIVER_NAME,
+                                  NULL AS I_SENDER_REFERENCE,
+                                  NULL AS I_RECEIVER_REFERENCE,
+                                  NULL AS I_T_INVOICE_STATUS,
+                                  NULL AS I_BILLING_AMOUNT,
+                                  NULL AS I_BILLING_CURRENCY,
+                                  NULL AS I_START_DATE,
+                                  NULL AS I_END_DATE,
+                                  NULL AS I_FINAL_AMOUNT,
+                                  NULL AS I_T_COMMISSION_PERIOD_STATUS,
+                                  NULL AS I_BUSINESS_CASE_REFERENCE,
+                                  NULL AS I_BUSINESS_CASE_ID,
+                                  NULL AS I_POSTING_PERIODICITY,
+                                  NULL AS I_EVENT_ID,
+                                  NULL AS I_COMMENTS,
+                                  NULL AS I_SENDER_ACCOUNT_NUMBER,
+                                  NULL AS I_SENDER_ACCOUNT_BIC,
+                                  NULL AS I_RECEIVER_ACCOUNT_NUMBER,
+                                  NULL AS I_RECEIVER_ACCOUNT_BIC,
+                                  NULL AS I_REQUESTED_AMOUNT,
+                                  NULL AS I_EXECUTED_AMOUNT,
+                                  NULL AS I_REQUESTED_EXECUTION_DATE,
+                                  NULL AS I_T_PAYMENT_REQUEST_STATUS,
+                                  NULL AS I_BGPMT,
+                                  NULL AS I_DEBTOR_ACCOUNT_ID,
+                                  NULL AS I_CREDITOR_ACCOUNT_ID,
+                                  NULL AS I_MT_STATUS,
+                                  NULL AS I_REMINDER_NUMBER,
+                                  NULL AS I_ERROR_MESSAGE,
+                                  NULL AS I_DEBTOR_PARTY_ID,
+                                  NULL AS I_PAYMENT_METHOD,
+                                  NULL AS I_PAYMENT_TYPE,
+                                  NULL AS I_DEBTOR_PARTY_NAME,
+                                  NULL AS I_DEBTOR_ACCOUNT_NUMBER,
+                                  NULL AS I_CREDITOR_PARTY_ID,
+                                  NULL AS I_CREDITOR_ACCOUNT_NUMBER
 
                            FROM (({ambreJoin}
                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
@@ -368,54 +547,13 @@ namespace RecoTool.Services
                            LEFT JOIN (SELECT Event_Num, COUNT(*) AS DupCount FROM {ambreBase} GROUP BY Event_Num) AS dup ON dup.Event_Num = a.Event_Num
                            WHERE 1=1";
 
-                //dInv.INVOICE_ID AS INVOICE_ID,
-                
-                //LEFT JOIN { dwDataJoinInv} ON r.DWINGS_InvoiceID = dInv.INVOICE_ID)
-
-                //dInv.REQUESTED_INVOICE_AMOUNT AS I_REQUESTED_INVOICE_AMOUNT,
-                //                  dInv.SENDER_NAME AS I_SENDER_NAME,
-                //                  dInv.RECEIVER_NAME AS I_RECEIVER_NAME,
-                //                  dInv.SENDER_REFERENCE AS I_SENDER_REFERENCE,
-                //                  dInv.RECEIVER_REFERENCE AS I_RECEIVER_REFERENCE,
-                //                  dInv.T_INVOICE_STATUS AS I_T_INVOICE_STATUS,
-                //                  dInv.BILLING_AMOUNT AS I_BILLING_AMOUNT,
-                //                  dInv.BILLING_CURRENCY AS I_BILLING_CURRENCY,
-                //                  dInv.START_DATE AS I_START_DATE,
-                //                  dInv.END_DATE AS I_END_DATE,
-                //                  dInv.FINAL_AMOUNT AS I_FINAL_AMOUNT,
-                //                  dInv.T_COMMISSION_PERIOD_STATUS AS I_T_COMMISSION_PERIOD_STATUS,
-                //                  dInv.BUSINESS_CASE_REFERENCE AS I_BUSINESS_CASE_REFERENCE,
-                //                  dInv.BUSINESS_CASE_ID AS I_BUSINESS_CASE_ID,
-                //                  dInv.POSTING_PERIODICITY AS I_POSTING_PERIODICITY,
-                //                  dInv.EVENT_ID AS I_EVENT_ID,
-                //                  dInv.COMMENTS AS I_COMMENTS,
-                //                  dInv.SENDER_ACCOUNT_NUMBER AS I_SENDER_ACCOUNT_NUMBER,
-                //                  dInv.SENDER_ACCOUNT_BIC AS I_SENDER_ACCOUNT_BIC,
-                //                  dInv.RECEIVER_ACCOUNT_NUMBER AS I_RECEIVER_ACCOUNT_NUMBER,
-                //                  dInv.RECEIVER_ACCOUNT_BIC AS I_RECEIVER_ACCOUNT_BIC,
-                //                  dInv.REQUESTED_AMOUNT AS I_REQUESTED_AMOUNT,
-                //                  dInv.EXECUTED_AMOUNT AS I_EXECUTED_AMOUNT,
-                //                  dInv.REQUESTED_EXECUTION_DATE AS I_REQUESTED_EXECUTION_DATE,
-                //                  dInv.T_PAYMENT_REQUEST_STATUS AS I_T_PAYMENT_REQUEST_STATUS,
-                //                  dInv.BGPMT AS I_BGPMT,
-                //                  dInv.DEBTOR_ACCOUNT_ID AS I_DEBTOR_ACCOUNT_ID,
-                //                  dInv.CREDITOR_ACCOUNT_ID AS I_CREDITOR_ACCOUNT_ID,
-                //                  dInv.MT_STATUS AS I_MT_STATUS,
-                //                  dInv.REMINDER_NUMBER AS I_REMINDER_NUMBER,
-                //                  dInv.ERROR_MESSAGE AS I_ERROR_MESSAGE,
-                //                  dInv.DEBTOR_PARTY_ID AS I_DEBTOR_PARTY_ID,
-                //                  dInv.PAYMENT_METHOD AS I_PAYMENT_METHOD,
-                //                  dInv.PAYMENT_TYPE AS I_PAYMENT_TYPE,
-                //                  dInv.DEBTOR_PARTY_NAME AS I_DEBTOR_PARTY_NAME,
-                //                  dInv.DEBTOR_ACCOUNT_NUMBER AS I_DEBTOR_ACCOUNT_NUMBER,
-                //                  dInv.CREDITOR_PARTY_ID AS I_CREDITOR_PARTY_ID,
-                //                  dInv.CREDITOR_ACCOUNT_NUMBER AS I_CREDITOR_ACCOUNT_NUMBER
+                // invoice join and projections added above
             }
 
             // Apply Potential Duplicates predicate if requested via JSON
             if (dupOnly)
             {
-                query += " AND Nz(dup.DupCount,0) > 1";
+                query += " AND (dup.DupCount) > 1";
             }
 
             if (!string.IsNullOrEmpty(filterSql))
@@ -456,11 +594,133 @@ namespace RecoTool.Services
             swBuild.Stop();
             var swExec = Stopwatch.StartNew();
             var list = await ExecuteQueryAsync<ReconciliationViewData>(query);
+
+            // Enrich invoice fields from in-memory DWINGS cache (no SQL join to T_DW_Data)
+            try
+            {
+                var invoices = await GetDwingsInvoicesAsync().ConfigureAwait(false);
+                // Build quick lookups (handle duplicates gracefully by picking first)
+                var byInvoiceId = invoices.Where(i => !string.IsNullOrWhiteSpace(i.INVOICE_ID))
+                                          .GroupBy(i => i.INVOICE_ID, StringComparer.OrdinalIgnoreCase)
+                                          .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+                var byBgpmt = invoices.Where(i => !string.IsNullOrWhiteSpace(i.BGPMT))
+                                      .GroupBy(i => i.BGPMT, StringComparer.OrdinalIgnoreCase)
+                                      .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+                foreach (var row in list)
+                {
+                    DwingsInvoiceDto inv = null;
+                    if (!string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID) && byInvoiceId.TryGetValue(row.DWINGS_InvoiceID, out var foundById))
+                    {
+                        inv = foundById;
+                    }
+                    else if (!string.IsNullOrWhiteSpace(row.PaymentReference) && byBgpmt.TryGetValue(row.PaymentReference, out var foundByPm))
+                    {
+                        inv = foundByPm;
+                    }
+
+                    if (inv != null)
+                    {
+                        row.INVOICE_ID = inv.INVOICE_ID;
+                        row.I_T_INVOICE_STATUS = inv.T_INVOICE_STATUS;
+                        row.I_BILLING_AMOUNT = inv.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture);
+                        row.I_BILLING_CURRENCY = inv.BILLING_CURRENCY;
+                        row.I_BGPMT = inv.BGPMT;
+                        row.I_BUSINESS_CASE_REFERENCE = inv.BUSINESS_CASE_REFERENCE;
+                        row.I_BUSINESS_CASE_ID = inv.BUSINESS_CASE_ID;
+                        row.I_START_DATE = inv.START_DATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                        row.I_END_DATE = inv.END_DATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                        row.I_DEBTOR_PARTY_NAME = inv.DEBTOR_PARTY_NAME;
+                        row.I_RECEIVER_NAME = inv.CREDITOR_PARTY_NAME; // map as available
+                    }
+                }
+            }
+            catch { /* best-effort enrichment */ }
             swExec.Stop();
 
             return list;
         }
 
+        /// <summary>
+        /// Compute the automatic Action to apply after an AMBRE import for a reconciliation item, according to business rules.
+        /// IMPORTANT: this must NOT override user-forced actions; call this only when r.Action is null.
+        /// </summary>
+        /// <param name="transactionType">Detected transaction type (from AMBRE label/category)</param>
+        /// <param name="a">AMBRE row</param>
+        /// <param name="r">Reconciliation row (same ID)</param>
+        /// <param name="country">Country (to resolve Pivot/Receivable)</param>
+        /// <param name="paymentMethod">Optional DWINGS payment method (MANUAL_OUTGOING/OUTGOING_PAYMENT/DIRECT_DEBIT/INCOMING_PAYMENT)</param>
+        /// <param name="today">Business current date (DateTime.Today recommended)</param>
+        /// <returns>ActionType to set, or null if no automatic action applies</returns>
+        public ActionType? ComputeAutoAction(TransactionType? transactionType, DataAmbre a, Reconciliation r, Country country, string paymentMethod, DateTime today)
+        {
+            if (a == null || r == null || country == null) return null;
+            // Never override a user-forced action
+            if (r.Action.HasValue) return null;
+
+            bool isPivot = a.IsPivotAccount(country.CNT_AmbrePivot);
+            bool isReceivable = !isPivot; // Per model: receivable is the opposite of pivot for our 2-account scope
+
+            // Helpers
+            bool IsPm(string code) => !string.IsNullOrWhiteSpace(paymentMethod) && paymentMethod.Equals(code, StringComparison.OrdinalIgnoreCase);
+            bool TxIs(TransactionType t) => transactionType.HasValue && transactionType.Value == t;
+
+            // Rule 1: If category = COLLECTION and TriggerDate = blank THEN TRIGGER
+            if (TxIs(TransactionType.COLLECTION) && !r.TriggerDate.HasValue)
+                return ActionType.Trigger;
+
+            // Rule 2: ELSE IF transitory = "Y" AND Op.date < D-1 THEN INVESTIGATE (Pivot only)
+            // Transitory means Reconciliation_Num contains BGPMT
+            bool transitory = !string.IsNullOrWhiteSpace(a.Reconciliation_Num) && a.Reconciliation_Num.IndexOf("BGPMT", StringComparison.OrdinalIgnoreCase) >= 0;
+            if (isPivot && transitory)
+            {
+                DateTime? op = a.Operation_Date?.Date;
+                if (op.HasValue && op.Value < today.AddDays(-1))
+                    return ActionType.Investigate;
+            }
+
+            // Rule 3: ELSE IF TriggerDate <= D-1 AND matched = "N" AND manual match date = blank THEN MATCH
+            // matched = DeleteDate != null (AMBRE or Reconciliation base entities). We use AMBRE deletion to reflect record matched/removed.
+            bool matched = a.DeleteDate.HasValue; // per spec "Matched = DeleteDate is not null"
+            bool manualMatchBlank = r.Action.GetValueOrDefault() != (int)ActionType.Match; // no explicit manual match set
+            if (r.TriggerDate.HasValue && r.TriggerDate.Value.Date <= today.AddDays(-1) && !matched && manualMatchBlank)
+                return ActionType.Match;
+
+            // Rule 4: ELSE IF Account = receivable THEN
+            if (isReceivable)
+            {
+                // If Payment method = MANUAL_OUTGOING THEN TRIGGER
+                if (IsPm("MANUAL_OUTGOING") || TxIs(TransactionType.MANUAL_OUTGOING))
+                    return ActionType.Trigger;
+
+                // If Payment method = OUTGOING_PAYMENT THEN EXECUTE
+                if (IsPm("OUTGOING_PAYMENT") || TxIs(TransactionType.OUTGOING_PAYMENT))
+                    return ActionType.Execute;
+
+                // If Payment method = DIRECT_DEBIT: no explicit rule here for auto action beyond table; leave null (let KPI mapping handle later)
+                if (IsPm("DIRECT_DEBIT") || TxIs(TransactionType.DIRECT_DEBIT))
+                    return null;
+
+                // If Payment method = Incoming THEN
+                // Interpret Incoming as INCOMING_PAYMENT per unified enum/tag
+                if (IsPm("INCOMING_PAYMENT") || TxIs(TransactionType.INCOMING_PAYMENT))
+                {
+                    // IF first request = blank THEN REQUEST
+                    // FirstRequest mapped to CreationDate (all tables, AMBRE). If never requested before -> use AMBRE creation being today as first appearance.
+                    // If CreationDate is null or equals today, consider it first request.
+                    var ambreCreated = a.CreationDate?.Date;
+                    if (!ambreCreated.HasValue || ambreCreated.Value == today.Date)
+                        return ActionType.Request;
+
+                    // ELSE IF last reminder > 30 days THEN REMIND
+                    if (r.ToRemindDate.HasValue && r.ToRemindDate.Value.Date <= today.AddDays(-30).Date)
+                        return ActionType.Remind;
+                }
+            }
+
+            // ELSE BLANK (no automatic action)
+            return null;
+        }
         // Distinct values for dynamic filter ComboBoxes
         public async Task<List<string>> GetDistinctCurrenciesAsync(string countryId)
         {

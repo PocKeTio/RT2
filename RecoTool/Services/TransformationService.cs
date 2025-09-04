@@ -215,42 +215,43 @@ namespace RecoTool.Services
         /// </summary>
         /// <param name="label">Libellé de la transaction</param>
         /// <param name="isPivot">True si c'est le compte Pivot</param>
+        /// <param name="category">Indice de type de transaction (enum TransactionType) pour Pivot</param>
         /// <returns>Type de transaction détecté</returns>
-        public TransactionType? DetermineTransactionType(string label, bool isPivot)
+        public TransactionType? DetermineTransactionType(string label, bool isPivot, int? category = null)
         {
-            if (string.IsNullOrEmpty(label))
-                return null;
+            // Normalize label once
+            var upperLabel = (label ?? string.Empty).ToUpperInvariant();
 
-            var upperLabel = label.ToUpper();
+            // If explicitly uncategorized or empty
+            if (string.IsNullOrWhiteSpace(label) && !category.HasValue)
+                return TransactionType.TO_CATEGORIZE;
+            if (upperLabel.Contains("TO CATEGORIZE"))
+                return TransactionType.TO_CATEGORIZE;
 
             if (isPivot)
             {
-                if (upperLabel.Contains("COLLECTION"))
-                    return TransactionType.COLLECTION;
-                if (upperLabel.Contains("PAYMENT") || upperLabel.Contains("AUTOMATIC REFUND"))
-                    return TransactionType.PAYMENT;
-                if (upperLabel.Contains("ADJUSTMENT"))
-                    return TransactionType.ADJUSTMENT;
-                if (upperLabel.Contains("XCL LOADER"))
-                    return TransactionType.XCL_LOADER;
-                if (upperLabel.Contains("TRIGGER"))
-                    return TransactionType.TRIGGER;
-            }
-            else // Receivable
-            {
-                if (upperLabel.Contains("INCOMING PAYMENT"))
-                    return TransactionType.INCOMING_PAYMENT;
-                if (upperLabel.Contains("DIRECT DEBIT"))
-                    return TransactionType.DIRECT_DEBIT;
-                if (upperLabel.Contains("MANUAL OUTGOING"))
-                    return TransactionType.MANUAL_OUTGOING;
-                if (upperLabel.Contains("OUTGOING PAYMENT"))
-                    return TransactionType.OUTGOING_PAYMENT;
-                if (upperLabel.Contains("EXTERNAL DEBIT PAYMENT"))
-                    return TransactionType.EXTERNAL_DEBIT_PAYMENT;
-            }
+                if (category.HasValue)
+                {
+                    // Désormais, category encode directement un TransactionType
+                    return (TransactionType)category.Value;
+                }
 
-            return null;
+                if (upperLabel.Contains("COLLECTION")) return TransactionType.COLLECTION;
+                if (upperLabel.Contains("AUTOMATIC REFUND") || upperLabel.Contains("PAYMENT")) return TransactionType.PAYMENT;
+                if (upperLabel.Contains("ADJUSTMENT")) return TransactionType.ADJUSTMENT;
+                if (upperLabel.Contains("XCL LOADER")) return TransactionType.XCL_LOADER;
+                if (upperLabel.Contains("TRIGGER")) return TransactionType.TRIGGER;
+                return TransactionType.TO_CATEGORIZE;
+            }
+            else
+            {
+                if (upperLabel.Contains("INCOMING PAYMENT")) return TransactionType.INCOMING_PAYMENT;
+                if (upperLabel.Contains("DIRECT DEBIT")) return TransactionType.DIRECT_DEBIT;
+                if (upperLabel.Contains("MANUAL OUTGOING")) return TransactionType.MANUAL_OUTGOING;
+                if (upperLabel.Contains("OUTGOING PAYMENT")) return TransactionType.OUTGOING_PAYMENT;
+                if (upperLabel.Contains("EXTERNAL DEBIT PAYMENT")) return TransactionType.EXTERNAL_DEBIT_PAYMENT;
+                return TransactionType.TO_CATEGORIZE;
+            }
         }
 
         /// <summary>
@@ -278,110 +279,91 @@ namespace RecoTool.Services
             string guaranteeType = null)
         {
             bool isCredit = signedAmount > 0;
-            
-            if (isPivot)
-            {
-                return (transactionType, isCredit) switch
-                {
-                    (TransactionType.COLLECTION, true) => 
-                        (ActionType.Match, KPIType.PaidButNotReconciled),
-                    (TransactionType.COLLECTION, false) => 
-                        (ActionType.NA, KPIType.ITIssues),
-                    (TransactionType.PAYMENT, true) => 
-                        (ActionType.NA, KPIType.ITIssues),
-                    (TransactionType.PAYMENT, false) => 
-                        (ActionType.DoPricing, KPIType.CorrespondentChargesToBeInvoiced),
-                    (TransactionType.ADJUSTMENT, true) => 
-                        (ActionType.Adjust, KPIType.PaidButNotReconciled),
-                    (TransactionType.ADJUSTMENT, false) => 
-                        (ActionType.Adjust, KPIType.PaidButNotReconciled),
-                    (TransactionType.XCL_LOADER, true) => 
-                        (ActionType.Match, KPIType.PaidButNotReconciled),
-                    (TransactionType.TRIGGER, true) => 
-                        (ActionType.Investigate, KPIType.UnderInvestigation),
-                    (TransactionType.TRIGGER, false) => 
-                        (ActionType.ToClaim, KPIType.UnderInvestigation),
-                    _ => (ActionType.NA, KPIType.ITIssues)
-                };
-            }
-            else
-            {
-                return (guaranteeType, transactionType) switch
-                {
-                    ("REISSUANCE", TransactionType.INCOMING_PAYMENT) => 
-                        (ActionType.Request, KPIType.NotClaimed),
-                    ("ISSUANCE", TransactionType.INCOMING_PAYMENT) => 
-                        (ActionType.NA, KPIType.ClaimedButNotPaid),
-                    ("ADVISING", TransactionType.INCOMING_PAYMENT) => 
-                        (ActionType.Trigger, KPIType.PaidButNotReconciled),
-                    (_, TransactionType.DIRECT_DEBIT) => 
-                        (ActionType.Investigate, KPIType.ITIssues),
-                    (_, TransactionType.MANUAL_OUTGOING) => 
-                        (ActionType.Trigger, KPIType.CorrespondentChargesPendingTrigger),
-                    (_, TransactionType.OUTGOING_PAYMENT) => 
-                        (ActionType.Trigger, KPIType.CorrespondentChargesPendingTrigger),
-                    (_, TransactionType.EXTERNAL_DEBIT_PAYMENT) => 
-                        (ActionType.Execute, KPIType.NotClaimed),
-                    _ => (ActionType.NA, KPIType.ITIssues)
-                };
-            }
-        }
 
-        private (ActionType action, KPIType kpi) ApplyPivotRules(TransactionType transactionType, decimal signedAmount)
-        {
-            bool isCredit = signedAmount > 0;
-            
-            switch (transactionType)
+            // Primary deterministic mapping based on the provided table.
+            // Where multiple options existed in the table for the same type, we choose a primary action/KPI and keep
+            // sensible fallbacks commented as documentation for potential future refinement.
+
+            if (transactionType == null)
             {
-                case TransactionType.COLLECTION when isCredit:
-                    return (ActionType.Match, KPIType.PaidButNotReconciled);
-                
-                case TransactionType.PAYMENT when !isCredit:
-                    return (ActionType.DoPricing, KPIType.CorrespondentChargesPendingTrigger);
-                
-                case TransactionType.ADJUSTMENT:
-                    return (ActionType.Adjust, KPIType.PaidButNotReconciled);
-                
-                case TransactionType.XCL_LOADER when isCredit:
-                    return (ActionType.Match, KPIType.PaidButNotReconciled);
-                
-                case TransactionType.TRIGGER when isCredit:
-                    return (ActionType.Investigate, KPIType.UnderInvestigation);
-                
-                case TransactionType.TRIGGER when !isCredit:
-                    return (ActionType.ToClaim, KPIType.UnderInvestigation);
-                
-                default:
+                return (ActionType.Investigate, KPIType.ITIssues);
+            }
+
+            switch (transactionType.Value)
+            {
+                case TransactionType.COLLECTION:
+                    if (isCredit)
+                    {
+                        // Primary: Match / Paid but not reconciled
+                        return (ActionType.Match, KPIType.PaidButNotReconciled);
+                        // Alternative from table: Investigate / IT Issues
+                    }
+                    else
+                    {
+                        // Primary: To Claim / Correspondent charges to be invoiced
+                        return (ActionType.ToClaim, KPIType.CorrespondentChargesToBeInvoiced);
+                        // Alternatives from table: Investigate / Under Investigation; Do Pricing / IT Issues
+                    }
+
+                case TransactionType.PAYMENT:
+                    // Table specifies Debit only; treat credit as IT Issues default
+                    if (!isCredit)
+                    {
+                        // Prefer To Claim / Correspondent charges to be invoiced; fallback N/A / IT Issues
+                        return (ActionType.ToClaim, KPIType.CorrespondentChargesToBeInvoiced);
+                    }
                     return (ActionType.NA, KPIType.ITIssues);
-            }
-        }
 
-        private (ActionType action, KPIType kpi) ApplyReceivableRules(TransactionType transactionType, string guaranteeType)
-        {
-            switch (transactionType)
-            {
-                case TransactionType.INCOMING_PAYMENT when guaranteeType == "REISSUANCE":
+                case TransactionType.ADJUSTMENT:
+                    // Both credit and debit map to Adjust / Paid but not reconciled
+                    return (ActionType.Adjust, KPIType.PaidButNotReconciled);
+
+                case TransactionType.XCL_LOADER:
+                    if (isCredit)
+                    {
+                        // Primary: Match / Paid but not reconciled; alternative: Investigate / Under Investigation
+                        return (ActionType.Match, KPIType.PaidButNotReconciled);
+                    }
+                    return (ActionType.Investigate, KPIType.UnderInvestigation);
+
+                case TransactionType.TRIGGER:
+                    if (isCredit)
+                    {
+                        // Do Pricing / Correspondent charges to be invoiced
+                        return (ActionType.DoPricing, KPIType.CorrespondentChargesToBeInvoiced);
+                    }
+                    else
+                    {
+                        // Primary: To Claim / Under Investigation; alternative: N/A / IT Issues
+                        return (ActionType.ToClaim, KPIType.UnderInvestigation);
+                    }
+
+                case TransactionType.INCOMING_PAYMENT:
+                    // No credit/debit in table; choose a primary deterministic mapping.
+                    // Primary: Request / Not Claimed. Other listed: N/A / Claimed but not paid; Trigger / Paid but not reconciled; Investigate / IT Issues; Remind / Claimed but not paid
                     return (ActionType.Request, KPIType.NotClaimed);
-                
-                case TransactionType.INCOMING_PAYMENT when guaranteeType == "ISSUANCE":
-                    return (ActionType.NA, KPIType.ClaimedButNotPaid);
-                
-                case TransactionType.INCOMING_PAYMENT when guaranteeType == "ADVISING":
-                    return (ActionType.Trigger, KPIType.PaidButNotReconciled);
-                
+
                 case TransactionType.DIRECT_DEBIT:
+                    // Investigate / IT Issues
                     return (ActionType.Investigate, KPIType.ITIssues);
-                
+
                 case TransactionType.MANUAL_OUTGOING:
-                case TransactionType.OUTGOING_PAYMENT:
+                    // Primary: Trigger / Correspondent charges pending trigger; alternative: Investigate / IT Issues
                     return (ActionType.Trigger, KPIType.CorrespondentChargesPendingTrigger);
-                
+
+                case TransactionType.OUTGOING_PAYMENT:
+                    // Primary: Trigger / Correspondent charges pending trigger; alternatives: Execute / Not Claimed; Investigate / IT Issues
+                    return (ActionType.Trigger, KPIType.CorrespondentChargesPendingTrigger);
+
                 case TransactionType.EXTERNAL_DEBIT_PAYMENT:
-                    return (ActionType.Execute, KPIType.NotClaimed);
-                
+                    // To do SDD / Not Claimed
+                    return (ActionType.ToDoSDD, KPIType.NotClaimed);
+
+                case TransactionType.TO_CATEGORIZE:
                 default:
                     return (ActionType.Investigate, KPIType.ITIssues);
             }
         }
+
     }
 }

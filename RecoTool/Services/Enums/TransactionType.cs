@@ -5,6 +5,7 @@ public enum TransactionType
     ADJUSTMENT,
     XCL_LOADER,
     TRIGGER,
+    TO_CATEGORIZE,
     INCOMING_PAYMENT,
     DIRECT_DEBIT,
     MANUAL_OUTGOING,

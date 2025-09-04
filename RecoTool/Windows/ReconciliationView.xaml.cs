@@ -750,11 +750,7 @@ namespace RecoTool.Windows
             {
                 Interval = TimeSpan.FromMilliseconds(300)
             };
-            _filterDebounceTimer.Tick += (s, e) =>
-            {
-                _filterDebounceTimer.Stop();
-                try { ApplyFilters(); } catch { }
-            };
+            _filterDebounceTimer.Tick += FilterDebounceTimer_Tick;
         }
 
         // Ensure the push debounce timer exists
@@ -765,15 +761,28 @@ namespace RecoTool.Windows
             {
                 Interval = TimeSpan.FromMilliseconds(400)
             };
-            _pushDebounceTimer.Tick += (s, e) =>
+            _pushDebounceTimer.Tick += PushDebounceTimer_Tick;
+        }
+
+        // Timer handlers (named so we can unsubscribe on Unloaded)
+        private void FilterDebounceTimer_Tick(object sender, EventArgs e)
+        {
+            try
             {
-                try
-                {
-                    _pushDebounceTimer.Stop();
-                    QueueBulkPush();
-                }
-                catch { }
-            };
+                _filterDebounceTimer?.Stop();
+                try { ApplyFilters(); } catch { }
+            }
+            catch { }
+        }
+
+        private void PushDebounceTimer_Tick(object sender, EventArgs e)
+        {
+            try
+            {
+                _pushDebounceTimer?.Stop();
+                try { QueueBulkPush(); } catch { }
+            }
+            catch { }
         }
 
         // Public entry to schedule a debounced background push
@@ -822,6 +831,26 @@ namespace RecoTool.Windows
                     _highlightClearTimer.Tick -= HighlightClearTimer_Tick;
                     _highlightClearTimer = null;
                 }
+                // Stop and release debounce timers
+                if (_filterDebounceTimer != null)
+                {
+                    _filterDebounceTimer.Stop();
+                    _filterDebounceTimer.Tick -= FilterDebounceTimer_Tick;
+                    _filterDebounceTimer = null;
+                }
+                if (_pushDebounceTimer != null)
+                {
+                    _pushDebounceTimer.Stop();
+                    _pushDebounceTimer.Tick -= PushDebounceTimer_Tick;
+                    _pushDebounceTimer = null;
+                }
+                // Unhook grid scroll events
+                if (_resultsScrollViewer != null)
+                {
+                    try { _resultsScrollViewer.ScrollChanged -= ResultsScrollViewer_ScrollChanged; } catch { }
+                    _resultsScrollViewer = null;
+                }
+                _scrollHooked = false;
             }
             catch { }
         }
@@ -1241,6 +1270,8 @@ namespace RecoTool.Windows
                     await LoadGuaranteeStatusOptionsAsync();
                     await LoadGuaranteeTypeOptionsAsync();
                     await LoadCurrencyOptionsAsync();
+                    // Charger les types de transaction (enum)
+                    LoadTransactionTypeOptions();
                 }
                 // Ne pas effectuer de chargement automatique ici; la page parente appliquera
                 // les filtres et la mise en page, puis appellera explicitement Refresh().
@@ -1314,6 +1345,63 @@ namespace RecoTool.Windows
         public ObservableCollection<string> CurrencyOptions { get => _currencyOptions; private set { _currencyOptions = value; OnPropertyChanged(nameof(CurrencyOptions)); } }
         public ObservableCollection<string> GuaranteeTypeOptions { get => _guaranteeTypeOptions; private set { _guaranteeTypeOptions = value; OnPropertyChanged(nameof(GuaranteeTypeOptions)); } }
         public ObservableCollection<string> GuaranteeStatusOptions { get => _guaranteeStatusOptions; private set { _guaranteeStatusOptions = value; OnPropertyChanged(nameof(GuaranteeStatusOptions)); } }
+
+        // Transaction Type filter options from enum
+        private ObservableCollection<OptionItem> _transactionTypeOptions = new ObservableCollection<OptionItem>();
+        public ObservableCollection<OptionItem> TransactionTypeOptions
+        {
+            get => _transactionTypeOptions;
+            private set { _transactionTypeOptions = value; OnPropertyChanged(nameof(TransactionTypeOptions)); }
+        }
+
+        // Build display name for a TransactionType enum id
+        private static string FormatTransactionTypeName(int id)
+        {
+            try
+            {
+                var name = Enum.GetName(typeof(TransactionType), id);
+                if (string.IsNullOrWhiteSpace(name)) return id.ToString(CultureInfo.InvariantCulture);
+                return name.Replace('_', ' ');
+            }
+            catch { return id.ToString(CultureInfo.InvariantCulture); }
+        }
+
+        // Update TransactionTypeOptions to only include values present in the given data (plus an 'All' empty option)
+        private void UpdateTransactionTypeOptionsForData(IEnumerable<ReconciliationViewData> data)
+        {
+            try
+            {
+                if (data == null) return;
+
+                // Distinct available category ids in the provided data
+                var ids = data.Where(x => x?.Category != null)
+                              .Select(x => x.Category.Value)
+                              .Distinct()
+                              .OrderBy(i => i)
+                              .ToList();
+
+                // Build target list: keep leading All option as Id = -1
+                var target = new List<OptionItem> { new OptionItem { Id = -1, Name = string.Empty } };
+                foreach (var id in ids)
+                {
+                    target.Add(new OptionItem { Id = id, Name = FormatTransactionTypeName(id) });
+                }
+
+                // If unchanged, no-op to avoid flicker
+                bool same = (TransactionTypeOptions?.Count ?? 0) == target.Count
+                            && TransactionTypeOptions.Zip(target, (a, b) => a.Id == b.Id && string.Equals(a.Name, b.Name, StringComparison.Ordinal)).All(eq => eq);
+                if (same) return;
+
+                TransactionTypeOptions = new ObservableCollection<OptionItem>(target);
+
+                // If current selection no longer available, reset to All (null via coercion)
+                if (_filterTransactionTypeId.HasValue && !ids.Contains(_filterTransactionTypeId.Value))
+                {
+                    FilterTransactionTypeId = -1; // coerced to null
+                }
+            }
+            catch { }
+        }
 
         public string CurrentView
         {
@@ -1782,7 +1870,14 @@ namespace RecoTool.Windows
                 var wnd = Window.GetWindow(this);
                 if (wnd != null && wnd.Owner != null)
                 {
-                    wnd.Close();
+                    // Avoid closing synchronously during a closing cycle; defer to dispatcher
+                    if (wnd.IsLoaded && !wnd.Dispatcher.HasShutdownStarted)
+                    {
+                        wnd.Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            try { if (wnd.IsLoaded) wnd.Close(); } catch { }
+                        }), DispatcherPriority.Background);
+                    }
                     return;
                 }
 
@@ -1879,6 +1974,7 @@ namespace RecoTool.Windows
                 // String-backed combo filters
                 FilterGuaranteeType = null;
                 FilterTransactionType = null;
+                FilterTransactionTypeId = null;
                 FilterGuaranteeStatus = null;
                 FilterCategory = null;
                 FilterAction = null;
@@ -2043,8 +2139,23 @@ namespace RecoTool.Windows
         private string _filterGuaranteeType;
         public string FilterGuaranteeType { get => _filterGuaranteeType; set { _filterGuaranteeType = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterGuaranteeType)); ScheduleApplyFiltersDebounced(); } }
 
-        private string _filterTransactionType;
+        private string _filterTransactionType; // legacy string (kept for view state compatibility)
         public string FilterTransactionType { get => _filterTransactionType; set { _filterTransactionType = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterTransactionType)); ScheduleApplyFiltersDebounced(); } }
+
+        // New: Transaction Type filter by enum id (matches DataAmbre.Category int)
+        private int? _filterTransactionTypeId;
+        public int? FilterTransactionTypeId
+        {
+            get => _filterTransactionTypeId;
+            set
+            {
+                // Treat negative sentinel values (e.g., -1 for 'All') as null
+                var coerced = (value.HasValue && value.Value < 0) ? (int?)null : value;
+                _filterTransactionTypeId = coerced;
+                OnPropertyChanged(nameof(FilterTransactionTypeId));
+                ScheduleApplyFiltersDebounced();
+            }
+        }
 
         private string _filterGuaranteeStatus;
         public string FilterGuaranteeStatus { get => _filterGuaranteeStatus; set { _filterGuaranteeStatus = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterGuaranteeStatus)); ScheduleApplyFiltersDebounced(); } }
@@ -2152,6 +2263,26 @@ namespace RecoTool.Windows
                     var ui = conv.Convert(code, typeof(string), null, System.Globalization.CultureInfo.InvariantCulture)?.ToString();
                     if (!string.IsNullOrWhiteSpace(ui) && !GuaranteeTypeOptions.Any(s => string.Equals(s, ui, StringComparison.OrdinalIgnoreCase)))
                         GuaranteeTypeOptions.Add(ui);
+                }
+            }
+            catch { }
+        }
+
+        // Load TransactionType enum values into option list (empty first for clearing)
+        private void LoadTransactionTypeOptions()
+        {
+            try
+            {
+                TransactionTypeOptions.Clear();
+                // Empty option
+                TransactionTypeOptions.Add(new OptionItem { Id = -1, Name = string.Empty });
+                foreach (var v in Enum.GetValues(typeof(TransactionType)).Cast<TransactionType>())
+                {
+                    TransactionTypeOptions.Add(new OptionItem
+                    {
+                        Id = (int)v,
+                        Name = v.ToString().Replace('_', ' ')
+                    });
                 }
             }
             catch { }
@@ -2381,13 +2512,15 @@ namespace RecoTool.Windows
             if (!string.IsNullOrEmpty(_filterEventNum))
                 filtered = filtered.Where(x => x.Event_Num?.IndexOf(_filterEventNum, StringComparison.OrdinalIgnoreCase) >= 0);
 
-            // Filter by Transaction Type (match against known Ambre label fields)
-            if (!string.IsNullOrWhiteSpace(_filterTransactionType))
+            // Compute pre-TransactionType filtered set to drive available TransactionType options
+            var preTransactionType = filtered;
+            UpdateTransactionTypeOptionsForData(preTransactionType);
+
+            // Filter by Transaction Type (by category enum id)
+            if (_filterTransactionTypeId.HasValue)
             {
-                var term = _filterTransactionType.Trim();
-                filtered = filtered.Where(x =>
-                    (x.Pivot_TransactionCodesFromLabel?.IndexOf(term, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0
-                    || (x.Pivot_TRNFromLabel?.IndexOf(term, StringComparison.OrdinalIgnoreCase) ?? -1) >= 0);
+                var selected = _filterTransactionTypeId.Value;
+                filtered = filtered.Where(x => x.Category.HasValue && x.Category.Value == selected);
             }
 
             // Filter by Guarantee Status (from DWINGS Guarantee table)
@@ -2660,11 +2793,14 @@ namespace RecoTool.Windows
         {
             try
             {
-                var selectedItem = ResultsDataGrid.SelectedItem as ReconciliationViewData;
-                if (selectedItem != null)
+                // Avoid showing long reconciliation line IDs in the header to prevent layout shifts.
+                // Instead, show a compact selection count.
+                int count = 0;
+                try { count = ResultsDataGrid?.SelectedItems?.Count ?? 0; } catch { count = 0; }
+                if (count > 0)
                 {
-                    // Mettre à jour les infos de sélection si nécessaire
-                    UpdateStatusInfo($"Selected row: {selectedItem.ID}");
+                    var msg = count == 1 ? "Selected 1 row" : $"Selected {count} rows";
+                    UpdateStatusInfo(msg);
                 }
             }
             catch (Exception ex)

@@ -64,6 +64,7 @@ namespace RecoTool.Windows
                     if (ok)
                     {
                         r.Action = (int)ActionType.Triggered;
+                        r.TriggerDate = DateTime.UtcNow;
                         updated.Add(r);
                     }
                     Progress.Value += 1;

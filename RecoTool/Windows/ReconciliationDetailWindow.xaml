@@ -8,6 +8,7 @@
         Title="Reconciliation Detail" Height="700" Width="1000"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource BNPBackground}"
+        Loaded="Window_Loaded"
         ShowInTaskbar="True">
     <Window.Resources>
         <!-- Shadow Effects -->
@@ -446,43 +447,65 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         
                         <!-- Titre de la section -->
                         <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,10">
-                            <TextBlock Text="Reconciliation Assistance" FontWeight="Bold" FontSize="16" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                            <TextBlock Text="Invoice Linker" FontWeight="Bold" FontSize="16" Foreground="{DynamicResource BNPMainGreenBrush}"/>
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                <Button x:Name="RefreshMatchingButton" Content="Refresh" Click="RefreshMatching_Click" Style="{StaticResource ModernButtonStyle}" Margin="0,0,10,0" Padding="10,5" Height="30"/>
-                                <ComboBox x:Name="MatchingTypeComboBox" Width="150" Style="{StaticResource ModernComboBoxStyle}">
-                                    <ComboBoxItem IsSelected="True">Matching Lines</ComboBoxItem>
-                                    <ComboBoxItem>Suggestions</ComboBoxItem>
+                                <!-- Link status badge -->
+                                <Border x:Name="LinkStatusBadgeContainer" CornerRadius="12" Background="#FCE8E6" Padding="10,4" Margin="0,0,10,0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="LinkStatusBadge" Text="NOT LINKED" Foreground="#B00020" FontWeight="Bold"/>
+                                </Border>
+                                <ComboBox x:Name="DwingsSearchTypeComboBox" Width="160" Style="{StaticResource ModernComboBoxStyle}" Margin="10,0,0,0">
+                                    <ComboBoxItem IsSelected="True">BGPMT</ComboBoxItem>
+                                    <ComboBoxItem>BGI (INVOICE_ID)</ComboBoxItem>
+                                    <ComboBoxItem>Business Case Ref</ComboBoxItem>
+                                    <ComboBoxItem>Business Case ID</ComboBoxItem>
+                                    <ComboBoxItem>Guarantee ID</ComboBoxItem>
                                 </ComboBox>
+                                <TextBox x:Name="DwingsSearchTextBox" Width="200" Style="{StaticResource ModernTextBoxStyle}" Margin="10,0,0,0"/>
+                                <Button x:Name="DwingsSearchButton" Content="Search DWINGS" Click="DwingsSearchButton_Click" Style="{StaticResource ModernPrimaryButtonStyle}" Margin="10,0,0,0" Padding="10,5" Height="30"/>
+                                <Button x:Name="ReRunAutoSearchButton" Content="Re-run Auto Search" Click="ReRunAutoSearch_Click" Style="{StaticResource ModernButtonStyle}" Margin="10,0,0,0" Padding="10,5" Height="30"/>
                             </StackPanel>
                         </DockPanel>
                         
-                        <!-- Tableau des correspondances -->
-                        <DataGrid Grid.Row="1" x:Name="MatchingDataGrid" Style="{StaticResource ModernDataGridStyle}"
+                        <!-- DWINGS search results -->
+                        <DataGrid Grid.Row="1" x:Name="DwingsResultsGrid" Style="{StaticResource ModernDataGridStyle}"
                                   ColumnHeaderStyle="{StaticResource DataGridColumnHeaderStyle}"
                                   CellStyle="{StaticResource DataGridCellStyle}"
                                   AutoGenerateColumns="False" SelectionMode="Single"
-                                  Margin="0" BorderThickness="1" BorderBrush="#DDDDDD" MaxHeight="200">
+                                  Margin="0,10,0,0" BorderThickness="1" BorderBrush="#DDDDDD" MaxHeight="175">
+                            <DataGrid.RowStyle>
+                                <Style TargetType="DataGridRow">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Status}" Value="GENERATED">
+                                            <Setter Property="Background" Value="#FFFBE6"/>
+                                            <Setter Property="ToolTip" Value="Invoice status: GENERATED"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Status}" Value="PAID">
+                                            <Setter Property="Background" Value="#E8F8EE"/>
+                                            <Setter Property="ToolTip" Value="Invoice status: PAID"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </DataGrid.RowStyle>
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Date" Binding="{Binding OperationDate}" Width="100"/>
-                                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="200"/>
-                                <DataGridTextColumn Header="Montant" Binding="{Binding Amount}" Width="100"/>
-                                <DataGridTextColumn Header="Devise" Binding="{Binding Currency}" Width="70"/>
-                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100"/>
-                                <DataGridTextColumn Header="Référence" Binding="{Binding DwingsRef}" Width="120"/>
-                                <DataGridTextColumn Header="Client/Bank" Binding="{Binding DebtorName}" Width="150"/>
+                                <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="100"/>
+                                <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="160"/>
+                                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="250"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120"/>
+                                <DataGridTextColumn Header="Amount" Binding="{Binding Amount}" Width="100"/>
+                                <DataGridTextColumn Header="Currency" Binding="{Binding Currency}" Width="90"/>
+                                <DataGridTextColumn Header="BGPMT" Binding="{Binding BGPMT}" Width="140"/>
+                                <DataGridTextColumn Header="Business Case" Binding="{Binding BusinessCase}" Width="180"/>
                                 <DataGridTemplateColumn Header="Actions" Width="100">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                                                <Button Style="{StaticResource IconButtonStyle}" Click="LinkItems_Click" ToolTip="Link" Margin="0,0,5,0">
+                                                <Button Style="{StaticResource IconButtonStyle}" Click="LinkDwingsItem_Click" ToolTip="Link to this reconciliation">
                                                     <TextBlock Text="&#xE71B;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
-                                                </Button>
-                                                <Button Style="{StaticResource IconButtonStyle}" Click="ViewDetail_Click" ToolTip="View Detail">
-                                                    <TextBlock Text="&#xE8A0;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
                                                 </Button>
                                             </StackPanel>
                                         </DataTemplate>
@@ -490,6 +513,15 @@
                                 </DataGridTemplateColumn>
                             </DataGrid.Columns>
                         </DataGrid>
+                        
+                        <!-- Diagnostics (collapsed by default) -->
+                        <Expander Grid.Row="2" x:Name="DiagnosticsExpander" Header="Diagnostics" IsExpanded="False" Margin="0,10,0,0">
+                            <Border BorderBrush="#DDDDDD" BorderThickness="1" Padding="8" Background="#FAFAFA">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto" Height="100">
+                                    <TextBlock x:Name="DiagnosticsText" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"/>
+                                </ScrollViewer>
+                            </Border>
+                        </Expander>
                     </Grid>
                 </Border>
             </Grid>

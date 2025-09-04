@@ -16,6 +16,8 @@ using OfflineFirstAccess.Models;
 using System.Data.OleDb;
 using System.Globalization;
 using System.Drawing;
+using System.IO;
+using System.Text;
 
 namespace RecoTool.Windows
 {
@@ -380,6 +382,7 @@ namespace RecoTool.Windows
                 LogMessage($"Pivot start row: {pivotStartRow}, Receivable start row: {receivableStartRow}");
 
                 var allById = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
+
                 // Helpers to normalize values for ID composition
                 string S(object v)
                 {
@@ -404,8 +407,10 @@ namespace RecoTool.Windows
                     dataExcel.OpenFile(DataFilePath);
 
                     // Read PIVOT
-                    var colorFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Comments", "Action" };
+                    // Only capture cell color for Comments (not Action)
+                    var colorFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Comments" };
                     var pivotRows = dataExcel.ReadSheetByColumns("PIVOT", pivotLetterToDest, pivotStartRow, idColumnLetter: "A", colorForDestinations: colorFields);
+
                     foreach (var row in pivotRows)
                     {
                         // ID is ALWAYS column A. Do not recompute. Deduplicate identical A values (keep first).
@@ -563,6 +568,10 @@ namespace RecoTool.Windows
                     "Action", "KPI", "ReasonNonRisky", "IncidentType", "RiskyItem"
                 };
                 int resolvedPivot = 0, resolvedReceivable = 0, unresolved = 0;
+                // Diagnostics counters for data presence
+                int commentsWithText = 0, firstClaimCount = 0, lastClaimCount = 0;
+                // Collect unresolved Excel lines for CSV export
+                var unresolvedDetails = new List<(string ExcelId, string Comments, string FirstClaim, string LastClaim)>();
                 foreach (var row in rawRows)
                 {
                     _cts.Token.ThrowIfCancellationRequested();
@@ -606,7 +615,19 @@ namespace RecoTool.Windows
                         }
                     }
 
-                    // Additional logic: infer Action from Comments text or cell color if Action not clearly mapped
+                    // Track presence diagnostics for key fields
+                    try
+                    {
+                        if (rec.TryGetValue("Comments", out var cmtVal) && !string.IsNullOrWhiteSpace(cmtVal?.ToString()))
+                            commentsWithText++;
+                        if (rec.TryGetValue("FirstClaimDate", out var fcVal) && fcVal != null && fcVal != DBNull.Value)
+                            firstClaimCount++;
+                        if (rec.TryGetValue("LastClaimDate", out var lcVal) && lcVal != null && lcVal != DBNull.Value)
+                            lastClaimCount++;
+                    }
+                    catch { }
+
+                    // Additional logic: infer Action from Comments text or (Comments) cell color if Action not clearly mapped
                     try
                     {
                         int? currentAction = null;
@@ -628,18 +649,16 @@ namespace RecoTool.Windows
                             }
                         }
 
-                        // If still not set, fallback to cell color from Action or Comments columns
+                        // If still not set, fallback to cell color from Comments column ONLY
                         if (currentAction == null)
                         {
-                            int? actionColor = TryGetOleColor(row, "Action__Color");
                             int? commentsColor = TryGetOleColor(row, "Comments__Color");
-                            var colorInferred = InferActionFromColor(actionColor ?? commentsColor);
+                            var colorInferred = InferActionFromColor(commentsColor);
                             if (colorInferred != null)
                             {
                                 rec["Action"] = colorInferred.Value;
                                 currentAction = colorInferred;
-                                var which = actionColor != null ? "Action" : "Comments";
-                                LogMessage($"Action inferred from {which} cell color -> {(ActionType)colorInferred.Value}");
+                                LogMessage($"Action inferred from Comments cell color -> {(ActionType)colorInferred.Value}");
                             }
                         }
                     }
@@ -665,6 +684,15 @@ namespace RecoTool.Windows
                         if (excelIdN != null && pivotIndex.TryGetValue(excelIdN, out idp)) { resolvedPivot++; return idp; }
 
                         unresolved++;
+                        // Collect details for this unresolved line for later CSV export
+                        try
+                        {
+                            string commentsText = row.TryGetValue("Comments", out var cv) ? (cv?.ToString() ?? string.Empty) : string.Empty;
+                            string firstClaim = row.TryGetValue("FirstClaimDate", out var fcv) ? (FormatDdMmYyyy(fcv) ?? string.Empty) : string.Empty;
+                            string lastClaim = row.TryGetValue("LastClaimDate", out var lcv) ? (FormatDdMmYyyy(lcv) ?? string.Empty) : string.Empty;
+                            unresolvedDetails.Add((excelId, commentsText, firstClaim, lastClaim));
+                        }
+                        catch { }
                         return null;
                     }
 
@@ -689,6 +717,43 @@ namespace RecoTool.Windows
                 }
 
                 LogMessage($"ID resolution summary: Pivot={resolvedPivot:N0}, Receivable={resolvedReceivable:N0}, Unresolved={unresolved:N0}");
+                LogMessage($"Captured fields: Comments with text={commentsWithText:N0}, 1ST CLAIM={firstClaimCount:N0}, LAST CLAIM={lastClaimCount:N0}");
+
+                // If unresolved lines exist, dump a CSV for debugging
+                if (unresolvedDetails.Count > 0)
+                {
+                    try
+                    {
+                        string CsvEscape(string s)
+                        {
+                            if (s == null) return string.Empty;
+                            if (s.Contains(";") || s.Contains("\"") || s.Contains("\n") || s.Contains("\r"))
+                            {
+                                return "\"" + s.Replace("\"", "\"\"") + "\"";
+                            }
+                            return s;
+                        }
+
+                        var dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RecoTool");
+                        if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                        var csvPath = System.IO.Path.Combine(dir, $"import_unresolved_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
+                        var sb = new StringBuilder();
+                        sb.AppendLine("ExcelID;Comments;FirstClaimDate;LastClaimDate");
+                        foreach (var it in unresolvedDetails)
+                        {
+                            sb.Append(CsvEscape(it.ExcelId)); sb.Append(';');
+                            sb.Append(CsvEscape(it.Comments)); sb.Append(';');
+                            sb.Append(CsvEscape(it.FirstClaim)); sb.Append(';');
+                            sb.Append(CsvEscape(it.LastClaim)); sb.AppendLine();
+                        }
+                        File.WriteAllText(csvPath, sb.ToString(), Encoding.UTF8);
+                        LogMessage($"Unresolved details exported to {csvPath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"Failed to export unresolved details CSV: {ex.Message}", isError: true);
+                    }
+                }
 
                 _cts.Token.ThrowIfCancellationRequested();
                 if (toApply.Count == 0)

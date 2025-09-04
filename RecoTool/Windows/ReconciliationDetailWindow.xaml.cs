@@ -107,18 +107,26 @@ namespace RecoTool.UI.Views.Windows
         }
 
         public ReconciliationDetailWindow(ReconciliationViewData item, IEnumerable<ReconciliationViewData> all)
+            : this(
+                  item,
+                  all,
+                  (App.ServiceProvider?.GetService(typeof(ReconciliationService))) as ReconciliationService,
+                  (App.ServiceProvider?.GetService(typeof(OfflineFirstService))) as OfflineFirstService)
+        {
+        }
+
+        public ReconciliationDetailWindow(
+            ReconciliationViewData item,
+            IEnumerable<ReconciliationViewData> all,
+            ReconciliationService reconciliationService,
+            OfflineFirstService offlineFirstService)
         {
             InitializeComponent();
             DataContext = this;
             _item = item;
             _all = all?.ToList() ?? new List<ReconciliationViewData>();
-            // Resolve service from DI
-            try
-            {
-                _reconciliationService = (App.ServiceProvider?.GetService(typeof(ReconciliationService))) as ReconciliationService;
-                _offlineFirstService = (App.ServiceProvider?.GetService(typeof(OfflineFirstService))) as OfflineFirstService;
-            }
-            catch { /* ignore DI resolve issues */ }
+            _reconciliationService = reconciliationService;
+            _offlineFirstService = offlineFirstService;
 
             PopulateHeader();
             PopulateTopDetails();

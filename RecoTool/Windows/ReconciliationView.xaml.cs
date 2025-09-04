@@ -2819,7 +2819,7 @@ namespace RecoTool.Windows
                 var selectedItem = ResultsDataGrid.SelectedItem as ReconciliationViewData;
                 if (selectedItem != null)
                 {
-                    var win = new RecoTool.UI.Views.Windows.ReconciliationDetailWindow(selectedItem, _allViewData);
+                    var win = new RecoTool.UI.Views.Windows.ReconciliationDetailWindow(selectedItem, _allViewData, _reconciliationService, _offlineFirstService);
                     win.Owner = Window.GetWindow(this);
                     var result = win.ShowDialog();
                     if (result == true)

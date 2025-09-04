@@ -278,10 +278,6 @@ namespace RecoTool.Windows
                 using (var mappingExcel = new ExcelHelper())
                 {
                     mappingExcel.OpenFile(MappingFilePath);
-                    var mapRows = mappingExcel.ReadSheetData(importFields: null, startRow: 2);
-                    if (mapRows == null || mapRows.Count == 0)
-                        throw new InvalidOperationException("Le fichier de mapping doit contenir au moins 2 lignes (entêtes + au moins une ligne mapping).");
-
                     // Current booking (country) selected in the app
                     var currentBooking = _offlineFirstService?.CurrentCountryId;
                     if (string.IsNullOrWhiteSpace(currentBooking))
@@ -300,20 +296,45 @@ namespace RecoTool.Windows
                         return null;
                     }
 
-                    // Choose the row matching the current booking (case-insensitive)
-                    var map = mapRows.FirstOrDefault(r =>
-                        string.Equals(GetRowValue(r, "Booking"), currentBooking, StringComparison.OrdinalIgnoreCase));
+                    // Robustly find the mapping sheet that contains the row for the current booking
+                    var sheetNames = mappingExcel.GetSheetNames();
+                    Dictionary<string, object> map = null;
+                    string selectedSheet = null;
+                    var perSheetBookings = new Dictionary<string, List<string>>();
+
+                    foreach (var sn in sheetNames)
+                    {
+                        try
+                        {
+                            var rows = mappingExcel.ReadSheetData(sheetName: sn, importFields: null, startRow: 2);
+                            if (rows != null && rows.Count > 0)
+                            {
+                                var bookings = rows
+                                    .Select(r => GetRowValue(r, "Booking"))
+                                    .Where(v => !string.IsNullOrWhiteSpace(v))
+                                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                                    .ToList();
+                                perSheetBookings[sn] = bookings;
+
+                                var candidate = rows.FirstOrDefault(r => string.Equals(GetRowValue(r, "Booking"), currentBooking, StringComparison.OrdinalIgnoreCase));
+                                if (candidate != null)
+                                {
+                                    map = candidate;
+                                    selectedSheet = sn;
+                                    break;
+                                }
+                            }
+                        }
+                        catch { /* ignore and continue scanning */ }
+                    }
 
                     if (map == null)
                     {
-                        var available = string.Join(", ", mapRows
-                            .Select(r => GetRowValue(r, "Booking"))
-                            .Where(v => !string.IsNullOrWhiteSpace(v))
-                            .Distinct(StringComparer.OrdinalIgnoreCase));
-                        throw new InvalidOperationException($"Aucune ligne de mapping trouvée pour le booking '{currentBooking}'. Bookings disponibles dans le mapping: {available}");
+                        var details = string.Join(" | ", perSheetBookings.Select(kv => $"{kv.Key}: [{string.Join(", ", kv.Value)}]"));
+                        throw new InvalidOperationException($"Aucune ligne de mapping trouvée pour le booking '{currentBooking}'. Bookings disponibles par feuille: {details}");
                     }
 
-                    LogMessage($"Selected mapping row for booking '{currentBooking}'.");
+                    LogMessage($"Selected mapping row for booking '{currentBooking}' in sheet '{selectedSheet}'.");
 
                     // Local helpers using the selected row
                     string GetStr(string prefix) => GetRowValue(map, prefix);
@@ -380,6 +401,27 @@ namespace RecoTool.Windows
                 _cts.Token.ThrowIfCancellationRequested();
                 UpdateProgress(30, "Reading PIVOT/RECEIVABLE sheets...");
                 LogMessage($"Pivot start row: {pivotStartRow}, Receivable start row: {receivableStartRow}");
+                // Mapping diagnostics
+                try
+                {
+                    string DumpMap(string title, Dictionary<string, string> map)
+                    {
+                        if (map == null || map.Count == 0) return $"{title}: (empty)";
+                        var items = map.Select(kv => $"{kv.Key}->{kv.Value}");
+                        return $"{title}: " + string.Join(", ", items);
+                    }
+                    string DumpConsts(string title, Dictionary<string, object> map)
+                    {
+                        if (map == null || map.Count == 0) return $"{title}: (empty)";
+                        var items = map.Select(kv => $"{kv.Key}='{kv.Value}'");
+                        return $"{title}: " + string.Join(", ", items);
+                    }
+                    LogMessage(DumpMap("Pivot letter->dest", pivotLetterToDest));
+                    LogMessage(DumpConsts("Pivot constants", pivotConstants));
+                    LogMessage(DumpMap("Receivable letter->dest", recvLetterToDest));
+                    LogMessage(DumpConsts("Receivable constants", recvConstants));
+                }
+                catch { }
 
                 var allById = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
 
@@ -410,6 +452,13 @@ namespace RecoTool.Windows
                     // Only capture cell color for Comments (not Action)
                     var colorFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Comments" };
                     var pivotRows = dataExcel.ReadSheetByColumns("PIVOT", pivotLetterToDest, pivotStartRow, idColumnLetter: "A", colorForDestinations: colorFields);
+                    // Sample diagnostics for PIVOT
+                    if (pivotRows.Count > 0)
+                    {
+                        var s = pivotRows[0];
+                        string Sv(string k) => s.TryGetValue(k, out var v) ? v?.ToString() : null;
+                        LogMessage($"PIVOT sample: ID={Sv("ID")}, Comments='{Sv("Comments")}', Action='{Sv("Action")}', KPI='{Sv("KPI")}', RiskyItem='{Sv("RiskyItem")}', ReasonNonRisky='{Sv("ReasonNonRisky")}', Comments__Color='{Sv("Comments__Color")}'");
+                    }
 
                     foreach (var row in pivotRows)
                     {
@@ -442,6 +491,13 @@ namespace RecoTool.Windows
 
                     // Read RECEIVABLE (overrides pivot on conflicts)
                     var recvRows = dataExcel.ReadSheetByColumns("RECEIVABLE", recvLetterToDest, receivableStartRow, idColumnLetter: "A", colorForDestinations: colorFields);
+                    // Sample diagnostics for RECEIVABLE
+                    if (recvRows.Count > 0)
+                    {
+                        var s = recvRows[0];
+                        string Sv(string k) => s.TryGetValue(k, out var v) ? v?.ToString() : null;
+                        LogMessage($"RECEIVABLE sample: ID={Sv("ID")}, Comments='{Sv("Comments")}', Action='{Sv("Action")}', KPI='{Sv("KPI")}', RiskyItem='{Sv("RiskyItem")}', ReasonNonRisky='{Sv("ReasonNonRisky")}', FirstClaimDate='{Sv("FirstClaimDate")}', LastClaimDate='{Sv("LastClaimDate")}', Comments__Color='{Sv("Comments__Color")}'");
+                    }
                     foreach (var row in recvRows)
                     {
                         // ID is ALWAYS column A. For receivable, this contains Event_Num.

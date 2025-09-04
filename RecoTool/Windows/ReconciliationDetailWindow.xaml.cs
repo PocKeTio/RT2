@@ -343,6 +343,8 @@ namespace RecoTool.UI.Views.Windows
                 // Show linked item if already linked; otherwise auto-search
                 var linkedInvoiceId = _reconciliation?.DWINGS_InvoiceID ?? _item?.DWINGS_InvoiceID;
                 var linkedGuaranteeId = _reconciliation?.DWINGS_GuaranteeID ?? _item?.DWINGS_GuaranteeID;
+                // Hydrate extended UI fields from DWINGS when linked IDs exist but _item fields are empty
+                await HydrateDwingsExtendedFieldsAsync(linkedInvoiceId, linkedGuaranteeId);
                 if (!string.IsNullOrWhiteSpace(linkedInvoiceId) || !string.IsNullOrWhiteSpace(linkedGuaranteeId))
                 {
                     _ = ShowLinkedInDwingsGridAsync(linkedInvoiceId, linkedGuaranteeId);
@@ -382,7 +384,7 @@ namespace RecoTool.UI.Views.Windows
                         });
                     }
                 }
-                else if (!string.IsNullOrWhiteSpace(guaranteeId))
+                if (!string.IsNullOrWhiteSpace(guaranteeId))
                 {
                     var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
                     var g = guarantees.FirstOrDefault(x => string.Equals(x.GUARANTEE_ID, guaranteeId, StringComparison.OrdinalIgnoreCase));
@@ -403,7 +405,17 @@ namespace RecoTool.UI.Views.Windows
                 }
 
                 DwingsResultsGrid.ItemsSource = new ObservableCollection<DwingsResult>(rows);
-                StatusText.Text = rows.Count > 0 ? "DWINGS: 1 linked item." : "DWINGS: linked item not found.";
+                if (rows.Count > 0)
+                {
+                    StatusText.Text = rows.Count == 1 ? "DWINGS: 1 linked item." : $"DWINGS: {rows.Count} linked items.";
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(invoiceId) || !string.IsNullOrWhiteSpace(guaranteeId))
+                        StatusText.Text = "DWINGS: linked ID present but not found locally (check local DWINGS DB sync).";
+                    else
+                        StatusText.Text = "DWINGS: linked item not found.";
+                }
                 if (rows.Count > 0)
                 {
                     DwingsResultsGrid.SelectedIndex = 0;
@@ -413,6 +425,50 @@ namespace RecoTool.UI.Views.Windows
             {
                 StatusText.Text = $"DWINGS display error: {ex.Message}";
             }
+        }
+
+        private async System.Threading.Tasks.Task HydrateDwingsExtendedFieldsAsync(string invoiceId, string guaranteeId)
+        {
+            try
+            {
+                // If linked to an invoice and invoice extended fields are empty, hydrate from DWINGS
+                bool needsInvoice = !string.IsNullOrWhiteSpace(invoiceId) && (
+                    string.IsNullOrWhiteSpace(IRequestedAmountValue?.Text) &&
+                    string.IsNullOrWhiteSpace(IBillingCurrencyValue?.Text) &&
+                    string.IsNullOrWhiteSpace(IStatusValue?.Text)
+                );
+                if (needsInvoice)
+                {
+                    var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
+                    var i = invoices.FirstOrDefault(x => string.Equals(x.INVOICE_ID, invoiceId, StringComparison.OrdinalIgnoreCase));
+                    if (i != null)
+                    {
+                        if (IRequestedAmountValue != null) IRequestedAmountValue.Text = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+                        if (IBillingCurrencyValue != null) IBillingCurrencyValue.Text = i.BILLING_CURRENCY ?? string.Empty;
+                        if (IStartDateValue != null) IStartDateValue.Text = i.START_DATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
+                        if (IEndDateValue != null) IEndDateValue.Text = i.END_DATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
+                        if (IStatusValue != null) IStatusValue.Text = i.T_INVOICE_STATUS ?? string.Empty;
+                        if (IBusinessCaseRefValue != null) IBusinessCaseRefValue.Text = i.BUSINESS_CASE_REFERENCE ?? string.Empty;
+                    }
+                }
+
+                // If linked to a guarantee and guarantee extended fields are empty, hydrate from DWINGS
+                bool needsGuarantee = !string.IsNullOrWhiteSpace(guaranteeId) && (
+                    string.IsNullOrWhiteSpace(GName1Value?.Text) &&
+                    string.IsNullOrWhiteSpace(GStatusValue?.Text)
+                );
+                if (needsGuarantee)
+                {
+                    var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
+                    var g = guarantees.FirstOrDefault(x => string.Equals(x.GUARANTEE_ID, guaranteeId, StringComparison.OrdinalIgnoreCase));
+                    if (g != null)
+                    {
+                        if (GStatusValue != null) GStatusValue.Text = g.GUARANTEE_STATUS ?? string.Empty;
+                        if (GName1Value != null) GName1Value.Text = g.NAME1 ?? string.Empty;
+                    }
+                }
+            }
+            catch { /* ignore hydration issues */ }
         }
 
         private void UpdateLinkStatusBadge()

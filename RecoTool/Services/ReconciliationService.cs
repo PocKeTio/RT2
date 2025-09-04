@@ -190,6 +190,33 @@ namespace RecoTool.Services
             public decimal? OUTSTANDING_AMOUNT { get; set; }
             public string CURRENCYNAME { get; set; }
             public string NAME1 { get; set; }
+            public string NAME2 { get; set; }
+            public string GUARANTEE_TYPE { get; set; }
+            public string NATURE { get; set; }
+            public string EVENT_STATUS { get; set; }
+            public DateTime? EVENT_EFFECTIVEDATE { get; set; }
+            public DateTime? ISSUEDATE { get; set; }
+            public string OFFICIALREF { get; set; }
+            public string UNDERTAKINGEVENT { get; set; }
+            public string PROCESS { get; set; }
+            public string EXPIRYDATETYPE { get; set; }
+            public DateTime? EXPIRYDATE { get; set; }
+            public string PARTY_ID { get; set; }
+            public string PARTY_REF { get; set; }
+            public string SECONDARY_OBLIGOR { get; set; }
+            public string SECONDARY_OBLIGOR_NATURE { get; set; }
+            public string ROLE { get; set; }
+            public string COUNTRY { get; set; }
+            public string CENTRAL_PARTY_CODE { get; set; }
+            public string GROUPE { get; set; }
+            public string PREMIUM { get; set; }
+            public string BRANCH_CODE { get; set; }
+            public string BRANCH_NAME { get; set; }
+            public string OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY { get; set; }
+            public DateTime? CANCELLATIONDATE { get; set; }
+            public string CONTROLER { get; set; }
+            public string AUTOMATICBOOKOFF { get; set; }
+            public string NATUREOFDEAL { get; set; }
         }
 
         private List<DwingsInvoiceDto> _dwInvoicesCache;
@@ -248,8 +275,41 @@ namespace RecoTool.Services
                     }
                 }
 
-                // Load guarantees (minimal shape)
-                using (var cmdG = new OleDbCommand(@"SELECT GUARANTEE_ID, GUARANTEE_STATUS, OUTSTANDING_AMOUNT, CURRENCYNAME, NAME1 FROM T_DW_Guarantee", connection))
+                // Load guarantees (expanded shape for UI enrichment)
+                using (var cmdG = new OleDbCommand(@"SELECT 
+                            GUARANTEE_ID,
+                            GUARANTEE_STATUS,
+                            OUTSTANDING_AMOUNT,
+                            CURRENCYNAME,
+                            NAME1,
+                            NAME2,
+                            GUARANTEE_TYPE,
+                            NATURE,
+                            EVENT_STATUS,
+                            EVENT_EFFECTIVEDATE,
+                            ISSUEDATE,
+                            OFFICIALREF,
+                            UNDERTAKINGEVENT,
+                            PROCESS,
+                            EXPIRYDATETYPE,
+                            EXPIRYDATE,
+                            PARTY_ID,
+                            PARTY_REF,
+                            SECONDARY_OBLIGOR,
+                            SECONDARY_OBLIGOR_NATURE,
+                            ROLE,
+                            COUNTRY,
+                            CENTRAL_PARTY_CODE,
+                            GROUPE,
+                            PREMIUM,
+                            BRANCH_CODE,
+                            BRANCH_NAME,
+                            OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY,
+                            CANCELLATIONDATE,
+                            CONTROLER,
+                            AUTOMATICBOOKOFF,
+                            NATUREOFDEAL
+                        FROM T_DW_Guarantee", connection))
                 using (var rdG = await cmdG.ExecuteReaderAsync().ConfigureAwait(false))
                 {
                     while (await rdG.ReadAsync().ConfigureAwait(false))
@@ -261,6 +321,33 @@ namespace RecoTool.Services
                             OUTSTANDING_AMOUNT = TryToDecimal(rdG["OUTSTANDING_AMOUNT"]),
                             CURRENCYNAME = rdG["CURRENCYNAME"]?.ToString(),
                             NAME1 = rdG["NAME1"]?.ToString(),
+                            NAME2 = rdG["NAME2"]?.ToString(),
+                            GUARANTEE_TYPE = rdG["GUARANTEE_TYPE"]?.ToString(),
+                            NATURE = rdG["NATURE"]?.ToString(),
+                            EVENT_STATUS = rdG["EVENT_STATUS"]?.ToString(),
+                            EVENT_EFFECTIVEDATE = TryToDate(rdG["EVENT_EFFECTIVEDATE"]),
+                            ISSUEDATE = TryToDate(rdG["ISSUEDATE"]),
+                            OFFICIALREF = rdG["OFFICIALREF"]?.ToString(),
+                            UNDERTAKINGEVENT = rdG["UNDERTAKINGEVENT"]?.ToString(),
+                            PROCESS = rdG["PROCESS"]?.ToString(),
+                            EXPIRYDATETYPE = rdG["EXPIRYDATETYPE"]?.ToString(),
+                            EXPIRYDATE = TryToDate(rdG["EXPIRYDATE"]),
+                            PARTY_ID = rdG["PARTY_ID"]?.ToString(),
+                            PARTY_REF = rdG["PARTY_REF"]?.ToString(),
+                            SECONDARY_OBLIGOR = rdG["SECONDARY_OBLIGOR"]?.ToString(),
+                            SECONDARY_OBLIGOR_NATURE = rdG["SECONDARY_OBLIGOR_NATURE"]?.ToString(),
+                            ROLE = rdG["ROLE"]?.ToString(),
+                            COUNTRY = rdG["COUNTRY"]?.ToString(),
+                            CENTRAL_PARTY_CODE = rdG["CENTRAL_PARTY_CODE"]?.ToString(),
+                            GROUPE = rdG["GROUPE"]?.ToString(),
+                            PREMIUM = rdG["PREMIUM"]?.ToString(),
+                            BRANCH_CODE = rdG["BRANCH_CODE"]?.ToString(),
+                            BRANCH_NAME = rdG["BRANCH_NAME"]?.ToString(),
+                            OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY = rdG["OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY"]?.ToString(),
+                            CANCELLATIONDATE = TryToDate(rdG["CANCELLATIONDATE"]),
+                            CONTROLER = rdG["CONTROLER"]?.ToString(),
+                            AUTOMATICBOOKOFF = rdG["AUTOMATICBOOKOFF"]?.ToString(),
+                            NATUREOFDEAL = rdG["NATUREOFDEAL"]?.ToString(),
                         });
                     }
                 }
@@ -633,6 +720,55 @@ namespace RecoTool.Services
                         row.I_DEBTOR_PARTY_NAME = inv.DEBTOR_PARTY_NAME;
                         row.I_RECEIVER_NAME = inv.CREDITOR_PARTY_NAME; // map as available
                     }
+                }
+            }
+            catch { /* best-effort enrichment */ }
+            
+            // Enrich guarantee fields from in-memory DWINGS cache (avoid heavy SQL joins and keep UI robust)
+            try
+            {
+                var guarantees = await GetDwingsGuaranteesAsync().ConfigureAwait(false);
+                var byGuaranteeId = guarantees.Where(g => !string.IsNullOrWhiteSpace(g.GUARANTEE_ID))
+                                              .GroupBy(g => g.GUARANTEE_ID, StringComparer.OrdinalIgnoreCase)
+                                              .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+                foreach (var row in list)
+                {
+                    if (string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID)) continue;
+                    if (!byGuaranteeId.TryGetValue(row.DWINGS_GuaranteeID, out var g)) continue;
+
+                    row.GUARANTEE_ID = g.GUARANTEE_ID;
+                    row.GUARANTEE_STATUS = g.GUARANTEE_STATUS ?? row.GUARANTEE_STATUS;
+                    row.GUARANTEE_TYPE = g.GUARANTEE_TYPE ?? row.GUARANTEE_TYPE;
+
+                    // Prefixed G_* extended fields
+                    row.G_NATURE = g.NATURE ?? row.G_NATURE;
+                    row.G_EVENT_STATUS = g.EVENT_STATUS ?? row.G_EVENT_STATUS;
+                    row.G_EVENT_EFFECTIVEDATE = g.EVENT_EFFECTIVEDATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? row.G_EVENT_EFFECTIVEDATE;
+                    row.G_ISSUEDATE = g.ISSUEDATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? row.G_ISSUEDATE;
+                    row.G_OFFICIALREF = g.OFFICIALREF ?? row.G_OFFICIALREF;
+                    row.G_UNDERTAKINGEVENT = g.UNDERTAKINGEVENT ?? row.G_UNDERTAKINGEVENT;
+                    row.G_PROCESS = g.PROCESS ?? row.G_PROCESS;
+                    row.G_EXPIRYDATETYPE = g.EXPIRYDATETYPE ?? row.G_EXPIRYDATETYPE;
+                    row.G_EXPIRYDATE = g.EXPIRYDATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? row.G_EXPIRYDATE;
+                    row.G_PARTY_ID = g.PARTY_ID ?? row.G_PARTY_ID;
+                    row.G_PARTY_REF = g.PARTY_REF ?? row.G_PARTY_REF;
+                    row.G_SECONDARY_OBLIGOR = g.SECONDARY_OBLIGOR ?? row.G_SECONDARY_OBLIGOR;
+                    row.G_SECONDARY_OBLIGOR_NATURE = g.SECONDARY_OBLIGOR_NATURE ?? row.G_SECONDARY_OBLIGOR_NATURE;
+                    row.G_ROLE = g.ROLE ?? row.G_ROLE;
+                    row.G_COUNTRY = g.COUNTRY ?? row.G_COUNTRY;
+                    row.G_CENTRAL_PARTY_CODE = g.CENTRAL_PARTY_CODE ?? row.G_CENTRAL_PARTY_CODE;
+                    row.G_NAME1 = g.NAME1 ?? row.G_NAME1;
+                    row.G_NAME2 = g.NAME2 ?? row.G_NAME2;
+                    row.G_GROUPE = g.GROUPE ?? row.G_GROUPE;
+                    row.G_PREMIUM = g.PREMIUM ?? row.G_PREMIUM;
+                    row.G_BRANCH_CODE = g.BRANCH_CODE ?? row.G_BRANCH_CODE;
+                    row.G_BRANCH_NAME = g.BRANCH_NAME ?? row.G_BRANCH_NAME;
+                    row.G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY = g.OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY ?? row.G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY;
+                    row.G_CANCELLATIONDATE = g.CANCELLATIONDATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? row.G_CANCELLATIONDATE;
+                    row.G_CONTROLER = g.CONTROLER ?? row.G_CONTROLER;
+                    row.G_AUTOMATICBOOKOFF = g.AUTOMATICBOOKOFF ?? row.G_AUTOMATICBOOKOFF;
+                    row.G_NATUREOFDEAL = g.NATUREOFDEAL ?? row.G_NATUREOFDEAL;
                 }
             }
             catch { /* best-effort enrichment */ }

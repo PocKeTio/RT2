@@ -544,28 +544,19 @@ namespace RecoTool.Services
         {
             if (ambre == null) return null;
             // 1) Try BGPMT in RawLabel then Reconciliation_Num
-            string bgpmt = ExtractBgpmtToken(ambre.RawLabel) ?? ExtractBgpmtToken(ambre.Reconciliation_Num);
+            string bgpmt = DwingsLinkingHelper.ExtractBgpmtToken(ambre.RawLabel) ?? DwingsLinkingHelper.ExtractBgpmtToken(ambre.Reconciliation_Num);
             if (!string.IsNullOrWhiteSpace(bgpmt))
                 return new DwingsRef { Type = "BGPMT", Code = bgpmt };
 
             // 2) Try BGI (strict pattern BGI + 13 digits) using existing helper plus Reconciliation_Num
-            string bgi = InvoiceIdExtractor.ExtractInvoiceId(ambre.RawLabel) ?? InvoiceIdExtractor.ExtractInvoiceId(ambre.Reconciliation_Num);
+            string bgi = DwingsLinkingHelper.ExtractBgiToken(ambre.RawLabel) ?? DwingsLinkingHelper.ExtractBgiToken(ambre.Reconciliation_Num);
             if (!string.IsNullOrWhiteSpace(bgi))
                 return new DwingsRef { Type = "BGI", Code = bgi };
 
             return null;
         }
 
-        /// <summary>
-        /// Extract BGPMT token (BGPMT followed by 8-20 alnum chars) from a text.
-        /// </summary>
-        private string ExtractBgpmtToken(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text)) return null;
-            var match = new System.Text.RegularExpressions.Regex(@"BGPMT[0-9A-Z]{8,20}", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
-                .Match(text);
-            return match.Success ? match.Value.ToUpperInvariant() : null;
-        }
+        // Local BGPMT extractor removed in favor of centralized RecoTool.Helpers.DwingsLinkingHelper
 
         /// <summary>
         /// Look up the payment method for a DWINGS reference (T_DW_Data as DWINGSInvoice).

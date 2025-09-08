@@ -478,14 +478,36 @@ namespace RecoTool.Windows
                     var s = v?.ToString()?.Trim();
                     return string.IsNullOrWhiteSpace(s) ? null : s;
                 }
+                bool TryParseExcelDate(object v, out DateTime result)
+                {
+                    result = default;
+                    try
+                    {
+                        if (v == null) return false;
+                        if (v is DateTime dt) { result = dt; return true; }
+                        if (v is double od) { result = DateTime.FromOADate(od); return true; }
+                        var s = v.ToString()?.Trim();
+                        if (string.IsNullOrWhiteSpace(s)) return false;
+
+                        // Preferred exact formats (day-first first)
+                        var formats = new[] { "dd/MM/yyyy", "d/M/yyyy", "dd-MM-yyyy", "d-M-yyyy", "dd.MM.yyyy", "d.M.yyyy", "yyyy-MM-dd", "M/d/yyyy", "MM/dd/yyyy" };
+                        if (DateTime.TryParseExact(s, formats, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out result)) return true;
+                        if (DateTime.TryParseExact(s, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out result)) return true;
+
+                        // Fallbacks: culture-based parsing preferring fr-FR (day-first)
+                        if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out result)) return true;
+                        if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out result)) return true;
+                        if (DateTime.TryParse(s, out result)) return true;
+                    }
+                    catch { }
+                    return false;
+                }
+
                 string FormatDdMmYyyy(object v)
                 {
                     try
                     {
-                        if (v == null) return null;
-                        if (v is DateTime dt) return dt.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
-                        if (v is double d) return DateTime.FromOADate(d).ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
-                        if (DateTime.TryParse(v.ToString(), out var parsed)) return parsed.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+                        if (TryParseExcelDate(v, out var dt)) return dt.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
                     }
                     catch { }
                     return null;
@@ -1149,10 +1171,18 @@ namespace RecoTool.Windows
                 if (IsDateKey(key))
                 {
                     if (value is DateTime dt) return dt;
-                    if (value is double d) return DateTime.FromOADate(d);
-                    if (DateTime.TryParse(value.ToString(), out var parsed)) return parsed;
+                    if (value is double od) return DateTime.FromOADate(od);
+                    var s = value.ToString().Trim();
+                    // Prefer day-first exact formats and fr-FR culture
+                    var formats = new[] { "dd/MM/yyyy", "d/M/yyyy", "dd-MM-yyyy", "d-M-yyyy", "dd.MM.yyyy", "d.M.yyyy", "yyyy-MM-dd", "M/d/yyyy", "MM/dd/yyyy" };
+                    if (DateTime.TryParseExact(s, formats, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out var ex1)) return ex1;
+                    if (DateTime.TryParseExact(s, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var ex2)) return ex2;
+                    if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out var fr)) return fr;
+                    if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out var inv)) return inv;
+                    if (DateTime.TryParse(s, out var parsed)) return parsed;
                     return DBNull.Value;
                 }
+
                 if (IsBoolKey(key))
                 {
                     if (value is bool b) return b;

@@ -351,6 +351,8 @@
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
                                             </Grid.RowDefinitions>
 
                                             <!-- Action -->
@@ -411,6 +413,14 @@
                                             <!-- Trigger Date -->
                                             <TextBlock Grid.Row="10" Grid.Column="0" Text="Trigger Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
                                             <DatePicker x:Name="TriggerDatePicker" Grid.Row="10" Grid.Column="1" Style="{StaticResource ModernDatePickerStyle}" Margin="0,10,0,0"/>
+
+                                            <!-- Action Done -->
+                                            <TextBlock Grid.Row="11" Grid.Column="0" Text="Action Done:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                            <CheckBox x:Name="ActionDoneCheckBox" Grid.Row="11" Grid.Column="1" VerticalAlignment="Center" Margin="0,10,0,0"/>
+
+                                            <!-- Action Date -->
+                                            <TextBlock Grid.Row="12" Grid.Column="0" Text="Action Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                            <DatePicker x:Name="ActionDatePicker" Grid.Row="12" Grid.Column="1" Style="{StaticResource ModernDatePickerStyle}" Margin="0,10,0,0"/>
                                         </Grid>
                                     </GroupBox>
 

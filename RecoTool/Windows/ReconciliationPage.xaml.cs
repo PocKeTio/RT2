@@ -302,7 +302,7 @@ namespace RecoTool.Windows
             ViewTypes = new ObservableCollection<string>(new[] { "Embedded (Vertical)", "Popup" });
             SelectedViewType = ViewTypes.FirstOrDefault();
             Accounts = new ObservableCollection<string>();
-            Statuses = new ObservableCollection<string>(new[] { "All", "Live", "Archived" });
+            Statuses = new ObservableCollection<string>(new[] { "Live", "Archived" });
             SelectedStatus = "Live";
             
             
@@ -362,6 +362,21 @@ namespace RecoTool.Windows
                 // Mettre à jour les filtres de haut de page à partir du référentiel pays
                 cancellationToken.ThrowIfCancellationRequested();
                 UpdateTopFiltersFromData();
+
+                // Preload reconciliation view data for current country/filter to warm service cache
+                try
+                {
+                    var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                    if (!string.IsNullOrWhiteSpace(countryId) && _reconciliationService != null)
+                    {
+                        var backendSql = _currentFilter; // may be null/empty
+                        System.Threading.Tasks.Task.Run(async () =>
+                        {
+                            try { await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false); } catch { }
+                        }, cancellationToken);
+                    }
+                }
+                catch { }
             }
             catch (Exception ex)
             {
@@ -390,10 +405,77 @@ namespace RecoTool.Windows
                 // Optionnel: filtrer par utilisateur courant (si nécessaire, remplacer par une propriété UserName)
                 cancellationToken.ThrowIfCancellationRequested();
                 var filters = await _offlineFirstService.GetUserFilters();
+                // Sanitize filters to remove Account/Status predicates (those are managed by top combos)
+                try
+                {
+                    if (filters != null)
+                    {
+                        filters = filters
+                            .Select(f => new UserFilter
+                            {
+                                UFI_Name = f.UFI_Name,
+                                UFI_SQL = RecoTool.Services.UserFilterService.SanitizeWhereClause(f.UFI_SQL)
+                            })
+                            .ToList();
+                    }
+                }
+                catch { }
+                if (filters == null || filters.Count == 0)
+                {
+                    try
+                    {
+                        var refPath = _offlineFirstService?.ReferentialDatabasePath;
+                        var curUser = _offlineFirstService?.CurrentUser;
+                        if (!string.IsNullOrWhiteSpace(refPath))
+                        {
+                            var ufs = new RecoTool.Services.UserFilterService(refPath, curUser);
+                            var names = ufs.ListUserFilterNames();
+                            var rebuilt = new List<UserFilter>();
+                            foreach (var n in names)
+                            {
+                                var where = ufs.LoadUserFilterWhere(n);
+                                try { where = RecoTool.Services.UserFilterService.SanitizeWhereClause(where); } catch { }
+                                rebuilt.Add(new UserFilter { UFI_Name = n, UFI_SQL = where });
+                            }
+                            filters = rebuilt;
+                        }
+                    }
+                    catch { }
+                }
 
                 _isLoadingFilters = true;
                 try
                 {
+                    // Mémoriser la sélection précédente (par nom) si disponible, en respectant le thread UI
+                    string previousName = null;
+                    try
+                    {
+                        if (Dispatcher != null && !Dispatcher.CheckAccess())
+                        {
+                            previousName = await Dispatcher.InvokeAsync(() =>
+                            {
+                                try
+                                {
+                                    var comboPrevUi = FindName("SavedFiltersComboBox") as ComboBox;
+                                    if (comboPrevUi != null && comboPrevUi.SelectedItem is UserFilter ufPrevUi)
+                                        return ufPrevUi.UFI_Name;
+                                }
+                                catch { }
+                                // fallback sur la valeur mémo si contrôle non accessible
+                                return _currentFilterName;
+                            });
+                        }
+                        else
+                        {
+                            var comboPrev = FindName("SavedFiltersComboBox") as ComboBox;
+                            if (comboPrev != null && comboPrev.SelectedItem is UserFilter ufPrev)
+                                previousName = ufPrev.UFI_Name;
+                            else
+                                previousName = _currentFilterName;
+                        }
+                    }
+                    catch { }
+
                     var ordered = filters.OrderBy(x => x.UFI_Name).ToList();
                     // Marshal mutations to UI thread
                     if (Dispatcher != null && !Dispatcher.CheckAccess())
@@ -408,8 +490,20 @@ namespace RecoTool.Windows
                                 SavedFilters.Insert(0, new UserFilter { UFI_Name = "Tous", UFI_SQL = string.Empty });
 
                             var combo = FindName("SavedFiltersComboBox") as ComboBox;
-                            if (combo != null && SavedFilters.Any() && combo.SelectedIndex < 0)
-                                combo.SelectedIndex = 0; // ignoré via _isLoadingFilters
+                            if (combo != null && SavedFilters.Any())
+                            {
+                                // Restaurer la sélection si possible, sinon garder l'actuelle, sinon 0
+                                if (!string.IsNullOrWhiteSpace(previousName))
+                                {
+                                    var target = SavedFilters.FirstOrDefault(sf => string.Equals(sf.UFI_Name, previousName, StringComparison.OrdinalIgnoreCase));
+                                    if (target != null) combo.SelectedItem = target;
+                                    else if (combo.SelectedIndex < 0) combo.SelectedIndex = 0;
+                                }
+                                else if (combo.SelectedIndex < 0)
+                                {
+                                    combo.SelectedIndex = 0;
+                                }
+                            }
                         });
                     }
                     else
@@ -422,8 +516,19 @@ namespace RecoTool.Windows
                             SavedFilters.Insert(0, new UserFilter { UFI_Name = "Tous", UFI_SQL = string.Empty });
 
                         var combo = FindName("SavedFiltersComboBox") as ComboBox;
-                        if (combo != null && SavedFilters.Any() && combo.SelectedIndex < 0)
-                            combo.SelectedIndex = 0; // ignoré via _isLoadingFilters
+                        if (combo != null && SavedFilters.Any())
+                        {
+                            if (!string.IsNullOrWhiteSpace(previousName))
+                            {
+                                var target = SavedFilters.FirstOrDefault(sf => string.Equals(sf.UFI_Name, previousName, StringComparison.OrdinalIgnoreCase));
+                                if (target != null) combo.SelectedItem = target;
+                                else if (combo.SelectedIndex < 0) combo.SelectedIndex = 0;
+                            }
+                            else if (combo.SelectedIndex < 0)
+                            {
+                                combo.SelectedIndex = 0;
+                            }
+                        }
                     }
                 }
                 finally
@@ -571,10 +676,11 @@ namespace RecoTool.Windows
                             SavedViews.Clear();
                             foreach (var p in ordered)
                             {
+                                // IMPORTANT: We deliberately ignore UPF_SQL here so that Saved Views do not embed backend filters.
                                 SavedViews.Add(new UserViewPreset
                                 {
                                     Name = p.UPF_Name,
-                                    WhereClause = p.UPF_SQL
+                                    WhereClause = null
                                 });
                             }
 
@@ -592,10 +698,11 @@ namespace RecoTool.Windows
                         SavedViews.Clear();
                         foreach (var p in ordered)
                         {
+                            // IMPORTANT: We deliberately ignore UPF_SQL here so that Saved Views do not embed backend filters.
                             SavedViews.Add(new UserViewPreset
                             {
                                 Name = p.UPF_Name,
-                                WhereClause = p.UPF_SQL
+                                WhereClause = null
                             });
                         }
 
@@ -627,13 +734,8 @@ namespace RecoTool.Windows
                 _currentFilter = filter?.UFI_SQL;
                 _currentFilterName = filter?.UFI_Name;
             }
-            catch (Exception ex)
-            {
-                ShowError($"Error selecting filter: {ex.Message}");
-            }
+            catch (Exception ex) { }
         }
-
-        #endregion
 
         #region Event Handlers
 
@@ -687,7 +789,32 @@ namespace RecoTool.Windows
             _pageCts?.Dispose();
             _pageCts = new CancellationTokenSource();
             var token = _pageCts.Token;
-            await LoadDataAsync(token).ConfigureAwait(false);
+            // Reset current page-level filter context on country change
+            _currentFilter = null;
+            _currentFilterName = null;
+
+            // Assurer la fin d'une synchro éventuelle avant de recharger les listes/combos
+            try
+            {
+                var cid = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                if (!string.IsNullOrWhiteSpace(cid))
+                    await _offlineFirstService.WaitForSynchronizationAsync(cid, token).ConfigureAwait(false);
+                // Recharger les référentiels (inclut UserFilters) pour refléter le nouveau contexte pays
+                try { await _offlineFirstService.RefreshConfigurationAsync().ConfigureAwait(false); } catch { }
+            }
+            catch { }
+
+            // Recharger explicitement les listes de filtres/vues et MAJ des comptes (Pivot/Receivable)
+            try
+            {
+                await LoadSavedFiltersAsync(token).ConfigureAwait(false);
+                await LoadSavedViewsAsync(token).ConfigureAwait(false);
+                if (Dispatcher != null)
+                    await Dispatcher.InvokeAsync(UpdateTopFiltersFromData);
+                else
+                    UpdateTopFiltersFromData();
+            }
+            catch { }
 
             // Notifier les vues intégrées pour synchroniser l'entête Pivot/Receivable
             try
@@ -730,7 +857,9 @@ namespace RecoTool.Windows
                         else
                         {
                             // Apply for next added view only (do NOT reload page data)
-                            _currentFilter = selectedFilter.UFI_SQL;
+                            // IMPORTANT: strip Account/Status predicates from the saved filter; page combos handle them.
+                            try { _currentFilter = RecoTool.Services.UserFilterService.SanitizeWhereClause(selectedFilter.UFI_SQL); }
+                            catch { _currentFilter = selectedFilter.UFI_SQL; }
                             _currentFilterName = selectedFilter.UFI_Name;
                         }
                     }
@@ -756,18 +885,10 @@ namespace RecoTool.Windows
                 {
                     if (selected is UserViewPreset preset)
                     {
-                        if (string.IsNullOrWhiteSpace(preset.WhereClause))
-                        {
-                            // None selected -> clear view filter (do NOT reload page data)
-                            _currentFilter = null;
-                            _currentFilterName = null;
-                        }
-                        else
-                        {
-                            // Set for next added view only (do NOT reload page data)
-                            _currentFilter = preset.WhereClause;
-                            _currentFilterName = preset.Name;
-                        }
+                        // IMPORTANT: Do not touch the backend filter when changing Saved View.
+                        // Saved Views control layout/title only; filters are managed by Saved Filters combo.
+                        // We keep track of selected preset for applying layout/title when creating a new view.
+                        SelectedSavedView = preset;
                     }
                     // Intentionally no LoadDataAsync here to avoid impacting account/top filters
                 }
@@ -781,11 +902,23 @@ namespace RecoTool.Windows
         /// <summary>
         /// Ajouter une nouvelle vue
         /// </summary>
-        private void AddViewButton_Click(object sender, RoutedEventArgs e)
+        private async void AddViewButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 using var _ = BeginWaitCursor();
+                // Hard guard: if sync or page load in progress, block and inform user
+                try
+                {
+                    var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                    if (IsLoading || (!string.IsNullOrWhiteSpace(countryId) && _offlineFirstService != null && _offlineFirstService.IsSynchronizationInProgress(countryId)))
+                    {
+                        ShowWarning("Synchronization in progress. Please wait until it finishes before adding a view.");
+                        return;
+                    }
+                }
+                catch { }
+                await AwaitSafeToOpenViewAsync();
                 // Ouvrir la fenêtre de création de vue personnalisée
                 var addViewWindow = new AddViewWindow();
                 addViewWindow.Owner = Window.GetWindow(this);
@@ -1114,8 +1247,31 @@ namespace RecoTool.Windows
         {
             try
             {
-                // Le type de vue est déterminé par SelectedViewType
-                var popup = string.Equals(SelectedViewType, "Popup", StringComparison.OrdinalIgnoreCase);
+                // Le type de vue est déterminé par SelectedViewType (rendre robuste: trim et fallback sur ComboBox SelectedItem)
+                var popup = string.Equals(SelectedViewType?.Trim(), "Popup", StringComparison.OrdinalIgnoreCase);
+                try
+                {
+                    if (!popup)
+                    {
+                        var combo = FindName("ViewTypeComboBox") as ComboBox;
+                        var txt = combo?.SelectedItem as string;
+                        if (!string.IsNullOrWhiteSpace(txt))
+                            popup = string.Equals(txt.Trim(), "Popup", StringComparison.OrdinalIgnoreCase);
+                    }
+                }
+                catch { }
+                // Hard guard: if sync or page load in progress, block and inform user
+                try
+                {
+                    var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                    if (IsLoading || (!string.IsNullOrWhiteSpace(countryId) && _offlineFirstService != null && _offlineFirstService.IsSynchronizationInProgress(countryId)))
+                    {
+                        ShowWarning("Synchronization in progress. Please wait until it finishes before adding a view.");
+                        return;
+                    }
+                }
+                catch { }
+                await AwaitSafeToOpenViewAsync();
                 await AddReconciliationView(popup);
             }
             catch (Exception ex)
@@ -1180,26 +1336,33 @@ namespace RecoTool.Windows
                         });
                     }
                 }
-                // Précharger les données sans bloquer l'UI puis injecter dans la vue
-                _ = System.Threading.Tasks.Task.Run(async () =>
+                // Attendre la fin d'une synchronisation éventuelle pour éviter des données partielles, puis précharger
+                await AwaitSafeToOpenViewAsync();
+                // Précharger les données: utiliser le cache si disponible sinon charger en arrière-plan
                 {
-                    try
+                    var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                    var backendSql = _currentFilter;
+                    var cached = _reconciliationService.TryGetCachedReconciliationView(countryId, backendSql);
+                    if (cached != null)
                     {
-                        var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
-                        var backendSql = _currentFilter;
-                        var list = await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
-                        await view.Dispatcher.InvokeAsync(() =>
+                        try { await view.Dispatcher.InvokeAsync(() => { try { view.InitializeWithPreloadedData(cached, backendSql); } catch { } }); } catch { }
+                    }
+                    else
+                    {
+                        _ = System.Threading.Tasks.Task.Run(async () =>
                         {
                             try
                             {
-                                view.InitializeWithPreloadedData(list, backendSql);
-                                view.Refresh();
+                                var list = await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
+                                await view.Dispatcher.InvokeAsync(() =>
+                                {
+                                    try { view.InitializeWithPreloadedData(list, backendSql); } catch { }
+                                });
                             }
                             catch { }
                         });
                     }
-                    catch { }
-                });
+                }
                 wnd.Show();
                 return;
             }
@@ -1269,31 +1432,78 @@ namespace RecoTool.Windows
                     });
                 }
             }
-            // Précharger les données sans bloquer l'UI puis injecter dans la vue
-            _ = System.Threading.Tasks.Task.Run(async () =>
+            // Attendre la fin d'une synchronisation éventuelle pour éviter des données partielles, puis précharger
+            await AwaitSafeToOpenViewAsync();
+            // Précharger les données: utiliser le cache si disponible sinon charger en arrière-plan
             {
-                try
+                var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                var backendSql = _currentFilter;
+                var cached = _reconciliationService.TryGetCachedReconciliationView(countryId, backendSql);
+                if (cached != null)
                 {
-                    var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
-                    var backendSql = _currentFilter;
-                    var list = await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
-                    await view.Dispatcher.InvokeAsync(() =>
+                    try { await view.Dispatcher.InvokeAsync(() => { try { view.InitializeWithPreloadedData(cached, backendSql); } catch { } }); } catch { }
+                }
+                else
+                {
+                    _ = System.Threading.Tasks.Task.Run(async () =>
                     {
                         try
                         {
-                            view.InitializeWithPreloadedData(list, backendSql);
-                            view.Refresh();
+                            var list = await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
+                            await view.Dispatcher.InvokeAsync(() =>
+                            {
+                                try { view.InitializeWithPreloadedData(list, backendSql); } catch { }
+                            });
                         }
                         catch { }
                     });
                 }
-                catch { }
-            });
+            }
 
             // Mettre à jour la visibilité
             panel.Visibility = Visibility.Visible;
             if (empty != null) empty.Visibility = Visibility.Collapsed;
             if (fab != null) fab.Visibility = Visibility.Visible;
+        }
+
+        /// <summary>
+        /// Attend de manière fiable la fin d'une synchro et de tout chargement de page avant d'ouvrir une vue,
+        /// puis rafraîchit les filtres de haut de page pour garantir l'application des filtres obligatoires.
+        /// </summary>
+        private async Task AwaitSafeToOpenViewAsync(CancellationToken cancellationToken = default)
+        {
+            // 1) Attendre la synchro de OfflineFirstService (si disponible)
+            try
+            {
+                var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                if (!string.IsNullOrWhiteSpace(countryId) && _offlineFirstService != null)
+                {
+                    await _offlineFirstService.WaitForSynchronizationAsync(countryId, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch { }
+
+            // 2) Attendre que la page ait fini son propre état de chargement (ex: TrySynchronizeIfSafeAsync en cours)
+            try
+            {
+                var waited = 0;
+                while (IsLoading && waited < 30000) // max 30s safety
+                {
+                    await Task.Delay(150, cancellationToken).ConfigureAwait(false);
+                    waited += 150;
+                }
+            }
+            catch { }
+
+            // 3) Rafraîchir seulement les filtres de haut de page (comptes) sans recharger Saved Filters/Views
+            try
+            {
+                if (Dispatcher != null && !Dispatcher.CheckAccess())
+                    await Dispatcher.InvokeAsync(UpdateTopFiltersFromData);
+                else
+                    UpdateTopFiltersFromData();
+            }
+            catch { }
         }
 
         /// <summary>
@@ -1485,3 +1695,4 @@ namespace RecoTool.Windows
 
     #endregion
 }
+#endregion

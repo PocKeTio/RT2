@@ -54,12 +54,13 @@ namespace RecoTool.Windows
         private ObservableCollection<ReconciliationViewData> _viewData;
         private List<ReconciliationViewData> _allViewData; // Toutes les données pour le filtrage
         // Paging / incremental loading
-        private const int InitialPageSize = 100;
+        private const int InitialPageSize = 500;
         private List<ReconciliationViewData> _filteredData; // Données filtrées complètes (pour totaux/scroll)
         private int _loadedCount; // Nombre actuellement affiché dans ViewData
         private bool _isLoadingMore; // Garde-fou
         private bool _scrollHooked; // Pour éviter double-hook
         private ScrollViewer _resultsScrollViewer;
+        private Button _loadMoreFooterButton; // cache footer button to avoid repeated FindName on scroll
         // Filtre backend transmis au service (défini par la page au moment de l'ajout de vue)
         private string _backendFilterSql;
 
@@ -68,7 +69,7 @@ namespace RecoTool.Windows
 
         // Perf: throttled logging for scroll handling (avoid log spam)
         private DateTime _lastScrollPerfLog = DateTime.MinValue;
-        private const int ScrollLogThrottleMs = 250;
+        private const int ScrollLogThrottleMs = 500;
 
         // Propriétés de filtrage
         private string _filterAccountId;
@@ -91,6 +92,8 @@ namespace RecoTool.Windows
         private int? _filterActionId;
         private int? _filterKpiId;
         private int? _filterIncidentTypeId;
+
+        // (see further below for filter properties; using ScheduleApplyFiltersDebounced)
 
         public event PropertyChangedEventHandler PropertyChanged;
         public event EventHandler CloseRequested;
@@ -183,6 +186,39 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 ShowError($"Save error: {ex.Message}");
+            }
+        }
+
+        private async void QuickMarkActionDoneMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var dg = this.FindName("ResultsDataGrid") as DataGrid;
+                if (dg == null || _reconciliationService == null) return;
+                var rowCtx = (sender as FrameworkElement)?.DataContext as ReconciliationViewData;
+                var targetRows = dg.SelectedItems.Count > 1 && rowCtx != null && dg.SelectedItems.OfType<ReconciliationViewData>().Contains(rowCtx)
+                    ? dg.SelectedItems.OfType<ReconciliationViewData>().ToList()
+                    : (rowCtx != null ? new List<ReconciliationViewData> { rowCtx } : new List<ReconciliationViewData>());
+                if (targetRows.Count == 0) return;
+
+                var updates = new List<Reconciliation>();
+                foreach (var r in targetRows)
+                {
+                    if (!r.Action.HasValue) continue; // only mark done if an action exists
+                    var reco = await _reconciliationService.GetOrCreateReconciliationAsync(r.ID);
+                    r.ActionStatus = true;
+                    r.ActionDate = DateTime.Now;
+                    reco.ActionStatus = true;
+                    reco.ActionDate = r.ActionDate;
+                    updates.Add(reco);
+                }
+                if (updates.Count == 0) return;
+                await _reconciliationService.SaveReconciliationsAsync(updates);
+                try { ScheduleBulkPushDebounced(); } catch { }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Failed to mark action as DONE: {ex.Message}");
             }
         }
 
@@ -439,11 +475,19 @@ namespace RecoTool.Windows
                     dataGrid.SelectedItem = row.Item;
                 }
 
-                dataGrid.BeginEdit(e);
-                e.Handled = true;
+                // If the cell hosts a CheckBox (e.g., Risky Item), let the CheckBox handle the click
+                // and do not force BeginEdit which can cause sticky edit mode.
+                var hasCheckBox = cell.Content is CheckBox || FindDescendant<CheckBox>(cell) != null;
+                if (!hasCheckBox)
+                {
+                    dataGrid.BeginEdit(e);
+                    e.Handled = true;
+                }
             }
             catch { }
         }
+
+
 
         // Ensure inner DataGrid scroll consumes the mouse wheel instead of the container page
         private void ResultsDataGrid_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
@@ -538,7 +582,7 @@ namespace RecoTool.Windows
 
                     var options = GetUserFieldOptionsForRow(category, rowData).ToList();
 
-                    var clearItem = new MenuItem { Header = "Clear", Tag = category, CommandParameter = null, DataContext = rowData };
+                    var clearItem = new MenuItem { Header = $"Clear {category}", Tag = category, CommandParameter = null, DataContext = rowData };
                     clearItem.Click += QuickSetUserFieldMenuItem_Click;
                     bool hasValue = (string.Equals(category, "Action", StringComparison.OrdinalIgnoreCase) && rowData.Action.HasValue)
                                      || (string.Equals(category, "KPI", StringComparison.OrdinalIgnoreCase) && rowData.KPI.HasValue)
@@ -580,6 +624,8 @@ namespace RecoTool.Windows
                     if (existingTake != null) cm.Items.Remove(existingTake);
                     var existingRem = cm.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "__SetReminder__");
                     if (existingRem != null) cm.Items.Remove(existingRem);
+                    var existingDone = cm.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "__MarkActionDone__");
+                    if (existingDone != null) cm.Items.Remove(existingDone);
                     var sep = cm.Items.OfType<Separator>().FirstOrDefault(s => (s.Tag as string) == "__InjectedSep__");
                     if (sep != null) cm.Items.Remove(sep);
 
@@ -590,6 +636,9 @@ namespace RecoTool.Windows
                     var reminderItem = new MenuItem { Header = "Set Reminder Date…", Tag = "__SetReminder__", DataContext = rowData };
                     reminderItem.Click += QuickSetReminderMenuItem_Click;
                     cm.Items.Add(reminderItem);
+                    var doneItem = new MenuItem { Header = "Set Action as DONE", Tag = "__MarkActionDone__", DataContext = rowData };
+                    doneItem.Click += QuickMarkActionDoneMenuItem_Click;
+                    cm.Items.Add(doneItem);
                     var commentItem = new MenuItem { Header = "Set Comment…", Tag = "__SetComment__" };
                     commentItem.Click += QuickSetCommentMenuItem_Click;
                     cm.Items.Add(commentItem);
@@ -752,6 +801,8 @@ namespace RecoTool.Windows
             };
             _filterDebounceTimer.Tick += FilterDebounceTimer_Tick;
         }
+
+        
 
         // Ensure the push debounce timer exists
         private void EnsurePushDebounceTimer()
@@ -1042,6 +1093,9 @@ namespace RecoTool.Windows
             public string DwCommissionId { get; set; }
             public string GuaranteeType { get; set; }
             public bool? PotentialDuplicates { get; set; }
+            public bool? ActionDone { get; set; }
+            public DateTime? ActionDateFrom { get; set; }
+            public DateTime? ActionDateTo { get; set; }
         }
 
         private FilterPreset GetCurrentFilterPreset()
@@ -1065,7 +1119,11 @@ namespace RecoTool.Windows
                 DwGuaranteeId = _filterDwGuaranteeId,
                 DwCommissionId = _filterDwCommissionId,
                 GuaranteeType = _filterGuaranteeType,
-                PotentialDuplicates = _filterPotentialDuplicates
+                PotentialDuplicates = _filterPotentialDuplicates,
+                // New
+                ActionDone = FilterActionDone,
+                ActionDateFrom = FilterActionDateFrom,
+                ActionDateTo = FilterActionDateTo
             };
         }
 
@@ -1098,6 +1156,10 @@ namespace RecoTool.Windows
                 FilterGuaranteeType = p.GuaranteeType;
                 // Default to false if not present in legacy presets
                 FilterPotentialDuplicates = p.PotentialDuplicates ?? false;
+                // New
+                FilterActionDone = p.ActionDone;
+                FilterActionDateFrom = p.ActionDateFrom;
+                FilterActionDateTo = p.ActionDateTo;
             }
             catch { }
         }
@@ -1484,7 +1546,7 @@ namespace RecoTool.Windows
                     var options = GetUserFieldOptionsForRow(category, rowData).ToList();
 
                     // Clear option (always present)
-                    var clearItem = new MenuItem { Header = "Clear", Tag = category, CommandParameter = null };
+                    var clearItem = new MenuItem { Header = $"Clear {category}", Tag = category, CommandParameter = null };
                     clearItem.Click += QuickSetUserFieldMenuItem_Click;
                     // Disable Clear if already empty
                     bool hasValue = (string.Equals(category, "Action", StringComparison.OrdinalIgnoreCase) && rowData.Action.HasValue)
@@ -1583,6 +1645,20 @@ namespace RecoTool.Windows
                     if (isAction)
                     {
                         r.Action = newId; reco.Action = newId;
+                        if (!newId.HasValue || IsActionNA(newId))
+                        {
+                            r.ActionStatus = null;
+                            r.ActionDate = null;
+                            reco.ActionStatus = null;
+                            reco.ActionDate = null;
+                        }
+                        else
+                        {
+                            r.ActionStatus = false; // PENDING
+                            r.ActionDate = DateTime.Now;
+                            reco.ActionStatus = false;
+                            reco.ActionDate = r.ActionDate;
+                        }
                     }
                     else if (isKpi)
                     {
@@ -1818,7 +1894,7 @@ namespace RecoTool.Windows
                 var close = display.LastIndexOf(')');
                 if (open >= 0 && close > open)
                 {
-                    var inner = display.Substring(open + 1, close - open - 1).Trim();
+                    var inner = display.Substring(open + 1, (close - open - 1)).Trim();
                     if (!string.IsNullOrWhiteSpace(inner)) return inner;
                 }
 
@@ -1896,7 +1972,10 @@ namespace RecoTool.Windows
                 var dlg = new Microsoft.Win32.SaveFileDialog
                 {
                     Title = "Export",
-                    Filter = "CSV Files (*.csv)|*.csv|Excel Workbook (*.xlsx)|*.xlsx",
+                    Filter = "Excel Workbook (*.xlsx)|*.xlsx",
+                    DefaultExt = ".xlsx",
+                    AddExtension = true,
+                    OverwritePrompt = true,
                     FileName = $"reconciliation_export_{DateTime.Now:yyyyMMdd_HHmmss}"
                 };
                 if (dlg.ShowDialog() != true) return;
@@ -1923,22 +2002,14 @@ namespace RecoTool.Windows
                 var headers = columns.Select(c => (c.Header ?? string.Empty).ToString()).ToList();
 
                 string path = dlg.FileName;
-                string ext = System.IO.Path.GetExtension(path)?.ToLowerInvariant();
-                if (string.IsNullOrEmpty(ext))
+                var ext = System.IO.Path.GetExtension(path)?.ToLowerInvariant();
+                if (string.IsNullOrEmpty(ext) || ext != ".xlsx")
                 {
-                    // Infer from selected filter index (0=csv,1=xlsx)
-                    ext = dlg.FilterIndex == 2 ? ".xlsx" : ".csv";
-                    path += ext;
+                    path = System.IO.Path.ChangeExtension(path, ".xlsx");
                 }
 
-                if (ext == ".xlsx")
-                {
-                    ExportToExcel(path, headers, columns, items);
-                }
-                else
-                {
-                    ExportToCsv(path, headers, columns, items);
-                }
+                // Always export to XLSX
+                ExportToExcel(path, headers, columns, items);
 
                 UpdateStatusInfo($"Exported {items.Count} rows to {path}");
                 LogAction("Export", $"{items.Count} rows to {path}");
@@ -2192,6 +2263,28 @@ namespace RecoTool.Windows
             set { _filterPotentialDuplicates = value; OnPropertyChanged(nameof(FilterPotentialDuplicates)); ScheduleApplyFiltersDebounced(); }
         }
 
+        // New filters: Action Done and Action Date range
+        private bool? _filterActionDone; // null=All, false=Pending, true=Done
+        public bool? FilterActionDone
+        {
+            get => _filterActionDone;
+            set { if (_filterActionDone != value) { _filterActionDone = value; OnPropertyChanged(nameof(FilterActionDone)); ScheduleApplyFiltersDebounced(); } }
+        }
+
+        private DateTime? _filterActionDateFrom;
+        public DateTime? FilterActionDateFrom
+        {
+            get => _filterActionDateFrom;
+            set { if (_filterActionDateFrom != value) { _filterActionDateFrom = value; OnPropertyChanged(nameof(FilterActionDateFrom)); ScheduleApplyFiltersDebounced(); } }
+        }
+
+        private DateTime? _filterActionDateTo;
+        public DateTime? FilterActionDateTo
+        {
+            get => _filterActionDateTo;
+            set { if (_filterActionDateTo != value) { _filterActionDateTo = value; OnPropertyChanged(nameof(FilterActionDateTo)); ScheduleApplyFiltersDebounced(); } }
+        }
+
         #endregion
 
         private async Task LoadAssigneeOptionsAsync()
@@ -2336,6 +2429,42 @@ namespace RecoTool.Windows
                 {
                     row.Action = newId; // update UI model
                     reco.Action = newId;
+                    // Rule: when Action changes => set status to PENDING, except if Action is empty or N/A => set status/date to null
+                    if (!newId.HasValue || IsActionNA(newId))
+                    {
+                        row.ActionStatus = null;
+                        row.ActionDate = null;
+                        reco.ActionStatus = null;
+                        reco.ActionDate = null;
+                    }
+                    else
+                    {
+                        row.ActionStatus = false; // PENDING
+                        row.ActionDate = DateTime.Now;
+                        reco.ActionStatus = false;
+                        reco.ActionDate = row.ActionDate;
+                    }
+                }
+                else if (string.Equals(tag, "ActionStatus", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Toggle pending/done directly; auto manage ActionDate only if status actually changes
+                    bool? newStatus = null;
+                    if (cb.SelectedValue is bool sb) newStatus = sb;
+                    else if (cb.SelectedValue != null && bool.TryParse(cb.SelectedValue.ToString(), out var parsedBool)) newStatus = parsedBool;
+
+                    var oldStatus = row.ActionStatus;
+                    row.ActionStatus = newStatus; reco.ActionStatus = newStatus;
+                    if (newStatus.HasValue)
+                    {
+                        if (oldStatus != newStatus)
+                        {
+                            row.ActionDate = DateTime.Now; reco.ActionDate = row.ActionDate;
+                        }
+                    }
+                    else
+                    {
+                        row.ActionDate = null; reco.ActionDate = null;
+                    }
                 }
                 else if (string.Equals(tag, "KPI", StringComparison.OrdinalIgnoreCase))
                 {
@@ -2421,19 +2550,6 @@ namespace RecoTool.Windows
             }
         }
 
-        // Extra safety to commit any pending cell/row edits when the current cell changes (e.g., checkboxes)
-        private void ResultsDataGrid_CurrentCellChanged(object sender, EventArgs e)
-        {
-            try
-            {
-                var dg = sender as DataGrid;
-                if (dg == null) return;
-                dg.CommitEdit(DataGridEditingUnit.Cell, true);
-                dg.CommitEdit(DataGridEditingUnit.Row, true);
-            }
-            catch { }
-        }
-
         // Loads existing reconciliation and maps editable fields from the view row, then saves
         private async Task SaveEditedRowAsync(ReconciliationViewData row)
         {
@@ -2442,6 +2558,8 @@ namespace RecoTool.Windows
 
             // Map user-editable fields
             reco.Action = row.Action;
+            reco.ActionStatus = row.ActionStatus;
+            reco.ActionDate = row.ActionDate;
             reco.KPI = row.KPI;
             reco.IncidentType = row.IncidentType;
             reco.Comments = row.Comments;
@@ -2574,6 +2692,19 @@ namespace RecoTool.Windows
             if (_filterPotentialDuplicates)
                 filtered = filtered.Where(x => x.IsPotentialDuplicate);
 
+            // New filters: Action Done and Action Date range
+            if (_filterActionDone.HasValue)
+            {
+                if (_filterActionDone.Value)
+                    filtered = filtered.Where(x => x.ActionStatus == true);
+                else
+                    filtered = filtered.Where(x => x.ActionStatus == false);
+            }
+            if (_filterActionDateFrom.HasValue)
+                filtered = filtered.Where(x => x.ActionDate.HasValue && x.ActionDate.Value >= _filterActionDateFrom.Value);
+            if (_filterActionDateTo.HasValue)
+                filtered = filtered.Where(x => x.ActionDate.HasValue && x.ActionDate.Value <= _filterActionDateTo.Value);
+
             // Update display with pagination (first 100 lines) but totals on full filtered set
             var filteredList = filtered.ToList();
             _filteredData = filteredList;
@@ -2599,6 +2730,11 @@ namespace RecoTool.Windows
                     _resultsScrollViewer.ScrollChanged += ResultsScrollViewer_ScrollChanged;
                     _scrollHooked = true;
                 }
+                // Cache the footer button once
+                if (_loadMoreFooterButton == null)
+                {
+                    _loadMoreFooterButton = this.FindName("LoadMoreFooterButton") as Button;
+                }
             }
             catch { }
         }
@@ -2611,13 +2747,25 @@ namespace RecoTool.Windows
                 if (_filteredData == null || _filteredData.Count == 0) return;
                 var sv = sender as ScrollViewer;
                 if (sv == null) return;
+                // Ignore horizontal-only scroll changes to avoid unnecessary UI work
+                if (e != null && Math.Abs(e.VerticalChange) < double.Epsilon && Math.Abs(e.ExtentHeightChange) < double.Epsilon && Math.Abs(e.ViewportHeightChange) < double.Epsilon)
+                {
+                    return;
+                }
                 // Show footer button when user reaches bottom (android-like behavior)
                 bool atBottom = sv.ScrollableHeight > 0 && sv.VerticalOffset >= (sv.ScrollableHeight * 0.9);
                 int remaining = Math.Max(0, _filteredData.Count - _loadedCount);
-                var btn = this.FindName("LoadMoreFooterButton") as Button;
-                if (btn != null)
+                if (_loadMoreFooterButton == null)
                 {
-                    btn.Visibility = (atBottom && remaining > 0) ? Visibility.Visible : Visibility.Collapsed;
+                    _loadMoreFooterButton = this.FindName("LoadMoreFooterButton") as Button;
+                }
+                if (_loadMoreFooterButton != null)
+                {
+                    var desired = (atBottom && remaining > 0) ? Visibility.Visible : Visibility.Collapsed;
+                    if (_loadMoreFooterButton.Visibility != desired)
+                    {
+                        _loadMoreFooterButton.Visibility = desired;
+                    }
                 }
 
                 sw.Stop();
@@ -2627,8 +2775,6 @@ namespace RecoTool.Windows
                 {
                     try
                     {
-                        LogPerf("GridScroll",
-                            $"offset={sv.VerticalOffset:0.0}/{sv.ScrollableHeight:0.0} | deltaV={e.VerticalChange:0.0} | viewport={sv.ViewportHeight:0.0} | itemsLoaded={_loadedCount}/{_filteredData.Count} | ms={sw.ElapsedMilliseconds}");
                     }
                     catch { }
                     _lastScrollPerfLog = now;
@@ -2654,12 +2800,15 @@ namespace RecoTool.Windows
                 _loadedCount += take;
                 UpdateStatusInfo($"{ViewData.Count} / {_filteredData.Count} lines displayed");
                 // After load, hide footer if no more data, otherwise keep visible when still at bottom
-                var btn = this.FindName("LoadMoreFooterButton") as Button;
-                if (btn != null)
+                if (_loadMoreFooterButton == null)
+                {
+                    _loadMoreFooterButton = this.FindName("LoadMoreFooterButton") as Button;
+                }
+                if (_loadMoreFooterButton != null)
                 {
                     int newRemaining = _filteredData.Count - _loadedCount;
-                    if (newRemaining <= 0)
-                        btn.Visibility = Visibility.Collapsed;
+                    if (newRemaining <= 0 && _loadMoreFooterButton.Visibility != Visibility.Collapsed)
+                        _loadMoreFooterButton.Visibility = Visibility.Collapsed;
                 }
             }
             catch { }
@@ -3041,6 +3190,24 @@ namespace RecoTool.Windows
             return null;
         }
 
+        // Detect if a given Action (by USR_ID) is the special N/A option
+        private bool IsActionNA(int? actionId)
+        {
+            try
+            {
+                if (!actionId.HasValue) return true; // treat null as N/A for our rule
+                var all = AllUserFields;
+                if (all == null) return false;
+                var uf = all.FirstOrDefault(u => u.USR_ID == actionId.Value);
+                var name = uf?.USR_FieldName?.Trim();
+                if (string.IsNullOrEmpty(name)) return false;
+                return string.Equals(name, "N/A", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(name, "NA", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(name, "NOT APPLICABLE", StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
         /// <summary>
         /// Displays an error message
         /// </summary>
@@ -3109,7 +3276,7 @@ namespace RecoTool.Windows
                 var next = d.AddDays(1);
                 parts.Add($"a.DeleteDate >= {DateLit(d)} AND a.DeleteDate < {DateLit(next)}");
             }
-            if (!string.IsNullOrWhiteSpace(FilterReconciliationNum)) parts.Add($"Reconciliation_Num LIKE '%{Esc(FilterReconciliationNum)}%'");
+            if (!string.IsNullOrWhiteSpace(_filterReconciliationNum)) parts.Add($"a.Reconciliation_Num LIKE '%{Esc(_filterReconciliationNum)}%'");
             if (!string.IsNullOrWhiteSpace(FilterRawLabel)) parts.Add($"RawLabel LIKE '%{Esc(FilterRawLabel)}%'");
             if (!string.IsNullOrWhiteSpace(FilterEventNum)) parts.Add($"Event_Num LIKE '%{Esc(FilterEventNum)}%'");
             // Persist Transaction Type filter: match either Ambre label field
@@ -3143,6 +3310,16 @@ namespace RecoTool.Windows
                 else if (string.Equals(_filterStatus, "Archived", StringComparison.OrdinalIgnoreCase))
                     parts.Add("a.DeleteDate IS NOT NULL");
             }
+            // New: backend filters for Action Done and Action Date range
+            if (FilterActionDone.HasValue)
+            {
+                parts.Add(FilterActionDone.Value ? "r.ActionStatus = TRUE" : "(r.ActionStatus = FALSE OR r.ActionStatus IS NULL)");
+            }
+            if (FilterActionDateFrom.HasValue)
+                parts.Add($"r.ActionDate >= {DateLit(FilterActionDateFrom.Value)}");
+            if (FilterActionDateTo.HasValue)
+                parts.Add($"r.ActionDate <= {DateLit(FilterActionDateTo.Value)}");
+
             return parts.Count == 0 ? string.Empty : ("WHERE " + string.Join(" AND ", parts));
         }
 

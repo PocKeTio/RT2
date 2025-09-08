@@ -36,6 +36,11 @@ namespace RecoTool.Models
         // Trigger date
         public DateTime? TriggerDate { get; set; }
 
+        // Action workflow status: false => PENDING, true => DONE
+        public bool? ActionStatus { get; set; }
+        // Date of status modification (set when Action is set or status changes)
+        public DateTime? ActionDate { get; set; }
+
         /// <summary>
         /// Effective risky flag for business logic: null is considered false.
         /// </summary>

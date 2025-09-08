@@ -10,6 +10,11 @@
 
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <!-- Force ComboBoxItem alignment to avoid theme templates using ancestor bindings that may fail during dynamic updates -->
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
     </UserControl.Resources>
 
     <Grid Background="{DynamicResource BNPBackground}">
@@ -45,10 +50,26 @@
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE8C9;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
                         <TextBlock Text="Account:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
-                        <ComboBox x:Name="AccountComboBox" Width="120" ItemsSource="{Binding Accounts}" SelectedItem="{Binding SelectedAccount, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"/>
+                        <ComboBox x:Name="AccountComboBox" Width="120" ItemsSource="{Binding Accounts}" SelectedItem="{Binding SelectedAccount, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
+                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                            <ComboBox.ItemContainerStyle>
+                                <Style TargetType="ComboBoxItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                    <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                </Style>
+                            </ComboBox.ItemContainerStyle>
+                        </ComboBox>
                         <TextBlock Text="  " Width="6"/>
                         <TextBlock Text="Live/Archived:" VerticalAlignment="Center" Margin="8,0,8,0" FontWeight="SemiBold"/>
-                        <ComboBox x:Name="StatusComboBoxInline" Width="110" ItemsSource="{Binding Statuses}" SelectedItem="{Binding SelectedStatus, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"/>
+                        <ComboBox x:Name="StatusComboBoxInline" Width="110" ItemsSource="{Binding Statuses}" SelectedItem="{Binding SelectedStatus, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
+                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                            <ComboBox.ItemContainerStyle>
+                                <Style TargetType="ComboBoxItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                    <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                </Style>
+                            </ComboBox.ItemContainerStyle>
+                        </ComboBox>
                     </StackPanel>
                 </Border>
 
@@ -62,7 +83,15 @@
                         <ComboBox x:Name="SavedFiltersComboBox" Width="140" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
                                   ItemsSource="{Binding SavedFilters}"
                                   DisplayMemberPath="UFI_Name"
-                                  SelectionChanged="SavedFiltersComboBox_SelectionChanged"/>
+                                  SelectionChanged="SavedFiltersComboBox_SelectionChanged"
+                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                            <ComboBox.ItemContainerStyle>
+                                <Style TargetType="ComboBoxItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                    <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                </Style>
+                            </ComboBox.ItemContainerStyle>
+                        </ComboBox>
                     </StackPanel>
                 </Border>
 
@@ -75,7 +104,15 @@
                                   ItemsSource="{Binding SavedViews}"
                                   SelectedItem="{Binding SelectedSavedView, Mode=TwoWay}"
                                   DisplayMemberPath="Name"
-                                  SelectionChanged="SavedViewsComboBox_SelectionChanged"/>
+                                  SelectionChanged="SavedViewsComboBox_SelectionChanged"
+                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                            <ComboBox.ItemContainerStyle>
+                                <Style TargetType="ComboBoxItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                    <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                </Style>
+                            </ComboBox.ItemContainerStyle>
+                        </ComboBox>
                     </StackPanel>
                 </Border>
 
@@ -84,7 +121,15 @@
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE8A9;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
                         <TextBlock Text="View Type:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
-                        <ComboBox x:Name="ViewTypeComboBox" Width="120" ItemsSource="{Binding ViewTypes}" SelectedItem="{Binding SelectedViewType, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"/>
+                        <ComboBox x:Name="ViewTypeComboBox" Width="120" ItemsSource="{Binding ViewTypes}" SelectedItem="{Binding SelectedViewType, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
+                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                            <ComboBox.ItemContainerStyle>
+                                <Style TargetType="ComboBoxItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                    <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                </Style>
+                            </ComboBox.ItemContainerStyle>
+                        </ComboBox>
                     </StackPanel>
                 </Border>
 

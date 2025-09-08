@@ -685,6 +685,18 @@ namespace RecoTool.Windows
                     SetInitializationState($"Country selected: {selected.CNT_Name}", Brushes.DarkGreen);
                     OperationalDataStatus = "ONLINE";
                     SetReferentialState("OK", Brushes.DarkGreen, true);
+
+                    // Update ONLINE/OFFLINE badge based on current network sync availability
+                    try
+                    {
+                        var online = _offlineFirstService?.IsNetworkSyncAvailable == true;
+                        IsOffline = !online;
+                        NetworkStatusText = online ? "ONLINE" : "OFFLINE";
+                        NetworkStatusBrush = online ? Brushes.MediumSeaGreen : Brushes.OrangeRed;
+                    }
+                    catch { }
+                    // Kick a quick background push check so the Sync status indicator updates if there are pending changes
+                    try { TryBackgroundPush(); } catch { }
                 }
                 finally
                 {

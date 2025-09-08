@@ -79,6 +79,8 @@
     <Compile Include="App.xaml.cs">
       <DependentUpon>App.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Converters\BoolToPendingDoneConverter.cs" />
+    <Compile Include="Helpers\DwingsLinkingHelper.cs" />
     <Compile Include="Services\DatabaseRecreationService.cs" />
     <Compile Include="Services\Enums\IncidentType.cs" />
     <Compile Include="Services\Enums\RiskReason.cs" />

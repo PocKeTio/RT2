@@ -62,3 +62,6 @@ _ReSharper*/
 # Build/Publish
 publish/
 artifacts/
+
+# Visual Studio WPF temp project files
+*_wpftmp.csproj

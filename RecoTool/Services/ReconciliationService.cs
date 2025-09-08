@@ -4,6 +4,7 @@ using OfflineFirstAccess.Helpers;
 using RecoTool.Models;
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Data;
 using System.Data.Common;
@@ -16,6 +17,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using RecoTool.Helpers;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -224,6 +226,68 @@ namespace RecoTool.Services
         private string _dwCachePath;
         private volatile bool _dwCacheInvalidated; // set true after AMBRE import to force reload
 
+        // Shared per-DW path cache across all service instances
+        private static readonly ConcurrentDictionary<string, Lazy<Task<(List<DwingsInvoiceDto> invoices, List<DwingsGuaranteeDto> guarantees)>>> _sharedDwCache
+            = new ConcurrentDictionary<string, Lazy<Task<(List<DwingsInvoiceDto>, List<DwingsGuaranteeDto>)>>>();
+
+        // Cache for reconciliation view queries (task coalescing)
+        private static readonly ConcurrentDictionary<string, Lazy<Task<List<ReconciliationViewData>>>> _recoViewCache
+            = new ConcurrentDictionary<string, Lazy<Task<List<ReconciliationViewData>>>>();
+
+        // Materialized data cache to allow incremental updates after saves without reloading
+        private static readonly ConcurrentDictionary<string, List<ReconciliationViewData>> _recoViewDataCache
+            = new ConcurrentDictionary<string, List<ReconciliationViewData>>();
+
+        /// <summary>
+        /// Clears all reconciliation view caches (both task and materialized data caches).
+        /// Call after external mutations (e.g., pull from network) to force a reload on next request.
+        /// </summary>
+        public static void InvalidateReconciliationViewCache()
+        {
+            try
+            {
+                _recoViewDataCache.Clear();
+            }
+            catch { }
+            try
+            {
+                foreach (var key in _recoViewCache.Keys)
+                {
+                    _recoViewCache.TryRemove(key, out _);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Clears reconciliation view caches for a specific country by prefix match on the cache key.
+        /// Key format is "{countryId}|{dashboardOnly}|{normalizedFilter}".
+        /// </summary>
+        public static void InvalidateReconciliationViewCache(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) { InvalidateReconciliationViewCache(); return; }
+            try
+            {
+                var prefix = countryId + "|";
+                foreach (var kv in _recoViewDataCache.ToArray())
+                {
+                    if (kv.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        _recoViewDataCache.TryRemove(kv.Key, out _);
+                }
+            }
+            catch { }
+            try
+            {
+                var prefix = countryId + "|";
+                foreach (var kv in _recoViewCache.ToArray())
+                {
+                    if (kv.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        _recoViewCache.TryRemove(kv.Key, out _);
+                }
+            }
+            catch { }
+        }
+
         private async Task EnsureDwingsCachesAsync()
         {
             var dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
@@ -242,6 +306,28 @@ namespace RecoTool.Services
                               || !string.Equals(_dwCachePath, dwPath, StringComparison.OrdinalIgnoreCase);
             if (!needReload) return;
 
+            // If invalidated, drop the shared entry for the previous path to force a reload
+            if (_dwCacheInvalidated && !string.IsNullOrWhiteSpace(_dwCachePath))
+            {
+                _sharedDwCache.TryRemove(_dwCachePath, out _);
+            }
+
+            // Coalesce concurrent loads per DW path across all instances
+            var loader = _sharedDwCache.GetOrAdd(dwPath,
+                new Lazy<Task<(List<DwingsInvoiceDto>, List<DwingsGuaranteeDto>)>>(
+                    () => LoadDwingsAsync(dwPath),
+                    System.Threading.LazyThreadSafetyMode.ExecutionAndPublication));
+
+            var tuple = await loader.Value.ConfigureAwait(false);
+            _dwInvoicesCache = tuple.Item1;
+            _dwGuaranteesCache = tuple.Item2;
+            _dwCachePath = dwPath;
+            _dwCacheInvalidated = false;
+        }
+
+        // Shared loader used by the shared cache
+        private static async Task<(List<DwingsInvoiceDto> invoices, List<DwingsGuaranteeDto> guarantees)> LoadDwingsAsync(string dwPath)
+        {
             var dwCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={dwPath};";
             var invoices = new List<DwingsInvoiceDto>();
             var guarantees = new List<DwingsGuaranteeDto>();
@@ -353,10 +439,7 @@ namespace RecoTool.Services
                 }
             }
 
-            _dwInvoicesCache = invoices;
-            _dwGuaranteesCache = guarantees;
-            _dwCachePath = dwPath;
-            _dwCacheInvalidated = false;
+            return (invoices, guarantees);
         }
 
         /// <summary>
@@ -366,6 +449,20 @@ namespace RecoTool.Services
         public void InvalidateDwingsCaches()
         {
             _dwCacheInvalidated = true;
+            if (!string.IsNullOrWhiteSpace(_dwCachePath))
+            {
+                _sharedDwCache.TryRemove(_dwCachePath, out _);
+            }
+        }
+
+        /// <summary>
+        /// Optionally prime DWINGS caches (e.g., right after selecting a country).
+        /// Safe to call multiple times; subsequent calls are cheap.
+        /// </summary>
+        public Task PrimeDwingsCachesAsync()
+        {
+            // fire the ensure, caller can await if they want readiness
+            return EnsureDwingsCachesAsync();
         }
 
         private static decimal? TryToDecimal(object o)
@@ -461,6 +558,33 @@ namespace RecoTool.Services
         /// </summary>
         public async Task<List<ReconciliationViewData>> GetReconciliationViewAsync(string countryId, string filterSql = null, bool dashboardOnly = false)
         {
+            var key = $"{countryId ?? string.Empty}|{dashboardOnly}|{NormalizeFilterForCache(filterSql)}";
+            if (_recoViewCache.TryGetValue(key, out var existing))
+            {
+                var cached = await existing.Value.ConfigureAwait(false);
+                return cached;
+            }
+            var lazy = new Lazy<Task<List<ReconciliationViewData>>>(() => BuildReconciliationViewAsyncCore(countryId, filterSql, dashboardOnly, key));
+            var entry = _recoViewCache.GetOrAdd(key, lazy);
+            var result = await entry.Value.ConfigureAwait(false);
+            return result;
+        }
+
+        /// <summary>
+        /// Returns the current cached reconciliation view list for the given key if available.
+        /// This avoids triggering a background load when the data was already loaded recently
+        /// (e.g., on country selection) and allows the UI to bind immediately.
+        /// </summary>
+        public List<ReconciliationViewData> TryGetCachedReconciliationView(string countryId, string filterSql = null, bool dashboardOnly = false)
+        {
+            var key = $"{countryId ?? string.Empty}|{dashboardOnly}|{NormalizeFilterForCache(filterSql)}";
+            if (_recoViewDataCache.TryGetValue(key, out var list))
+                return list;
+            return null;
+        }
+
+        private async Task<List<ReconciliationViewData>> BuildReconciliationViewAsyncCore(string countryId, string filterSql, bool dashboardOnly, string cacheKey)
+        {
             var swBuild = Stopwatch.StartNew();
             string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
             string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
@@ -535,6 +659,8 @@ namespace RecoTool.Services
                                    r.DWINGS_InvoiceID,
                                    r.DWINGS_CommissionID,
                                    r.Action,
+                                   r.ActionStatus,
+                                   r.ActionDate,
                                    r.Assignee,
                                    r.Comments,
                                    r.InternalInvoiceReference,
@@ -697,13 +823,49 @@ namespace RecoTool.Services
                 foreach (var row in list)
                 {
                     DwingsInvoiceDto inv = null;
+                    // 1) Direct by DWINGS_InvoiceID
                     if (!string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID) && byInvoiceId.TryGetValue(row.DWINGS_InvoiceID, out var foundById))
                     {
                         inv = foundById;
                     }
+                    // 2) By stored PaymentReference (BGPMT)
                     else if (!string.IsNullOrWhiteSpace(row.PaymentReference) && byBgpmt.TryGetValue(row.PaymentReference, out var foundByPm))
                     {
                         inv = foundByPm;
+                    }
+                    else
+                    {
+                        // 3) Heuristic: extract BGI or BGPMT from available texts
+                        string TryNonEmpty(params string[] ss)
+                        {
+                            foreach (var s in ss)
+                                if (!string.IsNullOrWhiteSpace(s)) return s;
+                            return null;
+                        }
+
+                        // Extract tokens from potential sources
+                        var bgi = DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.Reconciliation_Num))
+                                  ?? DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.Comments))
+                                  ?? DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.RawLabel))
+                                  ?? DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.Receivable_DWRefFromAmbre));
+
+                        var bgpmt = DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.Reconciliation_Num))
+                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.Comments))
+                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.RawLabel))
+                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.PaymentReference));
+
+                        if (!string.IsNullOrWhiteSpace(bgi) && byInvoiceId.TryGetValue(bgi, out var foundByBgi))
+                        {
+                            inv = foundByBgi;
+                            // Backfill missing fields to strengthen link in UI
+                            if (string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID)) row.DWINGS_InvoiceID = inv.INVOICE_ID;
+                        }
+                        else if (!string.IsNullOrWhiteSpace(bgpmt) && byBgpmt.TryGetValue(bgpmt, out var foundByBgpmt))
+                        {
+                            inv = foundByBgpmt;
+                            if (string.IsNullOrWhiteSpace(row.PaymentReference)) row.PaymentReference = bgpmt;
+                            if (string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID)) row.DWINGS_InvoiceID = inv.INVOICE_ID;
+                        }
                     }
 
                     if (inv != null)
@@ -719,6 +881,12 @@ namespace RecoTool.Services
                         row.I_END_DATE = inv.END_DATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                         row.I_DEBTOR_PARTY_NAME = inv.DEBTOR_PARTY_NAME;
                         row.I_RECEIVER_NAME = inv.CREDITOR_PARTY_NAME; // map as available
+
+                        // If guarantee link is missing but invoice carries Business Case reference, propose it
+                        if (string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID) && !string.IsNullOrWhiteSpace(inv.BUSINESS_CASE_REFERENCE))
+                        {
+                            row.DWINGS_GuaranteeID = inv.BUSINESS_CASE_REFERENCE;
+                        }
                     }
                 }
             }
@@ -734,12 +902,32 @@ namespace RecoTool.Services
 
                 foreach (var row in list)
                 {
+                    // Resolve guarantee id heuristically if missing
+                    string gid = row.DWINGS_GuaranteeID;
+                    if (string.IsNullOrWhiteSpace(gid))
+                    {
+                        // Try extract from various fields
+                        gid = DwingsLinkingHelper.ExtractGuaranteeId(row.Reconciliation_Num)
+                              ?? DwingsLinkingHelper.ExtractGuaranteeId(row.Comments)
+                              ?? DwingsLinkingHelper.ExtractGuaranteeId(row.Receivable_DWRefFromAmbre)
+                              ?? DwingsLinkingHelper.ExtractGuaranteeId(row.RawLabel)
+                              ?? row.I_BUSINESS_CASE_REFERENCE // populated above from invoice if found
+                              ?? row.I_BUSINESS_CASE_ID;
+
+                        if (!string.IsNullOrWhiteSpace(gid))
+                        {
+                            row.DWINGS_GuaranteeID = gid; // backfill for consistency
+                        }
+                    }
+
                     if (string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID)) continue;
                     if (!byGuaranteeId.TryGetValue(row.DWINGS_GuaranteeID, out var g)) continue;
 
                     row.GUARANTEE_ID = g.GUARANTEE_ID;
                     row.GUARANTEE_STATUS = g.GUARANTEE_STATUS ?? row.GUARANTEE_STATUS;
                     row.GUARANTEE_TYPE = g.GUARANTEE_TYPE ?? row.GUARANTEE_TYPE;
+                    // Also hydrate the prefixed field used directly by the grid binding
+                    row.G_GUARANTEE_TYPE = g.GUARANTEE_TYPE ?? row.G_GUARANTEE_TYPE;
 
                     // Prefixed G_* extended fields
                     row.G_NATURE = g.NATURE ?? row.G_NATURE;
@@ -774,7 +962,23 @@ namespace RecoTool.Services
             catch { /* best-effort enrichment */ }
             swExec.Stop();
 
+            // Store materialized list for incremental updates
+            _recoViewDataCache[cacheKey] = list;
             return list;
+        }
+
+        private static string NormalizeFilterForCache(string filterSql)
+        {
+            if (string.IsNullOrWhiteSpace(filterSql)) return string.Empty;
+            var cond = filterSql.Trim();
+            // Strip optional JSON header
+            var m = Regex.Match(cond, @"^/\*JSON:(.*?)\*/\s*(.*)$", RegexOptions.Singleline);
+            if (m.Success) cond = m.Groups[2].Value?.Trim();
+            // Strip leading WHERE
+            if (cond.StartsWith("WHERE ", StringComparison.OrdinalIgnoreCase)) cond = cond.Substring(6).Trim();
+            // Collapse whitespace
+            cond = Regex.Replace(cond, @"\s+", " ").Trim();
+            return cond;
         }
 
         /// <summary>
@@ -1113,7 +1317,7 @@ namespace RecoTool.Services
 
                     // Déterminer si c'est Pivot ou Receivable
                     bool isPivot = data.IsPivotAccount(country.CNT_AmbrePivot);
-                    bool isReceivable = data.IsReceivableAccount(country.CNT_AmbreReceivable);
+                    bool isReceivable = !isPivot; // Per model: receivable is the opposite of pivot for our 2-account scope
 
                     if (isPivot)
                     {
@@ -1372,12 +1576,14 @@ namespace RecoTool.Services
                         try
                         {
                             var changeTuples = new List<(string TableName, string RecordId, string OperationType)>();
+                            var updatedRows = new List<Reconciliation>();
                             foreach (var reconciliation in reconciliations)
                             {
                                 var op = await SaveSingleReconciliationAsync(connection, transaction, reconciliation).ConfigureAwait(false);
                                 if (!string.Equals(op, "NOOP", StringComparison.OrdinalIgnoreCase))
                                 {
                                     changeTuples.Add(("T_Reconciliation", reconciliation.ID, op));
+                                    updatedRows.Add(reconciliation);
                                 }
                             }
 
@@ -1409,6 +1615,12 @@ namespace RecoTool.Services
                                 try { LogManager.Warning("ChangeLog recording failed in SaveReconciliationsAsync; background sync will skip these rows unless reconstructed."); } catch { }
                             }
 
+                            // Invalidate view cache so next loads fetch fresh data
+                            //try { _recoViewCache.Clear(); } catch { }
+
+                            // Incrementally update all cached view lists with the modified reconciliation fields
+                            try { UpdateRecoViewCaches(updatedRows); } catch { }
+
                             // Synchronization is handled by background services (e.g., SyncMonitor),
                             // which read pending items from ChangeLog and then perform PUSH followed by PULL.
                             // No direct push is triggered here.
@@ -1428,7 +1640,44 @@ namespace RecoTool.Services
             }
         }
 
-
+        private void UpdateRecoViewCaches(IEnumerable<Reconciliation> updated)
+        {
+            if (updated == null) return;
+            foreach (var kv in _recoViewDataCache)
+            {
+                var list = kv.Value;
+                if (list == null) continue;
+                // Update in place by ID (AMBRE row always exists; reconcile fields are nullable)
+                foreach (var r in updated)
+                {
+                    var row = list.FirstOrDefault(x => string.Equals(x.ID, r.ID, StringComparison.OrdinalIgnoreCase));
+                    if (row == null) continue;
+                    row.DWINGS_GuaranteeID = r.DWINGS_GuaranteeID;
+                    row.DWINGS_InvoiceID = r.DWINGS_InvoiceID;
+                    row.DWINGS_CommissionID = r.DWINGS_CommissionID;
+                    row.Action = r.Action;
+                    row.ActionStatus = r.ActionStatus;
+                    row.ActionDate = r.ActionDate;
+                    row.Assignee = r.Assignee;
+                    row.Comments = r.Comments;
+                    row.InternalInvoiceReference = r.InternalInvoiceReference;
+                    row.FirstClaimDate = r.FirstClaimDate;
+                    row.LastClaimDate = r.LastClaimDate;
+                    row.ToRemind = r.ToRemind;
+                    row.ToRemindDate = r.ToRemindDate;
+                    row.ACK = r.ACK;
+                    row.SwiftCode = r.SwiftCode;
+                    row.PaymentReference = r.PaymentReference;
+                    row.KPI = r.KPI;
+                    row.IncidentType = r.IncidentType;
+                    row.RiskyItem = r.RiskyItem == true;
+                    row.ReasonNonRisky = r.ReasonNonRisky;
+                    row.MbawData = r.MbawData;
+                    row.SpiritData = r.SpiritData;
+                    row.TriggerDate = r.TriggerDate;
+                }
+            }
+        }
 
         /// <summary>
         /// Sauvegarde une réconciliation unique dans une transaction
@@ -1448,7 +1697,7 @@ namespace RecoTool.Services
                     var changed = new System.Collections.Generic.List<string>();
                     var selectCmd = new OleDbCommand(@"SELECT 
                                 [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_CommissionID],
-                                [Action], [Assignee], [Comments], [InternalInvoiceReference],
+                                [Action], [ActionStatus], [ActionDate], [Assignee], [Comments], [InternalInvoiceReference],
                                 [FirstClaimDate], [LastClaimDate], [ToRemind], [ToRemindDate],
                                 [ACK], [SwiftCode], [PaymentReference], [KPI],
                                 [IncidentType], [RiskyItem], [ReasonNonRisky],
@@ -1481,23 +1730,25 @@ namespace RecoTool.Services
                             if (!Equal(DbVal(1), (object)reconciliation.DWINGS_InvoiceID)) changed.Add("DWINGS_InvoiceID");
                             if (!Equal(DbVal(2), (object)reconciliation.DWINGS_CommissionID)) changed.Add("DWINGS_CommissionID");
                             if (!Equal(DbVal(3), (object)reconciliation.Action)) changed.Add("Action");
-                            if (!Equal(DbVal(4), (object)reconciliation.Assignee)) changed.Add("Assignee");
-                            if (!Equal(DbVal(5), (object)reconciliation.Comments)) changed.Add("Comments");
-                            if (!Equal(DbVal(6), (object)reconciliation.InternalInvoiceReference)) changed.Add("InternalInvoiceReference");
-                            if (!Equal(DbVal(7), reconciliation.FirstClaimDate.HasValue ? (object)reconciliation.FirstClaimDate.Value : null)) changed.Add("FirstClaimDate");
-                            if (!Equal(DbVal(8), reconciliation.LastClaimDate.HasValue ? (object)reconciliation.LastClaimDate.Value : null)) changed.Add("LastClaimDate");
-                            if (!Equal(DbBool(DbVal(9)), (object)reconciliation.ToRemind)) changed.Add("ToRemind");
-                            if (!Equal(DbVal(10), reconciliation.ToRemindDate.HasValue ? (object)reconciliation.ToRemindDate.Value : null)) changed.Add("ToRemindDate");
-                            if (!Equal(DbBool(DbVal(11)), (object)reconciliation.ACK)) changed.Add("ACK");
-                            if (!Equal(DbVal(12), (object)reconciliation.SwiftCode)) changed.Add("SwiftCode");
-                            if (!Equal(DbVal(13), (object)reconciliation.PaymentReference)) changed.Add("PaymentReference");
-                            if (!Equal(DbVal(14), (object)reconciliation.KPI)) changed.Add("KPI");
-                            if (!Equal(DbVal(15), (object)reconciliation.IncidentType)) changed.Add("IncidentType");
-                            if (!Equal(DbBool(DbVal(16)), (object)reconciliation.RiskyItem)) changed.Add("RiskyItem");
-                            if (!Equal(DbVal(17), (object)reconciliation.ReasonNonRisky)) changed.Add("ReasonNonRisky");
-                            if (!Equal(DbVal(18), (object)reconciliation.MbawData)) changed.Add("MbawData");
-                            if (!Equal(DbVal(19), (object)reconciliation.SpiritData)) changed.Add("SpiritData");
-                            if (!Equal(DbVal(20), reconciliation.TriggerDate.HasValue ? (object)reconciliation.TriggerDate.Value : null)) changed.Add("TriggerDate");
+                            if (!Equal(DbVal(4), (object)reconciliation.ActionStatus)) changed.Add("ActionStatus");
+                            if (!Equal(DbVal(5), reconciliation.ActionDate.HasValue ? (object)reconciliation.ActionDate.Value : null)) changed.Add("ActionDate");
+                            if (!Equal(DbVal(6), (object)reconciliation.Assignee)) changed.Add("Assignee");
+                            if (!Equal(DbVal(7), (object)reconciliation.Comments)) changed.Add("Comments");
+                            if (!Equal(DbVal(8), (object)reconciliation.InternalInvoiceReference)) changed.Add("InternalInvoiceReference");
+                            if (!Equal(DbVal(9), reconciliation.FirstClaimDate.HasValue ? (object)reconciliation.FirstClaimDate.Value : null)) changed.Add("FirstClaimDate");
+                            if (!Equal(DbVal(10), reconciliation.LastClaimDate.HasValue ? (object)reconciliation.LastClaimDate.Value : null)) changed.Add("LastClaimDate");
+                            if (!Equal(DbBool(DbVal(11)), (object)reconciliation.ToRemind)) changed.Add("ToRemind");
+                            if (!Equal(DbVal(12), reconciliation.ToRemindDate.HasValue ? (object)reconciliation.ToRemindDate.Value : null)) changed.Add("ToRemindDate");
+                            if (!Equal(DbBool(DbVal(13)), (object)reconciliation.ACK)) changed.Add("ACK");
+                            if (!Equal(DbVal(14), (object)reconciliation.SwiftCode)) changed.Add("SwiftCode");
+                            if (!Equal(DbVal(15), (object)reconciliation.PaymentReference)) changed.Add("PaymentReference");
+                            if (!Equal(DbVal(16), (object)reconciliation.KPI)) changed.Add("KPI");
+                            if (!Equal(DbVal(17), (object)reconciliation.IncidentType)) changed.Add("IncidentType");
+                            if (!Equal(DbBool(DbVal(18)), (object)reconciliation.RiskyItem)) changed.Add("RiskyItem");
+                            if (!Equal(DbVal(19), (object)reconciliation.ReasonNonRisky)) changed.Add("ReasonNonRisky");
+                            if (!Equal(DbVal(20), (object)reconciliation.MbawData)) changed.Add("MbawData");
+                            if (!Equal(DbVal(21), (object)reconciliation.SpiritData)) changed.Add("SpiritData");
+                            if (!Equal(DbVal(22), reconciliation.TriggerDate.HasValue ? (object)reconciliation.TriggerDate.Value : null)) changed.Add("TriggerDate");
 
                             if (changed.Count == 0)
                             {
@@ -1543,12 +1794,27 @@ namespace RecoTool.Services
                                 case "Action":
                                     cmd.Parameters.AddWithValue("@Action", reconciliation.Action ?? (object)DBNull.Value);
                                     break;
+                                case "ActionStatus":
+                                    {
+                                        var p = cmd.Parameters.Add("@ActionStatus", OleDbType.Boolean);
+                                        p.Value = reconciliation.ActionStatus.HasValue ? (object)reconciliation.ActionStatus.Value : DBNull.Value;
+                                        break;
+                                    }
+                                case "ActionDate":
+                                    {
+                                        var p = cmd.Parameters.Add("@ActionDate", OleDbType.Date);
+                                        p.Value = reconciliation.ActionDate.HasValue ? (object)reconciliation.ActionDate.Value : DBNull.Value;
+                                        break;
+                                    }
                                 case "Assignee":
                                     cmd.Parameters.AddWithValue("@Assignee", string.IsNullOrWhiteSpace(reconciliation.Assignee) ? (object)DBNull.Value : reconciliation.Assignee);
                                     break;
                                 case "Comments":
-                                    cmd.Parameters.AddWithValue("@Comments", reconciliation.Comments ?? (object)DBNull.Value);
-                                    break;
+                                    {
+                                        var p = cmd.Parameters.Add("@Comments", OleDbType.LongVarWChar);
+                                        p.Value = reconciliation.Comments ?? (object)DBNull.Value;
+                                        break;
+                                    }
                                 case "InternalInvoiceReference":
                                     cmd.Parameters.AddWithValue("@InternalInvoiceReference", reconciliation.InternalInvoiceReference ?? (object)DBNull.Value);
                                     break;
@@ -1589,11 +1855,17 @@ namespace RecoTool.Services
                                     cmd.Parameters.AddWithValue("@PaymentReference", reconciliation.PaymentReference ?? (object)DBNull.Value);
                                     break;
                                 case "MbawData":
-                                    cmd.Parameters.AddWithValue("@MbawData", reconciliation.MbawData ?? (object)DBNull.Value);
-                                    break;
+                                    {
+                                        var p = cmd.Parameters.Add("@MbawData", OleDbType.LongVarWChar);
+                                        p.Value = reconciliation.MbawData ?? (object)DBNull.Value;
+                                        break;
+                                    }
                                 case "SpiritData":
-                                    cmd.Parameters.AddWithValue("@SpiritData", reconciliation.SpiritData ?? (object)DBNull.Value);
-                                    break;
+                                    {
+                                        var p = cmd.Parameters.Add("@SpiritData", OleDbType.LongVarWChar);
+                                        p.Value = reconciliation.SpiritData ?? (object)DBNull.Value;
+                                        break;
+                                    }
                                 case "KPI":
                                     {
                                         var p = cmd.Parameters.Add("@KPI", OleDbType.Integer);
@@ -1650,7 +1922,7 @@ namespace RecoTool.Services
                         }
                         catch { }
 
-                            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                        await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                         // Encode changed fields for partial update during sync
                         var op = $"UPDATE({string.Join(",", changed)})";
                         LogManager.Debug($"Reconciliation UPDATE operation encoded: {op}");
@@ -1667,10 +1939,10 @@ namespace RecoTool.Services
 
                     var insertQuery = @"INSERT INTO T_Reconciliation 
                              ([ID], [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_CommissionID],
-                              [Action], [Assignee], [Comments], [InternalInvoiceReference], [FirstClaimDate], [LastClaimDate],
+                              [Action], [ActionStatus], [ActionDate], [Assignee], [Comments], [InternalInvoiceReference], [FirstClaimDate], [LastClaimDate],
                               [ToRemind], [ToRemindDate], [ACK], [SwiftCode], [PaymentReference], [MbawData], [SpiritData], [KPI],
                               [IncidentType], [RiskyItem], [ReasonNonRisky], [TriggerDate], [CreationDate], [ModifiedBy], [LastModified])
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
                     using (var cmd = new OleDbCommand(insertQuery, connection, transaction))
                     {
@@ -1698,8 +1970,13 @@ namespace RecoTool.Services
             cmd.Parameters.AddWithValue("@DWINGS_InvoiceID", reconciliation.DWINGS_InvoiceID ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@DWINGS_CommissionID", reconciliation.DWINGS_CommissionID ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@Action", reconciliation.Action ?? (object)DBNull.Value);
+            var pActionStatus = cmd.Parameters.Add("@ActionStatus", OleDbType.Boolean);
+            pActionStatus.Value = reconciliation.ActionStatus.HasValue ? (object)reconciliation.ActionStatus.Value : DBNull.Value;
+            var pActionDate = cmd.Parameters.Add("@ActionDate", OleDbType.Date);
+            pActionDate.Value = reconciliation.ActionDate.HasValue ? (object)reconciliation.ActionDate.Value : DBNull.Value;
             cmd.Parameters.AddWithValue("@Assignee", string.IsNullOrWhiteSpace(reconciliation.Assignee) ? (object)DBNull.Value : reconciliation.Assignee);
-            cmd.Parameters.AddWithValue("@Comments", reconciliation.Comments ?? (object)DBNull.Value);
+            var pComments = cmd.Parameters.Add("@Comments", OleDbType.LongVarWChar);
+            pComments.Value = reconciliation.Comments ?? (object)DBNull.Value;
             cmd.Parameters.AddWithValue("@InternalInvoiceReference", reconciliation.InternalInvoiceReference ?? (object)DBNull.Value);
             var pFirst = cmd.Parameters.Add("@FirstClaimDate", OleDbType.Date);
             pFirst.Value = reconciliation.FirstClaimDate.HasValue ? (object)reconciliation.FirstClaimDate.Value : DBNull.Value;
@@ -1713,8 +1990,10 @@ namespace RecoTool.Services
             pAck.Value = reconciliation.ACK;
             cmd.Parameters.AddWithValue("@SwiftCode", reconciliation.SwiftCode ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@PaymentReference", reconciliation.PaymentReference ?? (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("@MbawData", reconciliation.MbawData ?? (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("@SpiritData", reconciliation.SpiritData ?? (object)DBNull.Value);
+            var pMbaw = cmd.Parameters.Add("@MbawData", OleDbType.LongVarWChar);
+            pMbaw.Value = reconciliation.MbawData ?? (object)DBNull.Value;
+            var pSpirit = cmd.Parameters.Add("@SpiritData", OleDbType.LongVarWChar);
+            pSpirit.Value = reconciliation.SpiritData ?? (object)DBNull.Value;
             var pKpi = cmd.Parameters.Add("@KPI", OleDbType.Integer);
             pKpi.Value = reconciliation.KPI.HasValue ? (object)reconciliation.KPI.Value : DBNull.Value;
             var pInc = cmd.Parameters.Add("@IncidentType", OleDbType.Integer);
@@ -2135,7 +2414,8 @@ namespace RecoTool.Services
                 var cmd = new OleDbCommand(@"INSERT INTO T_Ref_User_Fields_Preference (UPF_Name, UPF_user, UPF_SQL, UPF_ColumnWidths) VALUES (?, ?, ?, ?)", connection);
                 cmd.Parameters.AddWithValue("@p1", name ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@p2", _currentUser ?? (object)DBNull.Value);
-                cmd.Parameters.AddWithValue("@p3", sql ?? (object)DBNull.Value);
+                // Do not persist backend filters in Saved Views
+                cmd.Parameters.AddWithValue("@p3", DBNull.Value);
                 cmd.Parameters.AddWithValue("@p4", columnsJson ?? (object)DBNull.Value);
                             await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                 // Retrieve autonumber (Access specific)
@@ -2156,7 +2436,8 @@ namespace RecoTool.Services
                 var cmd = new OleDbCommand(@"UPDATE T_Ref_User_Fields_Preference SET UPF_Name = ?, UPF_user = ?, UPF_SQL = ?, UPF_ColumnWidths = ? WHERE UPF_id = ?", connection);
                 cmd.Parameters.AddWithValue("@p1", name ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@p2", _currentUser ?? (object)DBNull.Value);
-                cmd.Parameters.AddWithValue("@p3", sql ?? (object)DBNull.Value);
+                // Do not persist backend filters in Saved Views
+                cmd.Parameters.AddWithValue("@p3", DBNull.Value);
                 cmd.Parameters.AddWithValue("@p4", columnsJson ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@p5", id);
                 var n = await cmd.ExecuteNonQueryAsync();

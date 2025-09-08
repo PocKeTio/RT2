@@ -55,6 +55,60 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Returns true if a global lock is currently active AND held by another process (not this MachineName+ProcessId).
+        /// Ignores expired rows and performs a best-effort cleanup of expired entries.
+        /// </summary>
+        public async Task<bool> IsGlobalLockActiveByOthersAsync(CancellationToken token = default)
+        {
+            if (string.IsNullOrEmpty(_currentCountryId))
+                return false;
+
+            try
+            {
+                string connStr = GetRemoteLockConnectionString(_currentCountryId);
+                var now = DateTime.UtcNow;
+                using (var connection = new OleDbConnection(connStr))
+                {
+                    await connection.OpenAsync(token);
+                    await EnsureSyncLocksTableExistsAsync(connection);
+
+                    // Cleanup expired locks
+                    using (var cleanup = new OleDbCommand("DELETE FROM SyncLocks WHERE ExpiresAt IS NOT NULL AND ExpiresAt < ?", connection))
+                    {
+                        cleanup.Parameters.Add(new OleDbParameter("@ExpiresAt", OleDbType.Date) { Value = now });
+                        await cleanup.ExecuteNonQueryAsync();
+                    }
+
+                    // Check if an active lock exists held by OTHER processes
+                    using (var check = new OleDbCommand("SELECT COUNT(*) FROM SyncLocks WHERE (ExpiresAt IS NULL OR ExpiresAt > ?) AND NOT (MachineName = ? AND ProcessId = ?)", connection))
+                    {
+                        check.Parameters.Add(new OleDbParameter("@Now", OleDbType.Date) { Value = now });
+                        check.Parameters.Add(new OleDbParameter("@MachineName", OleDbType.VarWChar, 255) { Value = (object)Environment.MachineName ?? DBNull.Value });
+                        check.Parameters.Add(new OleDbParameter("@ProcessId", OleDbType.Integer) { Value = System.Diagnostics.Process.GetCurrentProcess().Id });
+                        var countObj = await check.ExecuteScalarAsync();
+                        int active = 0;
+                        if (countObj != null && countObj != DBNull.Value)
+                            active = Convert.ToInt32(countObj);
+                        return active > 0;
+                    }
+                }
+            }
+            catch
+            {
+                // On error, do not block caller: assume no foreign lock
+                return false;
+            }
+        }
+
+        // No-op handle used when a re-entrant acquisition detects an active lock already held by this process.
+        private sealed class NoopLockHandle : IDisposable
+        {
+            public static readonly NoopLockHandle Instance = new NoopLockHandle();
+            private NoopLockHandle() { }
+            public void Dispose() { /* nothing */ }
+        }
+
+        /// <summary>
         /// Effectue un File.Replace avec quelques tentatives et backoff exponentiel pour absorber les violations de partage temporaires.
         /// Ne réessaie que sur IOException likely partage/locking. Autres exceptions sont relancées immédiatement.
         /// </summary>
@@ -525,14 +579,14 @@ namespace RecoTool.Services
                         }
                         return false;
                     }
-                    bool lockActive = false; try { lockActive = await IsGlobalLockActiveAsync(); } catch { lockActive = false; }
-                    if (lockActive)
+                    bool lockActiveByOthers = false; try { lockActiveByOthers = await IsGlobalLockActiveByOthersAsync(); } catch { lockActiveByOthers = false; }
+                    if (lockActiveByOthers)
                     {
                         try { await RaiseSyncStateAsync(cid, SyncStateKind.OfflinePending); } catch { }
                         if (diag)
                         {
-                            System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Skipped: global lock active");
-                            try { LogManager.Info($"[PUSH][{cid}] Skipped: global lock active"); } catch { }
+                            System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Skipped: global lock active (held by another process)");
+                            try { LogManager.Info($"[PUSH][{cid}] Skipped: global lock active (others)"); } catch { }
                         }
                         return false;
                     }
@@ -584,14 +638,39 @@ namespace RecoTool.Services
                     System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Attempting short global lock for Lite push...");
                     try { LogManager.Info($"[PUSH][{cid}] Attempting short global lock for Lite push"); } catch { }
                 }
-                using (var gl = await AcquireGlobalLockAsync(cid, "LitePush-Reconciliation", TimeSpan.FromSeconds(8)))
+                using (var gl = await AcquireGlobalLockAsync(cid, "LitePush-Reconciliation", TimeSpan.FromSeconds(30)))
                 {
                     if (diag)
                     {
                         System.Diagnostics.Debug.WriteLine($"[PUSH][{cid}] Global lock acquired. Invoking PushPendingChangesToNetworkAsync (Lite/T_Reconciliation)...");
                         try { LogManager.Info($"[PUSH][{cid}] Global lock acquired. Invoking PushPendingChangesToNetworkAsync (Lite/T_Reconciliation)"); } catch { }
                     }
-                    await PushPendingChangesToNetworkAsync(cid, assumeLockHeld: false, source: nameof(PushReconciliationIfPendingAsync) + "/Lite", preloadedUnsynced: recoUnsynced);
+                    await PushPendingChangesToNetworkAsync(cid, assumeLockHeld: true, source: nameof(PushReconciliationIfPendingAsync) + "/Lite", preloadedUnsynced: recoUnsynced);
+                    // Two-way: pull network changes back to local (LastModified first, then Version)
+                    try
+                    {
+                        if (diag)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[PULL][{cid}] Starting PullReconciliationFromNetworkAsync after push...");
+                            try { LogManager.Info($"[PULL][{cid}] Starting PullReconciliationFromNetworkAsync after push"); } catch { }
+                        }
+                        var pulled = await PullReconciliationFromNetworkAsync(cid);
+                        try { ReconciliationService.InvalidateReconciliationViewCache(cid); } catch { }
+                        if (diag)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[PULL][{cid}] Completed pull. Applied {pulled} row(s) from network to local.");
+                            try { LogManager.Info($"[PULL][{cid}] Completed pull. Applied {pulled} row(s)"); } catch { }
+                        }
+                    }
+                    catch (Exception exPull)
+                    {
+                        if (diag)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[PULL][{cid}] PullReconciliationFromNetworkAsync failed: {exPull.Message}");
+                            try { LogManager.Error($"[PULL][{cid}] PullReconciliationFromNetworkAsync failed: {exPull.Message}", exPull); } catch { }
+                        }
+                        // best-effort: do not fail the overall operation
+                    }
                 }
                 _lastPushTimesUtc[cid] = DateTime.UtcNow;
                 try { await RaiseSyncStateAsync(cid, SyncStateKind.UpToDate, pendingOverride: 0); } catch { }
@@ -656,6 +735,9 @@ namespace RecoTool.Services
         /// </summary>
         public async Task EnsureControlSchemaAsync()
         {
+            if (CurrentCountry?.CNT_Id == null)
+                return;
+
             var connStr = GetControlConnectionString(CurrentCountry?.CNT_Id);
             using (var connection = new OleDbConnection(connStr))
             {
@@ -881,6 +963,8 @@ namespace RecoTool.Services
                 File.Move(tmp, localZipPath);
             }
             try { var bak = localZipPath + ".bak"; if (File.Exists(bak)) File.Delete(bak); } catch { }
+            // Normalize destination timestamp to source (UTC) to avoid false mismatches across clients
+            try { File.SetLastWriteTimeUtc(localZipPath, netFi.LastWriteTimeUtc); } catch { }
             return true;
         }
 
@@ -890,7 +974,11 @@ namespace RecoTool.Services
             {
                 if (!first.Exists || !second.Exists) return false;
                 if (first.Length != second.Length) return false;
-                return first.LastWriteTimeUtc.Date == second.LastWriteTimeUtc.Date;
+                // Compare UTC timestamps with tolerance to absorb FS/ZIP/SMB rounding and DST issues
+                var dt1 = first.LastWriteTimeUtc;
+                var dt2 = second.LastWriteTimeUtc;
+                var diff = dt1 > dt2 ? (dt1 - dt2) : (dt2 - dt1);
+                return diff <= TimeSpan.FromSeconds(5);
             }
             catch
             {
@@ -1938,6 +2026,27 @@ namespace RecoTool.Services
             }
         }
 
+        // Wrapper that ensures our in-process gate is released when the underlying DB lock is disposed
+        private sealed class ProcessGateLockHandle : IDisposable
+        {
+            private readonly IDisposable _inner;
+            private readonly SemaphoreSlim _gate;
+            private int _released;
+
+            public ProcessGateLockHandle(IDisposable inner, SemaphoreSlim gate)
+            {
+                _inner = inner;
+                _gate = gate;
+            }
+
+            public void Dispose()
+            {
+                if (Interlocked.Exchange(ref _released, 1) == 1) return;
+                try { _inner?.Dispose(); } catch { }
+                try { _gate?.Release(); } catch { }
+            }
+        }
+
         // Lightweight diagnostic helper for OleDb commands
         private static void LogOleDbCommand(string where, OleDbCommand cmd, Guid correlationId)
         {
@@ -2070,6 +2179,22 @@ namespace RecoTool.Services
                                 catch { /* column may not exist yet */ }
 
                                 return new GlobalLockHandle(connStr, lockId, expirySeconds);
+                            }
+                            else
+                            {
+                                // Re-entrancy: if the active lock is ours (same process), allow nested acquisition without waiting
+                                using (var self = new OleDbCommand("SELECT TOP 1 LockID FROM SyncLocks WHERE (ExpiresAt IS NULL OR ExpiresAt > ?) AND MachineName = ? AND ProcessId = ? ORDER BY CreatedAt DESC", connection))
+                                {
+                                    self.Parameters.Add(new OleDbParameter("@Now", OleDbType.Date) { Value = now });
+                                    self.Parameters.Add(new OleDbParameter("@MachineName", OleDbType.VarWChar, 255) { Value = (object)Environment.MachineName ?? DBNull.Value });
+                                    self.Parameters.Add(new OleDbParameter("@ProcessId", OleDbType.Integer) { Value = System.Diagnostics.Process.GetCurrentProcess().Id });
+                                    var obj = await self.ExecuteScalarAsync();
+                                    if (obj != null && obj != DBNull.Value)
+                                    {
+                                        // Return a no-op handle; original holder will release the DB row
+                                        return NoopLockHandle.Instance;
+                                    }
+                                }
                             }
                         }
                     }
@@ -2229,6 +2354,38 @@ namespace RecoTool.Services
         private SyncConfiguration _syncConfig;
         private readonly ConcurrentDictionary<string, DateTime> _lastSyncTimes;
         private readonly object _lockObject = new object();
+        // In-process gate: ensure only one AcquireGlobalLockAsync is executing per process at any time.
+        private static readonly SemaphoreSlim _acquireGlobalProcessGate = new SemaphoreSlim(1, 1);
+
+        /// <summary>
+        /// Returns true if a synchronization is currently in progress for the specified country.
+        /// This uses the internal semaphore to detect if the sync lock is held.
+        /// </summary>
+        public bool IsSynchronizationInProgress(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) return false;
+            var sem = _syncSemaphores.GetOrAdd(countryId, _ => new SemaphoreSlim(1, 1));
+            // Try to acquire without waiting: if we can, then no sync is currently running.
+            if (sem.Wait(0))
+            {
+                sem.Release();
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Wait until the current synchronization (if any) completes for the specified country.
+        /// Returns immediately if no synchronization is running.
+        /// </summary>
+        public async Task WaitForSynchronizationAsync(string countryId, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) return;
+            var sem = _syncSemaphores.GetOrAdd(countryId, _ => new SemaphoreSlim(1, 1));
+            // Wait to acquire; if already free, this returns immediately. Then release so others can proceed.
+            await sem.WaitAsync(cancellationToken).ConfigureAwait(false);
+            sem.Release();
+        }
         private bool _isInitialized = false;
         private bool _disposed = false;
         
@@ -2814,7 +2971,18 @@ namespace RecoTool.Services
         public async Task<IDisposable> AcquireGlobalLockAsync(string identifier, string reason, TimeSpan timeout, CancellationToken token = default)
         {
             int timeoutSeconds = (int)Math.Max(0, timeout.TotalSeconds);
-            return await AcquireGlobalLockInternalAsync(identifier, reason, timeoutSeconds, token);
+            // Serialize acquisition attempts within this process and keep the gate held for the lock lifetime
+            await _acquireGlobalProcessGate.WaitAsync(token);
+            try
+            {
+                var inner = await AcquireGlobalLockInternalAsync(identifier, reason, timeoutSeconds, token);
+                return new ProcessGateLockHandle(inner, _acquireGlobalProcessGate);
+            }
+            catch
+            {
+                try { _acquireGlobalProcessGate.Release(); } catch { }
+                throw;
+            }
         }
 
         private void EnsureInitialized()
@@ -4068,9 +4236,10 @@ namespace RecoTool.Services
                 }
             }
 
-            // 3) Après le push, rafraîchir toutes les bases locales depuis le réseau (best-effort)
-            // 3) Ne plus recouvrir la base locale de rapprochement juste après la sync.
+            // 3) Après le push+pull, ne plus recouvrir Reconciliation local depuis réseau.
             //    La synchronisation a déjà aligné local et réseau pour T_Reconciliation.
+            //    Invalider le cache UI pour forcer un rechargement frais lors du prochain Refresh().
+            try { ReconciliationService.InvalidateReconciliationViewCache(countryId); } catch { }
             onProgress?.Invoke(50, "Vérifications post-synchronisation pour RECON...");
 
             try
@@ -4473,9 +4642,9 @@ namespace RecoTool.Services
         {
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
 
-            // Guard: prevent overwriting local AMBRE DB if unsynced local changes exist
-            if (await HasUnsyncedLocalChangesAsync(countryId))
-                throw new InvalidOperationException($"Rafraîchissement AMBRE bloqué: des changements locaux non synchronisés existent pour {countryId}.");
+            // AMBRE est un instantané lecture seule côté client. Même s'il y a des changements locaux en attente
+            // (liés à la table de réconciliation), on doit toujours rafraîchir AMBRE depuis le réseau.
+            // On retire donc le blocage ici.
 
             string localDbPath = GetLocalAmbreDbPath(countryId);
             string dataDirectory = Path.GetDirectoryName(localDbPath);
@@ -4490,9 +4659,9 @@ namespace RecoTool.Services
                     if (!Directory.Exists(dataDirectory)) Directory.CreateDirectory(dataDirectory);
                     string localZipPath = GetLocalAmbreZipCachePath(countryId);
 
-                    var netFi = new FileInfo(networkZipPath);
-                    var locFi = new FileInfo(localZipPath);
-                    bool needZipCopy = !locFi.Exists || !FilesAreEqual(locFi, netFi);
+                    var netZipFi = new FileInfo(networkZipPath);
+                    var locZipFi = new FileInfo(localZipPath);
+                    bool needZipCopy = !locZipFi.Exists || !FilesAreEqual(locZipFi, netZipFi);
 
                     if (needZipCopy)
                     {
@@ -4505,6 +4674,8 @@ namespace RecoTool.Services
                             await Task.Run(() => File.Move(tmpZip, localZipPath));
                         }
                         try { var bak = localZipPath + ".bak"; if (File.Exists(bak)) File.Delete(bak); } catch { }
+                        // Normalize destination timestamp to source (UTC) to prevent false mismatch
+                        try { File.SetLastWriteTimeUtc(localZipPath, netZipFi.LastWriteTimeUtc); } catch { }
 
                         await ExtractAmbreZipToLocalAsync(countryId, localZipPath, localDbPath);
                     }
@@ -4533,6 +4704,16 @@ namespace RecoTool.Services
 
             if (!Directory.Exists(dataDirectory)) Directory.CreateDirectory(dataDirectory);
 
+            // Copier uniquement si le fichier réseau diffère du local
+            var netFi = new FileInfo(networkDbPath);
+            var locFi = new FileInfo(localDbPath);
+            bool needCopy = !locFi.Exists || !FilesAreEqual(locFi, netFi);
+            if (!needCopy)
+            {
+                System.Diagnostics.Debug.WriteLine($"AMBRE: local à jour pour {countryId} (aucune copie nécessaire)");
+                return;
+            }
+
             string baseName = Path.GetFileNameWithoutExtension(networkDbPath);
             string tempLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.tmp_{Guid.NewGuid():N}");
             string backupLocal = Path.Combine(dataDirectory, $"{baseName}.accdb.bak");
@@ -4560,8 +4741,13 @@ namespace RecoTool.Services
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
 
             // Guard: prevent overwriting local RECON DB if unsynced local changes exist
+            // Previous behavior threw an exception here; we now log and return silently to avoid noisy errors
+            // during country initialization. The full sync path (push+pull) already aligns reconciliation data.
             if (await HasUnsyncedLocalChangesAsync(countryId))
-                throw new InvalidOperationException($"Rafraîchissement RECON bloqué: des changements locaux non synchronisés existent pour {countryId}.");
+            {
+                try { System.Diagnostics.Debug.WriteLine($"RECON: refresh skipped due to pending local changes for {countryId}"); } catch { }
+                return;
+            }
 
             string localDbPath = GetLocalReconciliationDbPath(countryId);
             string networkDbPath = GetNetworkReconciliationDbPath(countryId);
@@ -4602,9 +4788,8 @@ namespace RecoTool.Services
         {
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
 
-            // Guard: prevent overwriting local DW DB if unsynced local changes exist
-            if (await HasUnsyncedLocalChangesAsync(countryId))
-                throw new InvalidOperationException($"Rafraîchissement DW bloqué: des changements locaux non synchronisés existent pour {countryId}.");
+            // DWINGS est un instantané lecture seule côté client. On rafraîchit toujours depuis le réseau
+            // quand le ZIP (ou l'accdb) réseau diffère de la version locale.
 
             string localDbPath = GetLocalDwDbPath(countryId);
             string networkDbPath = GetNetworkDwDbPath(countryId);
@@ -4814,6 +4999,235 @@ namespace RecoTool.Services
             string networkDbPath = Path.Combine(remoteDir, $"{countryPrefix}{countryId}.accdb");
             // Enable row-level locking and avoid share-deny write to reduce locking conflicts
             return $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={networkDbPath};Jet OLEDB:Database Locking Mode=1;Mode=Share Deny None;";
+        }
+
+        /// <summary>
+        /// Pull network changes for T_Reconciliation back into the local database.
+        /// Comparison rule: prefer LastModified (if present); if not newer by LastModified, compare Version.
+        /// Applies UPDATE for existing rows and INSERT for missing ones. Returns number of rows applied.
+        /// </summary>
+        private async Task<int> PullReconciliationFromNetworkAsync(string countryId)
+        {
+            EnsureInitialized();
+            if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));
+
+            int applied = 0;
+
+            using (var localConn = new OleDbConnection(GetCountryConnectionString(countryId)))
+            using (var netConn = new OleDbConnection(GetNetworkCountryConnectionString(countryId)))
+            {
+                await localConn.OpenAsync();
+                await netConn.OpenAsync();
+
+                var pkCol = await GetPrimaryKeyColumnAsync(localConn, "T_Reconciliation");
+                if (string.IsNullOrWhiteSpace(pkCol)) throw new InvalidOperationException("Impossible de déterminer la clé primaire de T_Reconciliation");
+
+                var localCols = await GetTableColumnsAsync(localConn, "T_Reconciliation");
+                var netCols = await GetTableColumnsAsync(netConn, "T_Reconciliation");
+                var commonCols = new HashSet<string>(localCols.Intersect(netCols, StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+                // Always include PK
+                commonCols.Add(pkCol);
+                // Make sure we have these for comparison if available
+                bool hasVer = commonCols.Contains("Version");
+                bool hasLM = commonCols.Contains("LastModified");
+
+                // Build column list for network SELECT
+                var selectCols = commonCols.ToList();
+                // stable order: PK first
+                selectCols = selectCols
+                    .OrderBy(c => string.Equals(c, pkCol, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                    .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                // Build local map: pk -> (Version, LastModified)
+                var localMap = new Dictionary<string, (long ver, DateTime? lm)>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    var sb = new StringBuilder();
+                    sb.Append($"SELECT [{pkCol}]");
+                    if (hasVer) sb.Append(", [Version]");
+                    if (hasLM) sb.Append(", [LastModified]");
+                    sb.Append(" FROM [T_Reconciliation]");
+                    using (var cmd = new OleDbCommand(sb.ToString(), localConn))
+                    using (var reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            var pk = Convert.ToString(reader[pkCol]);
+                            long ver = 0; DateTime? lm = null;
+                            if (hasVer && !reader.IsDBNull(reader.GetOrdinal("Version")))
+                                ver = Convert.ToInt64(reader["Version"]);
+                            if (hasLM && !reader.IsDBNull(reader.GetOrdinal("LastModified")))
+                                lm = Convert.ToDateTime(reader["LastModified"]);
+                            if (!string.IsNullOrWhiteSpace(pk)) localMap[pk] = (ver, lm);
+                        }
+                    }
+                }
+                catch { /* proceed best-effort */ }
+
+                var localTypes = await GetColumnTypesAsync(localConn, "T_Reconciliation");
+
+                // Determine filters based on latest local LastModified (preferred) or Version
+                DateTime? lastLocalLm = null;
+                long lastLocalVer = -1;
+                try
+                {
+                    if (hasLM)
+                    {
+                        using (var lmCmd = new OleDbCommand("SELECT MAX([LastModified]) FROM [T_Reconciliation]", localConn))
+                        {
+                            var o = await lmCmd.ExecuteScalarAsync();
+                            if (o != null && o != DBNull.Value) lastLocalLm = Convert.ToDateTime(o);
+                        }
+                        if (!lastLocalLm.HasValue && _lastSyncTimes.TryGetValue(countryId, out var ts))
+                        {
+                            lastLocalLm = ts;
+                        }
+                    }
+                }
+                catch { }
+                try
+                {
+                    if (hasVer)
+                    {
+                        using (var vCmd = new OleDbCommand("SELECT MAX([Version]) FROM [T_Reconciliation]", localConn))
+                        {
+                            var o = await vCmd.ExecuteScalarAsync();
+                            if (o != null && o != DBNull.Value) long.TryParse(Convert.ToString(o), out lastLocalVer);
+                        }
+                    }
+                }
+                catch { }
+
+                // Network scan: compare and apply with server-side filter when possible
+                var colList = string.Join(", ", selectCols.Select(c => $"[{c}]"));
+                string where = null;
+                var ncmd = new OleDbCommand();
+                ncmd.Connection = netConn;
+                if (hasLM && lastLocalLm.HasValue)
+                {
+                    where = " WHERE [LastModified] > ?";
+                    ncmd.CommandText = $"SELECT {colList} FROM [T_Reconciliation]{where}";
+                    ncmd.Parameters.Add(new OleDbParameter("@pLM", OleDbType.Date) { Value = CoerceValueForOleDb(lastLocalLm.Value, OleDbType.Date) });
+                }
+                else if (hasVer && lastLocalVer >= 0)
+                {
+                    where = " WHERE [Version] > ?";
+                    ncmd.CommandText = $"SELECT {colList} FROM [T_Reconciliation]{where}";
+                    ncmd.Parameters.Add(new OleDbParameter("@pV", OleDbType.BigInt) { Value = lastLocalVer });
+                }
+                else
+                {
+                    ncmd.CommandText = $"SELECT {colList} FROM [T_Reconciliation]";
+                }
+                using (var nrd = await ncmd.ExecuteReaderAsync())
+                {
+                    while (await nrd.ReadAsync())
+                    {
+                        // Read PK
+                        var pkVal = nrd[pkCol];
+                        if (pkVal == null || pkVal == DBNull.Value) continue;
+                        var pkStr = Convert.ToString(pkVal);
+
+                        // Read compare values from network
+                        long nVer = 0; DateTime? nLm = null;
+                        if (hasVer)
+                        {
+                            var o = nrd["Version"]; if (o != null && o != DBNull.Value) nVer = Convert.ToInt64(o);
+                        }
+                        if (hasLM)
+                        {
+                            var o = nrd["LastModified"]; if (o != null && o != DBNull.Value) nLm = Convert.ToDateTime(o);
+                        }
+
+                        bool existsLocal = localMap.TryGetValue(pkStr, out var loc);
+                        bool shouldApply = false;
+                        if (!existsLocal)
+                        {
+                            shouldApply = true; // missing locally -> insert
+                        }
+                        else
+                        {
+                            // Compare by LastModified first (if present)
+                            if (hasLM && nLm.HasValue)
+                            {
+                                var lLm = loc.lm;
+                                if (!lLm.HasValue || nLm.Value > lLm.Value)
+                                    shouldApply = true;
+                            }
+                            // If not newer by LM, compare by Version
+                            if (!shouldApply && hasVer)
+                            {
+                                var lVer = loc.ver;
+                                if (nVer > lVer)
+                                    shouldApply = true;
+                            }
+                        }
+
+                        if (!shouldApply) continue;
+
+                        // Build values dictionary from network row for common columns (excluding PK for update set)
+                        var rowVals = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var c in selectCols)
+                        {
+                            rowVals[c] = nrd[c];
+                        }
+
+                        if (existsLocal)
+                        {
+                            // UPDATE local
+                            var setCols = selectCols.Where(c => !string.Equals(c, pkCol, StringComparison.OrdinalIgnoreCase)).ToList();
+                            var setParts = setCols.Select((c, i) => $"[{c}] = @p{i}").ToList();
+                            using (var up = new OleDbCommand($"UPDATE [T_Reconciliation] SET {string.Join(", ", setParts)} WHERE [{pkCol}] = @key", localConn))
+                            {
+                                for (int i = 0; i < setCols.Count; i++)
+                                {
+                                    var c = setCols[i];
+                                    localTypes.TryGetValue(c, out var t);
+                                    var p = new OleDbParameter($"@p{i}", t == 0 ? InferOleDbTypeFromValue(rowVals[c]) : t)
+                                    {
+                                        Value = CoerceValueForOleDb(rowVals[c], t == 0 ? InferOleDbTypeFromValue(rowVals[c]) : t)
+                                    };
+                                    up.Parameters.Add(p);
+                                }
+                                // key
+                                localTypes.TryGetValue(pkCol, out var tkey);
+                                up.Parameters.Add(new OleDbParameter("@key", tkey == 0 ? InferOleDbTypeFromValue(pkVal) : tkey)
+                                {
+                                    Value = CoerceValueForOleDb(pkVal, tkey == 0 ? InferOleDbTypeFromValue(pkVal) : tkey)
+                                });
+                                await up.ExecuteNonQueryAsync();
+                            }
+                            applied++;
+                        }
+                        else
+                        {
+                            // INSERT local for all columns (selectCols)
+                            var insCols = selectCols.ToList();
+                            var ph = string.Join(", ", insCols.Select((c, i) => $"@p{i}"));
+                            var colListIns = string.Join(", ", insCols.Select(c => $"[{c}]"));
+                            using (var ins = new OleDbCommand($"INSERT INTO [T_Reconciliation] ({colListIns}) VALUES ({ph})", localConn))
+                            {
+                                for (int i = 0; i < insCols.Count; i++)
+                                {
+                                    var c = insCols[i];
+                                    localTypes.TryGetValue(c, out var t);
+                                    var v = rowVals[c];
+                                    var p = new OleDbParameter($"@p{i}", t == 0 ? InferOleDbTypeFromValue(v) : t)
+                                    {
+                                        Value = CoerceValueForOleDb(v, t == 0 ? InferOleDbTypeFromValue(v) : t)
+                                    };
+                                    ins.Parameters.Add(p);
+                                }
+                                await ins.ExecuteNonQueryAsync();
+                            }
+                            applied++;
+                        }
+                    }
+                }
+            }
+
+            return applied;
         }
 
         /// <summary>
@@ -5263,24 +5677,87 @@ namespace RecoTool.Services
                                     {
                                         // UPDATE
                                         var setParts = new List<string>();
-                                        for (int i = 0; i < allCols.Count; i++) setParts.Add($"[{allCols[i]}] = @p{i}");
+                                        // If the table has a Version column, handle it via increment expression only (case-insensitive)
+                                        bool hasVersionCol = cols != null && cols.Any(n => string.Equals(n, "Version", StringComparison.OrdinalIgnoreCase));
+                                        var effectiveCols = hasVersionCol
+                                            ? allCols.Where(c => !string.Equals(c, "Version", StringComparison.OrdinalIgnoreCase)).ToList()
+                                            : allCols;
+                                        for (int i = 0; i < effectiveCols.Count; i++) setParts.Add($"[{effectiveCols[i]}] = @p{i}");
+                                        if (hasVersionCol)
+                                        {
+                                            setParts.Add("[Version] = [Version] + 1");
+                                        }
                                         using (var up = new OleDbCommand($"UPDATE [{table}] SET {string.Join(", ", setParts)} WHERE [{pkCol}] = @key", netConn, tx))
                                         {
-                                            for (int i = 0; i < allCols.Count; i++) addParam(up, $"@p{i}", localValues[allCols[i]], allCols[i], typeMap);
+                                            for (int i = 0; i < effectiveCols.Count; i++) addParam(up, $"@p{i}", localValues[effectiveCols[i]], effectiveCols[i], typeMap);
                                             addParam(up, "@key", localPkVal, pkCol, typeMap);
                                             await execWithRetryAsync(up);
+                                        }
+
+                                        // Mirror Version increment locally (best-effort) so local stays aligned without a pull
+                                        if (hasVersionCol)
+                                        {
+                                            try
+                                            {
+                                                using (var lup = new OleDbCommand($"UPDATE [{table}] SET [Version] = [Version] + 1 WHERE [{pkCol}] = @key", localConn))
+                                                {
+                                                    var localTypes = await GetColumnTypesAsync(localConn, table);
+                                                    addParam(lup, "@key", localPkVal, pkCol, localTypes);
+                                                    await lup.ExecuteNonQueryAsync();
+                                                }
+                                            }
+                                            catch { /* keep push resilient */ }
                                         }
                                     }
                                     else
                                     {
                                         // INSERT
                                         var insertCols = localValues.Keys.ToList();
+                                        // If table has Version column and it's missing/null in localValues, set to 1 on insert
+                                        bool hasVersionCol = cols.Contains("Version");
+                                        if (hasVersionCol)
+                                        {
+                                            var lvHasVersion = localValues.ContainsKey("Version") && localValues["Version"] != null && localValues["Version"] != DBNull.Value;
+                                            if (!lvHasVersion && !insertCols.Contains("Version", StringComparer.OrdinalIgnoreCase))
+                                            {
+                                                insertCols.Add("Version");
+                                            }
+                                        }
                                         var ph = string.Join(", ", insertCols.Select((c, i) => $"@p{i}"));
                                         var colList = string.Join(", ", insertCols.Select(c => $"[{c}]"));
                                         using (var ins = new OleDbCommand($"INSERT INTO [{table}] ({colList}) VALUES ({ph})", netConn, tx))
                                         {
-                                            for (int i = 0; i < insertCols.Count; i++) addParam(ins, $"@p{i}", localValues[insertCols[i]], insertCols[i], typeMap);
+                                            for (int i = 0; i < insertCols.Count; i++)
+                                            {
+                                                var colName = insertCols[i];
+                                                object val;
+                                                if (string.Equals(colName, "Version", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    var lvHasVersion = localValues.ContainsKey("Version") && localValues["Version"] != null && localValues["Version"] != DBNull.Value;
+                                                    val = lvHasVersion ? localValues["Version"] : (object)1;
+                                                }
+                                                else
+                                                {
+                                                    val = localValues.ContainsKey(colName) ? localValues[colName] : DBNull.Value;
+                                                }
+                                                addParam(ins, $"@p{i}", val, colName, typeMap);
+                                            }
                                             await execWithRetryAsync(ins);
+                                        }
+
+                                        // If Version was added/set to 1 on network insert, mirror locally when missing
+                                        if (hasVersionCol)
+                                        {
+                                            try
+                                            {
+                                                using (var lins = new OleDbCommand($"UPDATE [{table}] SET [Version] = [Version] + IIF([Version] <= 0, 1, 0) WHERE [{pkCol}] = @key", localConn))
+                                                {
+                                                    var localTypes = await GetColumnTypesAsync(localConn, table);
+                                                    addParam(lins, "@key", localPkVal, pkCol, localTypes);
+                                                    await lins.ExecuteNonQueryAsync();
+                                                }
+                                            }
+                                            catch { /* best-effort */ }
                                         }
                                     }
 
@@ -5756,6 +6233,103 @@ namespace RecoTool.Services
                     }
                     catch { /* ignorer les erreurs lors de la vérification du verrou */ }
 
+                    // Detect remote changes since last sync to avoid false no-op (prefer Version watermark; fallback to LastModified)
+                    bool remoteHasChanges = false;
+                    try
+                    {
+                        var remotePath = GetNetworkReconciliationDbPath(_currentCountryId);
+                        if (!string.IsNullOrWhiteSpace(remotePath) && File.Exists(remotePath))
+                        {
+                            // Read watermarks from local control DB (_SyncConfig)
+                            DateTime lastSync = DateTime.MinValue;
+                            long lastSyncVersion = -1;
+                            try
+                            {
+                                using (var ctrl = new OleDbConnection(GetControlConnectionString()))
+                                {
+                                    await ctrl.OpenAsync();
+                                    // Ensure _SyncConfig exists
+                                    var schema = ctrl.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new object[] { null, null, null, "TABLE" });
+                                    bool has = schema != null && schema.Rows.OfType<System.Data.DataRow>()
+                                        .Any(r => string.Equals(Convert.ToString(r["TABLE_NAME"]), "_SyncConfig", StringComparison.OrdinalIgnoreCase));
+                                    if (!has)
+                                    {
+                                        using (var create = new OleDbCommand("CREATE TABLE _SyncConfig (ConfigKey TEXT(255) PRIMARY KEY, ConfigValue MEMO)", ctrl))
+                                            await create.ExecuteNonQueryAsync();
+                                    }
+                                    // Try version first
+                                    try
+                                    {
+                                        using (var verCmd = new OleDbCommand("SELECT ConfigValue FROM _SyncConfig WHERE ConfigKey = 'LastSyncVersion'", ctrl))
+                                        using (var r = await verCmd.ExecuteReaderAsync())
+                                        {
+                                            if (await r.ReadAsync())
+                                            {
+                                                var val = r.IsDBNull(0) ? null : r.GetString(0);
+                                                if (!string.IsNullOrWhiteSpace(val)) long.TryParse(val, out lastSyncVersion);
+                                            }
+                                        }
+                                    }
+                                    catch { }
+                                    using (var cmd = new OleDbCommand("SELECT ConfigValue FROM _SyncConfig WHERE ConfigKey = 'LastSyncTimestamp'", ctrl))
+                                    using (var reader = await cmd.ExecuteReaderAsync())
+                                    {
+                                        if (await reader.ReadAsync())
+                                        {
+                                            var val = reader.IsDBNull(0) ? null : reader.GetString(0);
+                                            if (!string.IsNullOrWhiteSpace(val))
+                                            {
+                                                DateTime parsed;
+                                                if (DateTime.TryParse(val, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out parsed))
+                                                    lastSync = parsed.ToUniversalTime();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+
+                            // Quick count on remote using Version watermark if available; else LastModified timestamp
+                            try
+                            {
+                                string conn = $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={remotePath};Persist Security Info=False;";
+                                using (var remote = new OleDbConnection(conn))
+                                {
+                                    await remote.OpenAsync();
+                                    if (lastSyncVersion >= 0)
+                                    {
+                                        using (var countCmd = new OleDbCommand("SELECT COUNT(*) FROM T_Reconciliation WHERE Version > ?", remote))
+                                        {
+                                            // Access/ACE is sensitive to parameter types. Use explicit Integer for Version
+                                            var p = new OleDbParameter("@p1", OleDbType.Integer) { Value = lastSyncVersion };
+                                            countCmd.Parameters.Add(p);
+                                            var obj = await countCmd.ExecuteScalarAsync();
+                                            int cnt;
+                                            if (obj != null && int.TryParse(Convert.ToString(obj), out cnt))
+                                                remoteHasChanges = cnt > 0;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        using (var countCmd = new OleDbCommand("SELECT COUNT(*) FROM T_Reconciliation WHERE LastModified > ?", remote))
+                                        {
+                                            // Access/ACE: use explicit Date type for DateTime parameters
+                                            var dt = lastSync == DateTime.MinValue ? DateTime.FromOADate(0) : lastSync;
+                                            var p = new OleDbParameter("@p1", OleDbType.Date) { Value = dt };
+                                            countCmd.Parameters.Add(p);
+                                            var obj = await countCmd.ExecuteScalarAsync();
+                                            int cnt;
+                                            if (obj != null && int.TryParse(Convert.ToString(obj), out cnt))
+                                                remoteHasChanges = cnt > 0;
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
+
                     // Push local pending changes first (best-effort)
                     if (_useLocalChangeLog)
                     {
@@ -5788,7 +6362,7 @@ namespace RecoTool.Services
                                 // Vérifier les changements en attente dans la base de lock
                                 var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(_currentCountryId));
                                 var unsynced = await tracker.GetUnsyncedChangesAsync();
-                                if (unsynced == null || !unsynced.Any())
+                                if ((unsynced == null || !unsynced.Any()) && !remoteHasChanges)
                                 {
                                     onProgress?.Invoke(100, "Bases identiques (RECON) - aucune synchronisation nécessaire.");
                                     return new SyncResult { Success = true, Message = "No-op (identique)" };
@@ -5825,6 +6399,81 @@ namespace RecoTool.Services
                     if (reconRes != null && reconRes.Success)
                     {
                         _lastSyncTimes[_currentCountryId] = DateTime.UtcNow;
+                        // Persist LastSyncTimestamp in _SyncConfig (ISO UTC)
+                        try
+                        {
+                            var iso = _lastSyncTimes[_currentCountryId].ToString("o");
+                            using (var connection = new OleDbConnection(GetControlConnectionString()))
+                            {
+                                await connection.OpenAsync();
+                                // Ensure _SyncConfig exists locally
+                                var schema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new object[] { null, null, null, "TABLE" });
+                                bool tableExists = schema != null && schema.Rows.OfType<System.Data.DataRow>()
+                                    .Any(r => string.Equals(r["TABLE_NAME"].ToString(), "_SyncConfig", StringComparison.OrdinalIgnoreCase));
+                                if (!tableExists)
+                                {
+                                    using (var create = new OleDbCommand("CREATE TABLE _SyncConfig (ConfigKey TEXT(255) PRIMARY KEY, ConfigValue MEMO)", connection))
+                                    {
+                                        await create.ExecuteNonQueryAsync();
+                                    }
+                                }
+
+                                using (var update = new OleDbCommand("UPDATE _SyncConfig SET ConfigValue = @val WHERE ConfigKey = 'LastSyncTimestamp'", connection))
+                                {
+                                    update.Parameters.Add(new OleDbParameter("@val", OleDbType.LongVarWChar) { Value = (object)iso ?? DBNull.Value });
+                                    int rows = await update.ExecuteNonQueryAsync();
+                                    if (rows == 0)
+                                    {
+                                        using (var insert = new OleDbCommand("INSERT INTO _SyncConfig (ConfigKey, ConfigValue) VALUES ('LastSyncTimestamp', @val)", connection))
+                                        {
+                                            insert.Parameters.Add(new OleDbParameter("@val", OleDbType.LongVarWChar) { Value = (object)iso ?? DBNull.Value });
+                                            await insert.ExecuteNonQueryAsync();
+                                        }
+                                    }
+                                }
+
+                                // Also persist LastSyncVersion if the remote table supports it
+                                try
+                                {
+                                    var remotePath = GetNetworkReconciliationDbPath(_currentCountryId);
+                                    if (!string.IsNullOrWhiteSpace(remotePath) && File.Exists(remotePath))
+                                    {
+                                        var connStr = $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={remotePath};Persist Security Info=False;";
+                                        long maxVer = -1;
+                                        using (var remote = new OleDbConnection(connStr))
+                                        {
+                                            await remote.OpenAsync();
+                                            using (var cmd = new OleDbCommand("SELECT MAX(Version) FROM T_Reconciliation", remote))
+                                            {
+                                                var obj = await cmd.ExecuteScalarAsync();
+                                                if (obj != null && obj != DBNull.Value)
+                                                {
+                                                    long.TryParse(Convert.ToString(obj), out maxVer);
+                                                }
+                                            }
+                                        }
+                                        if (maxVer >= 0)
+                                        {
+                                            using (var up = new OleDbCommand("UPDATE _SyncConfig SET ConfigValue = @v WHERE ConfigKey = 'LastSyncVersion'", connection))
+                                            {
+                                                up.Parameters.Add(new OleDbParameter("@v", OleDbType.LongVarWChar) { Value = maxVer.ToString() });
+                                                int rows = await up.ExecuteNonQueryAsync();
+                                                if (rows == 0)
+                                                {
+                                                    using (var ins = new OleDbCommand("INSERT INTO _SyncConfig (ConfigKey, ConfigValue) VALUES ('LastSyncVersion', @v)", connection))
+                                                    {
+                                                        ins.Parameters.Add(new OleDbParameter("@v", OleDbType.LongVarWChar) { Value = maxVer.ToString() });
+                                                        await ins.ExecuteNonQueryAsync();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                        catch { }
                         return reconRes;
                     }
                     return reconRes ?? new SyncResult { Success = false, Message = "Résultat RECON nul" };

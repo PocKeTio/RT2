@@ -10,7 +10,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using RecoTool.Models;
 using RecoTool.Services;
-using System.Text.RegularExpressions;
+using RecoTool.Helpers;
 using System.Text;
 
 namespace RecoTool.UI.Views.Windows
@@ -329,6 +329,20 @@ namespace RecoTool.UI.Views.Windows
                 if (TriggerDatePicker != null)
                     TriggerDatePicker.SelectedDate = _reconciliation?.TriggerDate;
 
+                // Action status/date
+                try
+                {
+                    if (ActionDoneCheckBox != null)
+                        ActionDoneCheckBox.IsChecked = _reconciliation?.ActionStatus ?? _item?.ActionStatus;
+                }
+                catch { }
+                try
+                {
+                    if (ActionDatePicker != null)
+                        ActionDatePicker.SelectedDate = _reconciliation?.ActionDate ?? _item?.ActionDate;
+                }
+                catch { }
+
                 // Initialize KPI selection from persisted reconciliation
                 if (_reconciliation != null)
                 {
@@ -545,15 +559,15 @@ namespace RecoTool.UI.Views.Windows
                 {
                     if (typeItem.StartsWith("BGPMT", StringComparison.OrdinalIgnoreCase))
                     {
-                        key = ExtractBgpmtToken(_item.RawLabel) ?? ExtractBgpmtToken(_item.Reconciliation_Num);
+                        key = DwingsLinkingHelper.ExtractBgpmtToken(_item.RawLabel) ?? DwingsLinkingHelper.ExtractBgpmtToken(_item.Reconciliation_Num);
                     }
                     else if (typeItem.StartsWith("BGI", StringComparison.OrdinalIgnoreCase))
                     {
-                        key = ExtractBgiToken(_item.RawLabel) ?? ExtractBgiToken(_item.Reconciliation_Num);
+                        key = DwingsLinkingHelper.ExtractBgiToken(_item.RawLabel) ?? DwingsLinkingHelper.ExtractBgiToken(_item.Reconciliation_Num);
                     }
                     else if (typeItem.StartsWith("Guarantee", StringComparison.OrdinalIgnoreCase))
                     {
-                        key = ExtractGuaranteeId(_item.RawLabel) ?? ExtractGuaranteeId(_item.Reconciliation_Num);
+                        key = DwingsLinkingHelper.ExtractGuaranteeId(_item.RawLabel) ?? DwingsLinkingHelper.ExtractGuaranteeId(_item.Reconciliation_Num);
                     }
                 }
 
@@ -723,17 +737,17 @@ namespace RecoTool.UI.Views.Windows
                 var fromAmbreRef = _item?.Receivable_DWRefFromAmbre;
 
                 // BGPMT
-                string tryBgpmt(string s) => ExtractBgpmtToken(s);
+                string tryBgpmt(string s) => DwingsLinkingHelper.ExtractBgpmtToken(s);
                 var bgpmt = tryBgpmt(fromLabel) ?? tryBgpmt(fromRecoNum) ?? tryBgpmt(fromPayRef) ?? tryBgpmt(fromAmbreRef);
                 if (!string.IsNullOrWhiteSpace(bgpmt)) candidates.Add(("BGPMT", bgpmt));
 
                 // BGI (invoice id)
-                string tryBgi(string s) => ExtractBgiToken(s);
+                string tryBgi(string s) => DwingsLinkingHelper.ExtractBgiToken(s);
                 var bgi = tryBgi(fromLabel) ?? tryBgi(fromRecoNum) ?? tryBgi(fromAmbreRef) ?? _item?.INVOICE_ID;
                 if (!string.IsNullOrWhiteSpace(bgi)) candidates.Add(("BGI", bgi));
 
                 // Guarantee ID
-                string tryGid(string s) => ExtractGuaranteeId(s);
+                string tryGid(string s) => DwingsLinkingHelper.ExtractGuaranteeId(s);
                 var gid = tryGid(fromLabel) ?? tryGid(fromRecoNum) ?? tryGid(fromAmbreRef) ?? _item?.GUARANTEE_ID;
                 if (!string.IsNullOrWhiteSpace(gid)) candidates.Add(("Guarantee ID", gid));
                 // Also try raw Ambre ref directly as a Guarantee ID
@@ -880,27 +894,7 @@ namespace RecoTool.UI.Views.Windows
             }
         }
 
-        private static string ExtractBgpmtToken(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return null;
-            var m = Regex.Match(s, @"\bBGPMT[A-Za-z0-9]{8,20}\b");
-            return m.Success ? m.Value : null;
-        }
-
-        private static string ExtractBgiToken(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return null;
-            var m = Regex.Match(s, @"\bBGI\d{13}\b");
-            return m.Success ? m.Value : null;
-        }
-
-        private static string ExtractGuaranteeId(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return null;
-            // Pattern: GXXXXYYZZZZZZZZZ (X,Z digits, Y letters)
-            var m = Regex.Match(s, @"\bG\d{4}[A-Za-z]{2}\d{9}\b");
-            return m.Success ? m.Value : null;
-        }
+        // Local regex extractors removed in favor of centralized RecoTool.Helpers.DwingsLinkingHelper
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
@@ -996,7 +990,20 @@ namespace RecoTool.UI.Views.Windows
                 if (TriggerDatePicker != null)
                     reco.TriggerDate = TriggerDatePicker.SelectedDate;
 
+                // Defaults: when an Action is set but no status/date provided, set PENDING with today's date
+                if (SelectedActionId.HasValue)
+                {
+                    if (ActionDoneCheckBox != null && !ActionDoneCheckBox.IsChecked.HasValue)
+                        ActionDoneCheckBox.IsChecked = false;
+                    if (ActionDatePicker != null && !ActionDatePicker.SelectedDate.HasValue)
+                        ActionDatePicker.SelectedDate = DateTime.Today;
+                }
+
                 // Persist
+                if (ActionDoneCheckBox != null)
+                    reco.ActionStatus = ActionDoneCheckBox.IsChecked;
+                if (ActionDatePicker != null)
+                    reco.ActionDate = ActionDatePicker.SelectedDate;
                 await _reconciliationService.SaveReconciliationAsync(reco);
                 _reconciliation = reco;
 

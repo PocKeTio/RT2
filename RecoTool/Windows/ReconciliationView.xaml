@@ -4,6 +4,8 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
              xmlns:local="clr-namespace:RecoTool.Windows"
+             x:Name="Root"
+             xmlns:conv="clr-namespace:RecoTool.Converters"
              mc:Ignorable="d" 
              d:DesignHeight="600" d:DesignWidth="900">
     <UserControl.Resources>
@@ -21,6 +23,13 @@
             </TextBlock>
         </DataTemplate>
         <local:GuaranteeTypeDisplayConverter x:Key="GuaranteeTypeDisplayConverter" />
+        <!-- Converter to display Pending/Done -->
+        <conv:BoolToPendingDoneConverter x:Key="BoolToPendingDoneConverter" />
+        <!-- Force ComboBoxItem alignment to avoid theme templates using ancestor bindings that may fail during dynamic updates -->
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
     </UserControl.Resources>
     <Grid Background="{DynamicResource BNPBackground}">
         <Grid.RowDefinitions>
@@ -468,6 +477,44 @@
                                     </ComboBox>
                                 </Grid>
 
+                                <!-- Action Done filter -->
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Action Done:" VerticalAlignment="Center"/>
+                                    <ComboBox Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
+                                              SelectedValue="{Binding FilterActionDone, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              SelectedValuePath="Tag">
+                                        <ComboBoxItem Tag="{x:Null}">All</ComboBoxItem>
+                                        <ComboBoxItem Tag="False">Pending</ComboBoxItem>
+                                        <ComboBoxItem Tag="True">Done</ComboBoxItem>
+                                    </ComboBox>
+                                </Grid>
+
+                                <!-- Action Date From/To filters -->
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Action Date From:" VerticalAlignment="Center"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <DatePicker SelectedDate="{Binding FilterActionDateFrom, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
+                                    </Border>
+                                </Grid>
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Action Date To:" VerticalAlignment="Center"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <DatePicker SelectedDate="{Binding FilterActionDateTo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
+                                    </Border>
+                                </Grid>
+
                                 <!-- Potential Duplicates -->
                                 <Grid Margin="0,8">
                                     <Grid.ColumnDefinitions>
@@ -615,24 +662,31 @@
                               SelectionChanged="ResultsDataGrid_SelectionChanged"
                               MouseDoubleClick="ResultsDataGrid_MouseDoubleClick"
                               CellEditEnding="ResultsDataGrid_CellEditEnding"
-                              CurrentCellChanged="ResultsDataGrid_CurrentCellChanged"
-                              EnableRowVirtualization="True"
-                              EnableColumnVirtualization="True"
-                              VirtualizingPanel.IsVirtualizing="True"
-                              VirtualizingPanel.VirtualizationMode="Recycling"
-                              VirtualizingPanel.CacheLength="1,1"
-                              VirtualizingPanel.ScrollUnit="Item"
-                              ScrollViewer.CanContentScroll="True"
-                              ScrollViewer.IsDeferredScrollingEnabled="False"
-                              ScrollViewer.VerticalScrollBarVisibility="Visible"
-                              ScrollViewer.HorizontalScrollBarVisibility="Visible"
-                              PreviewMouseWheel="ResultsDataGrid_PreviewMouseWheel"
-                              ScrollViewer.PanningMode="VerticalOnly"
-                              Loaded="ResultsDataGrid_Loaded"
                               AlternationCount="0"
+                              TextOptions.TextFormattingMode="Display"
                               GridLinesVisibility="None"
                               RowHeight="26"
                               ColumnHeaderHeight="28">
+                        <DataGrid.Resources>
+                            <!-- In-grid editing: decouple ComboBox visuals from theme to avoid ancestor-binding errors -->
+                            <Style TargetType="ComboBox" BasedOn="{x:Null}">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                <Setter Property="ItemContainerStyle">
+                                    <Setter.Value>
+                                        <Style TargetType="ComboBoxItem" BasedOn="{x:Null}">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                            <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                        </Style>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                            <Style TargetType="ComboBoxItem" BasedOn="{x:Null}">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                            </Style>
+                            <!-- No special checkbox styles; rely on default DataGridCheckBoxColumn behavior (like ACK) -->
+                        </DataGrid.Resources>
                         <DataGrid.ColumnHeaderStyle>
                             <Style TargetType="DataGridColumnHeader">
                                 <Setter Property="Background" Value="#F3F4F6"/>
@@ -693,7 +747,7 @@
                                     <Setter.Value>
                                         <MultiBinding Converter="{StaticResource ActionColorConverter}">
                                             <Binding Path="Action"/>
-                                            <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                            <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
                                         </MultiBinding>
                                     </Setter.Value>
                                 </Setter>
@@ -755,7 +809,7 @@
                                             <TextBlock.Text>
                                                 <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
                                                     <Binding Path="Action"/>
-                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                    <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
                                                 </MultiBinding>
                                             </TextBlock.Text>
                                         </TextBlock>
@@ -768,15 +822,53 @@
                                                   SelectedValuePath="USR_ID"
                                                   DisplayMemberPath="USR_FieldName"
                                                   SelectionChanged="UserFieldComboBox_SelectionChanged"
-                                                  Tag="Action">
+                                                  Tag="Action"
+                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
                                             <ComboBox.ItemsSource>
                                                 <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Action">
                                                     <Binding Path="Account_ID"/>
-                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
-                                                    <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                    <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
+                                                    <Binding ElementName="Root" Path="DataContext.CurrentCountryObject"/>
                                                 </MultiBinding>
                                             </ComboBox.ItemsSource>
                                         </ComboBox>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+                            <!-- Action Status (Pending/Done) -->
+                            <DataGridTemplateColumn Header="Action Status" Width="120" SortMemberPath="ActionStatus">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding ActionStatus, Converter={StaticResource BoolToPendingDoneConverter}}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <ComboBox Width="Auto"
+                                                  SelectedValue="{Binding ActionStatus, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  SelectedValuePath="Tag"
+                                                  SelectionChanged="UserFieldComboBox_SelectionChanged"
+                                                  Tag="ActionStatus"
+                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                                            <ComboBoxItem Tag="False">PENDING</ComboBoxItem>
+                                            <ComboBoxItem Tag="True">DONE</ComboBoxItem>
+                                        </ComboBox>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+                            <!-- Action Date -->
+                            <DataGridTemplateColumn Header="Action Date" Width="130" SortMemberPath="ActionDate">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding ActionDate, StringFormat={}{0:dd/MM/yyyy}}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <DatePicker Language="fr-FR"
+                                                    SelectedDateFormat="Short"
+                                                    SelectedDate="{Binding ActionDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                    Loaded="DatePicker_OpenOnLoad"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
@@ -788,7 +880,7 @@
                                             <TextBlock.Text>
                                                 <MultiBinding Converter="{StaticResource AssigneeIdToNameConverter}">
                                                     <Binding Path="Assignee"/>
-                                                    <Binding Path="DataContext.AssigneeOptions" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                    <Binding ElementName="Root" Path="DataContext.AssigneeOptions"/>
                                                 </MultiBinding>
                                             </TextBlock.Text>
                                         </TextBlock>
@@ -797,10 +889,12 @@
                                 <DataGridTemplateColumn.CellEditingTemplate>
                                     <DataTemplate>
                                         <ComboBox Width="Auto"
-                                                  ItemsSource="{Binding DataContext.AssigneeOptions, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                  ItemsSource="{Binding ElementName=Root, Path=DataContext.AssigneeOptions}"
                                                   DisplayMemberPath="Name"
                                                   SelectedValuePath="Id"
-                                                  SelectedValue="{Binding Assignee, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                  SelectedValue="{Binding Assignee, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                                        </ComboBox>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
@@ -872,7 +966,7 @@
                                             <TextBlock.Text>
                                                 <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
                                                     <Binding Path="KPI"/>
-                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                    <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
                                                 </MultiBinding>
                                             </TextBlock.Text>
                                         </TextBlock>
@@ -885,12 +979,13 @@
                                                   SelectedValuePath="USR_ID"
                                                   DisplayMemberPath="USR_FieldName"
                                                   SelectionChanged="UserFieldComboBox_SelectionChanged"
-                                                  Tag="KPI">
+                                                  Tag="KPI"
+                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
                                             <ComboBox.ItemsSource>
                                                 <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="KPI">
                                                     <Binding Path="Account_ID"/>
-                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
-                                                    <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                    <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
+                                                    <Binding ElementName="Root" Path="DataContext.CurrentCountryObject"/>
                                                 </MultiBinding>
                                             </ComboBox.ItemsSource>
                                         </ComboBox>
@@ -906,7 +1001,7 @@
                                             <TextBlock.Text>
                                                 <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
                                                     <Binding Path="IncidentType"/>
-                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                    <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
                                                 </MultiBinding>
                                             </TextBlock.Text>
                                         </TextBlock>
@@ -919,12 +1014,13 @@
                                                   SelectedValuePath="USR_ID"
                                                   DisplayMemberPath="USR_FieldName"
                                                   SelectionChanged="UserFieldComboBox_SelectionChanged"
-                                                  Tag="Incident Type">
+                                                  Tag="Incident Type"
+                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
                                             <ComboBox.ItemsSource>
                                                 <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Incident Type">
                                                     <Binding Path="Account_ID"/>
-                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
-                                                    <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                    <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
+                                                    <Binding ElementName="Root" Path="DataContext.CurrentCountryObject"/>
                                                 </MultiBinding>
                                             </ComboBox.ItemsSource>
                                         </ComboBox>
@@ -933,7 +1029,7 @@
                             </DataGridTemplateColumn>
                             <DataGridCheckBoxColumn Header="Risky Item"
                                                     Width="100"
-                                                    Binding="{Binding RiskyItem, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, TargetNullValue=False}"
+                                                    Binding="{Binding RiskyItem}"
                                                     IsThreeState="False"/>
                             <!-- Reason Non Risky: editable ComboBox bound to referential filtered by RISKY category -->
                             <DataGridTemplateColumn Header="Reason Non Risky" Width="180" SortMemberPath="ReasonNonRisky">
@@ -943,7 +1039,7 @@
                                             <TextBlock.Text>
                                                 <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
                                                     <Binding Path="ReasonNonRisky"/>
-                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                    <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
                                                 </MultiBinding>
                                             </TextBlock.Text>
                                         </TextBlock>
@@ -956,12 +1052,13 @@
                                                   SelectedValuePath="USR_ID"
                                                   DisplayMemberPath="USR_FieldName"
                                                   SelectionChanged="UserFieldComboBox_SelectionChanged"
-                                                  Tag="ReasonNonRisky">
+                                                  Tag="ReasonNonRisky"
+                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
                                             <ComboBox.ItemsSource>
                                                 <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="RISKY">
                                                     <Binding Path="Account_ID"/>
-                                                    <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
-                                                    <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                    <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
+                                                    <Binding ElementName="Root" Path="DataContext.CurrentCountryObject"/>
                                                 </MultiBinding>
                                             </ComboBox.ItemsSource>
                                         </ComboBox>

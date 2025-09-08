@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data.OleDb;
 using System.IO;
+using System.Text.RegularExpressions;
 
 namespace RecoTool.Services
 {
@@ -46,6 +47,10 @@ namespace RecoTool.Services
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Filter name is required", nameof(name));
             if (string.IsNullOrWhiteSpace(whereClause)) whereClause = string.Empty;
 
+            // Sanitize: Filters should NOT persist Account or Status (Live/Archived) conditions.
+            // Remove JSON header comments, Account predicate (Account_ID = '...'), and status (DeleteDate IS [NOT] NULL).
+            whereClause = SanitizeWhereClause(whereClause);
+
             using (var conn = new OleDbConnection(_connString))
             {
                 conn.Open();
@@ -79,6 +84,54 @@ namespace RecoTool.Services
                     }
                 }
             }
+        }
+
+        public static string SanitizeWhereClause(string where)
+        {
+            if (string.IsNullOrWhiteSpace(where)) return string.Empty;
+            var s = where.Trim();
+
+            // 1) Extract optional leading JSON comment block starting with /*JSON:...*/ (preserve it)
+            string jsonHeader = string.Empty;
+            var jsonMatch = Regex.Match(s, @"^\s*(/\*JSON:.*?\*/\s*)", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+            if (jsonMatch.Success)
+            {
+                jsonHeader = jsonMatch.Groups[1].Value;
+                s = s.Substring(jsonMatch.Length);
+            }
+
+            // 2) Define regexes for predicates to remove
+            // Account: Account_ID = '...'
+            var rxAccount = new Regex(@"(?i)(\bAND\b|\bWHERE\b)?\s*\bAccount_ID\b\s*=\s*'[^']*'\s*", RegexOptions.IgnoreCase);
+            // Status: [a.]DeleteDate IS [NOT] NULL, with optional brackets/alias
+            var rxStatus = new Regex(@"(?i)(\bAND\b|\bWHERE\b)?\s*(?:\b[aA]\.\s*)?\[?DeleteDate\]?\s+IS\s+(?:NOT\s+)?NULL\s*", RegexOptions.IgnoreCase);
+
+            // Remove all occurrences iteratively to handle multiple conditions
+            string prev;
+            do { prev = s; s = rxAccount.Replace(s, " "); } while (prev != s);
+            do { prev = s; s = rxStatus.Replace(s, " "); } while (prev != s);
+
+            // 3) Clean dangling WHERE/AND/OR and extra spaces/parentheses
+            // Remove leading WHERE if nothing follows
+            s = Regex.Replace(s, @"(?i)^\s*WHERE\s*($|\))", string.Empty);
+            // Remove leading AND/OR
+            s = Regex.Replace(s, @"(?i)^\s*(AND|OR)\s+", string.Empty);
+            // Remove trailing AND/OR
+            s = Regex.Replace(s, @"(?i)\s+(AND|OR)\s*$", string.Empty);
+            // Collapse repeated spaces
+            s = Regex.Replace(s, "\u00A0", " "); // non-breaking spaces
+            s = Regex.Replace(s, @"\s+", " ").Trim();
+
+            // If result is just WHERE or empty parentheses, normalize to empty
+            if (string.Equals(s, "WHERE", StringComparison.OrdinalIgnoreCase) || s == "()") s = string.Empty;
+
+            // 4) Reattach preserved JSON header (if any), keeping a single space between header and SQL
+            if (!string.IsNullOrWhiteSpace(jsonHeader))
+            {
+                if (string.IsNullOrWhiteSpace(s)) return jsonHeader.Trim() + " ";
+                return jsonHeader + s;
+            }
+            return s;
         }
 
         public string LoadUserFilterWhere(string name)

@@ -78,6 +78,32 @@ namespace RecoTool.Services
                 }
             }
         }
+        private bool? _actionStatus;
+        public bool? ActionStatus
+        {
+            get => _actionStatus;
+            set
+            {
+                if (_actionStatus != value)
+                {
+                    _actionStatus = value;
+                    OnPropertyChanged(nameof(ActionStatus));
+                }
+            }
+        }
+        private DateTime? _actionDate;
+        public DateTime? ActionDate
+        {
+            get => _actionDate;
+            set
+            {
+                if (_actionDate != value)
+                {
+                    _actionDate = value;
+                    OnPropertyChanged(nameof(ActionDate));
+                }
+            }
+        }
         private int? _incidentType;
         public int? IncidentType
         {
@@ -113,6 +139,13 @@ namespace RecoTool.Services
         /// Effective risky flag for analytics/filters: null is considered false.
         /// </summary>
         public bool IsRiskyEffective => RiskyItem == true;
+
+        // Notes fields from T_Reconciliation
+        public string MbawData { get; set; }
+        public string SpiritData { get; set; }
+
+        // Trigger date from T_Reconciliation
+        public DateTime? TriggerDate { get; set; }
 
         // Propriétés DWINGS
         public string GUARANTEE_ID { get; set; }

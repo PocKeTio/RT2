@@ -676,7 +676,7 @@ namespace RecoTool.Windows
                             SavedViews.Clear();
                             foreach (var p in ordered)
                             {
-                                // IMPORTANT: We deliberately ignore UPF_SQL here so that Saved Views do not embed backend filters.
+                                // Views are layout-only: ignore UPF_SQL.
                                 SavedViews.Add(new UserViewPreset
                                 {
                                     Name = p.UPF_Name,
@@ -698,7 +698,7 @@ namespace RecoTool.Windows
                         SavedViews.Clear();
                         foreach (var p in ordered)
                         {
-                            // IMPORTANT: We deliberately ignore UPF_SQL here so that Saved Views do not embed backend filters.
+                            // Views are layout-only: ignore UPF_SQL.
                             SavedViews.Add(new UserViewPreset
                             {
                                 Name = p.UPF_Name,
@@ -885,12 +885,34 @@ namespace RecoTool.Windows
                 {
                     if (selected is UserViewPreset preset)
                     {
-                        // IMPORTANT: Do not touch the backend filter when changing Saved View.
-                        // Saved Views control layout/title only; filters are managed by Saved Filters combo.
-                        // We keep track of selected preset for applying layout/title when creating a new view.
                         SelectedSavedView = preset;
+
+                        // Views are layout-only: do not change backend filter. Optionally apply layout/title to open views.
+                        try
+                        {
+                            var panel = FindName("ViewsPanel") as StackPanel;
+                            if (panel != null)
+                            {
+                                foreach (var child in panel.Children.OfType<ReconciliationView>())
+                                {
+                                    child.SetViewTitle(preset?.Name);
+                                    try
+                                    {
+                                        var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(preset?.Name);
+                                        if (!string.IsNullOrWhiteSpace(pref?.UPF_ColumnWidths))
+                                        {
+                                            await child.Dispatcher.InvokeAsync(() =>
+                                            {
+                                                try { child.ApplyLayoutJson(pref.UPF_ColumnWidths); } catch { }
+                                            });
+                                        }
+                                    }
+                                    catch { }
+                                }
+                            }
+                        }
+                        catch { }
                     }
-                    // Intentionally no LoadDataAsync here to avoid impacting account/top filters
                 }
                 catch (Exception ex)
                 {
@@ -1308,61 +1330,7 @@ namespace RecoTool.Windows
                 };
                 // Fermer la fenêtre quand la vue demande la fermeture
                 view.CloseRequested += (s, e) => { try { wnd.Close(); } catch { } };
-                // Aligner le pays avant toute action
-                try { view.SyncCountryFromService(); } catch { }
-                view.UpdateExternalFilters(SelectedAccount, SelectedStatus);
-                if (!string.IsNullOrWhiteSpace(_currentFilter))
-                {
-                    view.ApplySavedFilterSql(_currentFilter);
-                    if (!string.IsNullOrWhiteSpace(_currentFilterName))
-                        view.SetViewTitle(_currentFilterName);
-                    // Apply saved layout for the selected view asynchronously to avoid blocking UI
-                    if (!string.IsNullOrWhiteSpace(_currentFilterName))
-                    {
-                        _ = System.Threading.Tasks.Task.Run(async () =>
-                        {
-                            try
-                            {
-                                var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(_currentFilterName);
-                                if (!string.IsNullOrWhiteSpace(pref?.UPF_ColumnWidths))
-                                {
-                                    await view.Dispatcher.InvokeAsync(() =>
-                                    {
-                                        try { view.ApplyLayoutJson(pref.UPF_ColumnWidths); } catch { }
-                                    });
-                                }
-                            }
-                            catch { }
-                        });
-                    }
-                }
-                // Attendre la fin d'une synchronisation éventuelle pour éviter des données partielles, puis précharger
-                await AwaitSafeToOpenViewAsync();
-                // Précharger les données: utiliser le cache si disponible sinon charger en arrière-plan
-                {
-                    var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
-                    var backendSql = _currentFilter;
-                    var cached = _reconciliationService.TryGetCachedReconciliationView(countryId, backendSql);
-                    if (cached != null)
-                    {
-                        try { await view.Dispatcher.InvokeAsync(() => { try { view.InitializeWithPreloadedData(cached, backendSql); } catch { } }); } catch { }
-                    }
-                    else
-                    {
-                        _ = System.Threading.Tasks.Task.Run(async () =>
-                        {
-                            try
-                            {
-                                var list = await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
-                                await view.Dispatcher.InvokeAsync(() =>
-                                {
-                                    try { view.InitializeWithPreloadedData(list, backendSql); } catch { }
-                                });
-                            }
-                            catch { }
-                        });
-                    }
-                }
+                await ConfigureAndPreloadView(view);
                 wnd.Show();
                 return;
             }
@@ -1403,18 +1371,32 @@ namespace RecoTool.Windows
                 catch { }
             };
 
+            await ConfigureAndPreloadView(view);
+
+            // Mettre à jour la visibilité
+            panel.Visibility = Visibility.Visible;
+            if (empty != null) empty.Visibility = Visibility.Collapsed;
+            if (fab != null) fab.Visibility = Visibility.Visible;
+        }
+
+        /// <summary>
+        /// Configure la vue (pays, filtres, layout) et précharge les données à partir du cache ou du service.
+        /// Utilisée pour les ouvertures Popup et intégrées afin d'éviter la duplication et garantir le même comportement.
+        /// </summary>
+        private async Task ConfigureAndPreloadView(ReconciliationView view)
+        {
             // Aligner le pays avant toute action
             try { view.SyncCountryFromService(); } catch { }
-            // Synchroniser l'affichage des filtres (chargement déclenché après précharge)
+            // Synchroniser l'affichage des filtres d'en-tête
             view.UpdateExternalFilters(SelectedAccount, SelectedStatus);
+
+            // Appliquer filtre courant (si présent) et titre
             if (!string.IsNullOrWhiteSpace(_currentFilter))
             {
-                view.ApplySavedFilterSql(_currentFilter);
-                if (!string.IsNullOrWhiteSpace(_currentFilterName))
-                    view.SetViewTitle(_currentFilterName);
-                // Apply saved layout for the selected view asynchronously to avoid blocking UI
+                try { view.ApplySavedFilterSql(_currentFilter); } catch { }
                 if (!string.IsNullOrWhiteSpace(_currentFilterName))
                 {
+                    try { view.SetViewTitle(_currentFilterName); } catch { }
                     _ = System.Threading.Tasks.Task.Run(async () =>
                     {
                         try
@@ -1432,38 +1414,54 @@ namespace RecoTool.Windows
                     });
                 }
             }
-            // Attendre la fin d'une synchronisation éventuelle pour éviter des données partielles, puis précharger
-            await AwaitSafeToOpenViewAsync();
-            // Précharger les données: utiliser le cache si disponible sinon charger en arrière-plan
+
+            // Appliquer layout/titre issu de la Saved View sélectionnée (layout-only)
+            if (SelectedSavedView != null && !string.IsNullOrWhiteSpace(SelectedSavedView.Name))
             {
-                var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
-                var backendSql = _currentFilter;
-                var cached = _reconciliationService.TryGetCachedReconciliationView(countryId, backendSql);
-                if (cached != null)
+                try { view.SetViewTitle(SelectedSavedView.Name); } catch { }
+                _ = System.Threading.Tasks.Task.Run(async () =>
                 {
-                    try { await view.Dispatcher.InvokeAsync(() => { try { view.InitializeWithPreloadedData(cached, backendSql); } catch { } }); } catch { }
-                }
-                else
-                {
-                    _ = System.Threading.Tasks.Task.Run(async () =>
+                    try
                     {
-                        try
+                        var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(SelectedSavedView.Name);
+                        if (!string.IsNullOrWhiteSpace(pref?.UPF_ColumnWidths))
                         {
-                            var list = await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
                             await view.Dispatcher.InvokeAsync(() =>
                             {
-                                try { view.InitializeWithPreloadedData(list, backendSql); } catch { }
+                                try { view.ApplyLayoutJson(pref.UPF_ColumnWidths); } catch { }
                             });
                         }
-                        catch { }
-                    });
-                }
+                    }
+                    catch { }
+                });
             }
 
-            // Mettre à jour la visibilité
-            panel.Visibility = Visibility.Visible;
-            if (empty != null) empty.Visibility = Visibility.Collapsed;
-            if (fab != null) fab.Visibility = Visibility.Visible;
+            // Attendre la fin d'une synchronisation éventuelle et l'état page prêt
+            await AwaitSafeToOpenViewAsync();
+
+            // Précharger les données: cache si dispo, sinon service
+            var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+            var backendSql = _currentFilter;
+            var cached = _reconciliationService.TryGetCachedReconciliationView(countryId, backendSql);
+            if (cached != null)
+            {
+                try { await view.Dispatcher.InvokeAsync(() => { try { view.InitializeWithPreloadedData(cached, backendSql); } catch { } }); } catch { }
+            }
+            else
+            {
+                _ = System.Threading.Tasks.Task.Run(async () =>
+                {
+                    try
+                    {
+                        var list = await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
+                        await view.Dispatcher.InvokeAsync(() =>
+                        {
+                            try { view.InitializeWithPreloadedData(list, backendSql); } catch { }
+                        });
+                    }
+                    catch { }
+                });
+            }
         }
 
         /// <summary>

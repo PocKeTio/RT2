@@ -998,7 +998,7 @@ namespace RecoTool.Services
             try
             {
                 var candidates = Directory.EnumerateFiles(remoteDir, "*.zip", SearchOption.TopDirectoryOnly)
-                    .Where(f => f.IndexOf(countryId, StringComparison.OrdinalIgnoreCase) >= 0)
+                    .Where(f => f.IndexOf("_" + countryId, StringComparison.OrdinalIgnoreCase) >= 0)
                     .Where(f =>
                     {
                         var n = Path.GetFileName(f);

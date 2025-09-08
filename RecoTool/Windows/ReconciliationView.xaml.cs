@@ -3493,7 +3493,7 @@ namespace RecoTool.Windows
                 if (string.IsNullOrWhiteSpace(name)) return;
 
                 var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(name);
-                if (pref == null || string.IsNullOrWhiteSpace(pref.UPF_SQL))
+                if (pref == null || string.IsNullOrWhiteSpace(pref.UPF_ColumnWidths))
                 {
                     ShowError($"View '{name}' not found");
                     return;

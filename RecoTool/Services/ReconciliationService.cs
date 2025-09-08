@@ -2480,8 +2480,8 @@ namespace RecoTool.Services
         {
             var query = @"SELECT TOP 1 UPF_id, UPF_Name, UPF_user, UPF_SQL, UPF_ColumnWidths
                            FROM T_Ref_User_Fields_Preference
-                           WHERE UPF_Name = ? AND UPF_user = ?";
-            var list = await ExecuteQueryAsync<UserFieldsPreference>(query, GetReferentialConnectionString(), name, _currentUser);
+                           WHERE UPF_Name = ?";
+            var list = await ExecuteQueryAsync<UserFieldsPreference>(query, GetReferentialConnectionString(), name);
             return list.FirstOrDefault();
         }
 

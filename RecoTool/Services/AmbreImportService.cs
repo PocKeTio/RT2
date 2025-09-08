@@ -1137,6 +1137,12 @@ namespace RecoTool.Services
                 var recoSvc = new ReconciliationService(_offlineFirstService.GetCurrentLocalConnectionString(), _currentUser, countries, _offlineFirstService);
                 var businessToday = DateTime.Today; // local time per spec
 
+                // Preload DWINGS invoice cache once
+                var dwInvoices = await recoSvc.GetDwingsInvoicesAsync();
+
+                // Staging for later action assignment across Pivot/Receivable
+                var staged = new List<(Reconciliation rec, DataAmbre ambre, bool isPivot, string bgi)>();
+
                 foreach (var dataAmbre in newRecords ?? new List<DataAmbre>())
                 {
                     var rec = CreateReconciliationFromDataAmbre(dataAmbre, country);
@@ -1144,33 +1150,124 @@ namespace RecoTool.Services
                     rec.LastModified = now;
                     rec.ModifiedBy = _currentUser;
 
-                    // Compute Action (auto) and KPI per deterministic mapping
                     bool isPivot = dataAmbre.IsPivotAccount(country.CNT_AmbrePivot);
-                    var txType = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot, dataAmbre.Category);
-                    string guaranteeType = !isPivot ? ExtractGuaranteeType(dataAmbre.RawLabel) : null;
-                    // Try resolve PaymentMethod from DWINGS using BGPMT/INVOICE code in RawLabel
-                    string paymentMethod = null;
-                    var dwRef = ExtractDwingsReference(dataAmbre);
-                    if (dwRef != null)
+
+                    // Resolve DWINGS references per rules
+                    string resolvedBgi = null;
+                    try
                     {
-                        try
+                        if (!isPivot)
                         {
-                            paymentMethod = await TryGetPaymentMethodFromDwingsAsync(countryId, dwRef.Type, dwRef.Code).ConfigureAwait(false);
+                            // Receivable: rely on BGI (prefer explicit field), fallback to regex in RawLabel then Reconciliation fields
+                            resolvedBgi = (dataAmbre.Receivable_InvoiceFromAmbre?.Trim())
+                                           ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.RawLabel)
+                                           ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Reconciliation_Num)
+                                           ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.ReconciliationOrigin_Num);
+
+                            var hit = DwingsLinkingHelper.ResolveInvoiceByBgiWithAmount(dwInvoices, resolvedBgi, dataAmbre.SignedAmount);
+                            if (hit != null)
+                            {
+                                rec.DWINGS_InvoiceID = hit.INVOICE_ID;
+                            }
                         }
-                        catch (Exception pmEx)
+                        else
                         {
-                            LogManager.Warning($"DWINGS payment method lookup failed for {dwRef.Type}={dwRef.Code}: {pmEx.Message}");
+                            // Pivot: search order for refs: Reconciliation_Num -> ReconciliationOrigin_Num -> RawLabel
+                            // Prefer BGI; else try BGPMT
+                            resolvedBgi = DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Reconciliation_Num)
+                                           ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.ReconciliationOrigin_Num)
+                                           ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.RawLabel);
+                            if (!string.IsNullOrWhiteSpace(resolvedBgi))
+                            {
+                                var hit = DwingsLinkingHelper.ResolveInvoiceByBgiWithAmount(dwInvoices, resolvedBgi, dataAmbre.SignedAmount);
+                                if (hit != null)
+                                {
+                                    rec.DWINGS_InvoiceID = hit.INVOICE_ID;
+                                }
+                            }
+                            else
+                            {
+                                var bgpmt = DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.Reconciliation_Num)
+                                            ?? DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.ReconciliationOrigin_Num)
+                                            ?? DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.RawLabel);
+                                if (!string.IsNullOrWhiteSpace(bgpmt))
+                                {
+                                    var hit = DwingsLinkingHelper.ResolveInvoiceByBgpmt(dwInvoices, bgpmt, dataAmbre.SignedAmount);
+                                    if (hit != null)
+                                    {
+                                        rec.DWINGS_InvoiceID = hit.INVOICE_ID;
+                                        resolvedBgi = hit.INVOICE_ID; // normalize for grouping by invoice
+                                    }
+                                }
+                                else
+                                {
+                                    // TODO: Guarantee-only path → derive BGI by guarantee/date/amount if needed
+                                }
+                            }
                         }
                     }
-                    // KPI from mapping
+                    catch (Exception linkEx)
+                    {
+                        LogManager.Warning($"DWINGS resolution failed for {dataAmbre?.ID}: {linkEx.Message}");
+                    }
+
+                    // KPI via mapping (independent of action assignment below)
+                    var txType = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot, dataAmbre.Category);
+                    string guaranteeType = !isPivot ? ExtractGuaranteeType(dataAmbre.RawLabel) : null;
                     var (_, kpi) = _transformationService.ApplyAutomaticCategorization(txType, dataAmbre.SignedAmount, isPivot, guaranteeType);
                     rec.KPI = (int)kpi;
-                    // Auto Action using reconciliation-aware rules (do not override manual)
-                    var autoAction = recoSvc.ComputeAutoAction(txType, dataAmbre, rec, country, paymentMethod: paymentMethod, today: businessToday);
-                    if (autoAction.HasValue)
-                        rec.Action = (int)autoAction.Value;
+
+                    // Keep current auto action (ComputeAutoAction) as baseline; will be overridden by cross-side rules if applicable
+                    try
+                    {
+                        string paymentMethod = null;
+                        var dwRef = ExtractDwingsReference(dataAmbre);
+                        if (dwRef != null)
+                        {
+                            try { paymentMethod = await TryGetPaymentMethodFromDwingsAsync(countryId, dwRef.Type, dwRef.Code).ConfigureAwait(false); } catch { }
+                        }
+                        var autoAction = recoSvc.ComputeAutoAction(txType, dataAmbre, rec, country, paymentMethod: paymentMethod, today: businessToday);
+                        if (autoAction.HasValue)
+                            rec.Action = (int)autoAction.Value;
+                    }
+                    catch { }
 
                     toInsert.Add(rec);
+                    staged.Add((rec, dataAmbre, isPivot, string.IsNullOrWhiteSpace(resolvedBgi) ? null : resolvedBgi));
+                }
+
+                // Cross-side action rules based on BGI and amount matching
+                try
+                {
+                    var groups = staged.Where(s => !string.IsNullOrWhiteSpace(s.bgi))
+                                       .GroupBy(s => s.bgi.Trim().ToUpperInvariant());
+                    foreach (var g in groups)
+                    {
+                        var pivots = g.Where(x => x.isPivot).ToList();
+                        var recvs = g.Where(x => !x.isPivot).ToList();
+                        if (pivots.Count == 0) continue;
+
+                        foreach (var p in pivots)
+                        {
+                            // Try find receivable with matching amount (tolerance)
+                            var match = recvs.FirstOrDefault(r => DwingsLinkingHelper.AmountMatches(r.ambre?.SignedAmount, p.ambre?.SignedAmount));
+                            if (match != default)
+                            {
+                                // Pivot → MATCH, Receivable → TRIGGER
+                                try { p.rec.Action = (int)ActionType.Match; } catch { }
+                                try { match.rec.Action = (int)ActionType.Trigger; } catch { }
+                            }
+                            else
+                            {
+                                // No receivable match found for this pivot
+                                try { p.rec.Action = (int)ActionType.DoPricing; } catch { }
+                            }
+                        }
+                    }
+                }
+                catch (Exception assignEx)
+                {
+                    LogManager.Warning($"Cross-side action assignment failed: {assignEx.Message}");
                 }
 
                 // Diagnostics: log count and a sample of IDs

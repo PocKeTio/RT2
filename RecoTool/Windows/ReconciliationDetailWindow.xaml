@@ -477,6 +477,7 @@
                                 </ComboBox>
                                 <TextBox x:Name="DwingsSearchTextBox" Width="200" Style="{StaticResource ModernTextBoxStyle}" Margin="10,0,0,0"/>
                                 <Button x:Name="DwingsSearchButton" Content="Search DWINGS" Click="DwingsSearchButton_Click" Style="{StaticResource ModernPrimaryButtonStyle}" Margin="10,0,0,0" Padding="10,5" Height="30"/>
+                                <Button x:Name="DwingsSuggestButton" Content="Suggest" Click="DwingsSuggestButton_Click" Style="{StaticResource ModernButtonStyle}" Margin="10,0,0,0" Padding="10,5" Height="30"/>
                                 <Button x:Name="ReRunAutoSearchButton" Content="Re-run Auto Search" Click="ReRunAutoSearch_Click" Style="{StaticResource ModernButtonStyle}" Margin="10,0,0,0" Padding="10,5" Height="30"/>
                             </StackPanel>
                         </DockPanel>

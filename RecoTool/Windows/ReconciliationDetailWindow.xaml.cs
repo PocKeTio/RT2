@@ -37,6 +37,50 @@ namespace RecoTool.UI.Views.Windows
             public override string ToString() => Content;
         }
 
+        private async void DwingsSuggestButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_reconciliationService == null || _item == null)
+                {
+                    StatusText.Text = "Suggestion unavailable: service or item not ready.";
+                    return;
+                }
+
+                var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
+                var suggestions = DwingsLinkingHelper.SuggestInvoicesForAmbre(
+                    invoices,
+                    _item.RawLabel,
+                    _item.Reconciliation_Num,
+                    _item.ReconciliationOrigin_Num,
+                    _item.Receivable_InvoiceFromAmbre,
+                    _item.GUARANTEE_ID,
+                    _item.Value_Date,
+                    _item.SignedAmount,
+                    take: 50);
+
+                var rows = suggestions.Select(i => new DwingsResult
+                {
+                    Type = "Invoice",
+                    Id = i.INVOICE_ID,
+                    Status = i.T_INVOICE_STATUS,
+                    Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                    Currency = i.BILLING_CURRENCY,
+                    BGPMT = i.BGPMT,
+                    BusinessCase = i.BUSINESS_CASE_REFERENCE,
+                    Description = $"Invoice {i.INVOICE_ID} (suggested)"
+                }).ToList();
+
+                DwingsResultsGrid.ItemsSource = new ObservableCollection<DwingsResult>(rows);
+                StatusText.Text = rows.Count == 0 ? "No suggestion found." : $"DWINGS: {rows.Count} suggestion(s).";
+                if (rows.Count > 0) DwingsResultsGrid.SelectedIndex = 0;
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"Suggestion error: {ex.Message}";
+            }
+        }
+
         private ObservableCollection<OptionItem> _kpiOptions = new ObservableCollection<OptionItem>();
         public ObservableCollection<OptionItem> KPIOptions
         {

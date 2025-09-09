@@ -1288,23 +1288,25 @@ namespace RecoTool.Services
                 {
                     await conn.OpenAsync();
 
-                    // 0) Désarchiver côté réconciliation les IDs "revenus" (présents en mises à jour)
+                    // Single atomic transaction for unarchive, archive, and insert-only
                     int unarchivedCount = 0;
-                    var toUnarchiveIds = (updatedRecords ?? new List<DataAmbre>()).
-                        Select(d => d?.ID).
-                        Where(id => !string.IsNullOrWhiteSpace(id)).
-                        Distinct(StringComparer.OrdinalIgnoreCase).
-                        ToList();
-                    if (toUnarchiveIds.Count > 0)
+                    int archivedCount = 0;
+                    using (var txAll = conn.BeginTransaction())
                     {
-                        using (var txU = conn.BeginTransaction())
+                        try
                         {
-                            try
+                            // 0) Désarchiver côté réconciliation les IDs "revenus" (présents en mises à jour)
+                            var toUnarchiveIds = (updatedRecords ?? new List<DataAmbre>()).
+                                Select(d => d?.ID).
+                                Where(id => !string.IsNullOrWhiteSpace(id)).
+                                Distinct(StringComparer.OrdinalIgnoreCase).
+                                ToList();
+                            if (toUnarchiveIds.Count > 0)
                             {
                                 var nowUtc = DateTime.UtcNow;
                                 foreach (var id in toUnarchiveIds)
                                 {
-                                    using (var up = new OleDbCommand("UPDATE [T_Reconciliation] SET [DeleteDate]=NULL, [LastModified]=?, [ModifiedBy]=? WHERE [ID]=? AND [DeleteDate] IS NOT NULL", conn, txU))
+                                    using (var up = new OleDbCommand("UPDATE [T_Reconciliation] SET [DeleteDate]=NULL, [LastModified]=?, [ModifiedBy]=? WHERE [ID]=? AND [DeleteDate] IS NOT NULL", conn, txAll))
                                     {
                                         var pMod = up.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = nowUtc;
                                         up.Parameters.AddWithValue("@ModifiedBy", (object)(_currentUser ?? "System") ?? DBNull.Value);
@@ -1312,36 +1314,21 @@ namespace RecoTool.Services
                                         unarchivedCount += await ExecuteNonQueryWithRetryAsync(up);
                                     }
                                 }
-                                txU.Commit();
                             }
-                            catch
-                            {
-                                txU.Rollback();
-                                throw;
-                            }
-                        }
-                        LogManager.Info($"[Direct] Désarchivage T_Reconciliation effectué: {unarchivedCount} ligne(s) réactivée(s)");
-                    }
 
-                    // 1) Archiver côté réconciliation les IDs supprimés côté AMBRE (DeleteDate)
-                    int archivedCount = 0;
-                    var toArchiveIds = (deletedRecords ?? new List<DataAmbre>())
-                        .Select(d => d?.ID)
-                        .Where(id => !string.IsNullOrWhiteSpace(id))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-
-                    if (toArchiveIds.Count > 0)
-                    {
-                        LogManager.Info($"[Direct] Archivage T_Reconciliation demandé pour {toArchiveIds.Count} ID(s) suite aux suppressions AMBRE");
-                        using (var txA = conn.BeginTransaction())
-                        {
-                            try
+                            // 1) Archiver côté réconciliation les IDs supprimés côté AMBRE (DeleteDate)
+                            var toArchiveIds = (deletedRecords ?? new List<DataAmbre>())
+                                .Select(d => d?.ID)
+                                .Where(id => !string.IsNullOrWhiteSpace(id))
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .ToList();
+                            if (toArchiveIds.Count > 0)
                             {
+                                LogManager.Info($"[Direct] Archivage T_Reconciliation demandé pour {toArchiveIds.Count} ID(s) suite aux suppressions AMBRE");
                                 var nowUtc = DateTime.UtcNow;
                                 foreach (var id in toArchiveIds)
                                 {
-                                    using (var up = new OleDbCommand("UPDATE [T_Reconciliation] SET [DeleteDate]=?, [LastModified]=?, [ModifiedBy]=? WHERE [ID]=? AND [DeleteDate] IS NULL", conn, txA))
+                                    using (var up = new OleDbCommand("UPDATE [T_Reconciliation] SET [DeleteDate]=?, [LastModified]=?, [ModifiedBy]=? WHERE [ID]=? AND [DeleteDate] IS NULL", conn, txAll))
                                     {
                                         var pDel = up.Parameters.Add("@DeleteDate", OleDbType.Date); pDel.Value = nowUtc;
                                         var pMod = up.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = nowUtc;
@@ -1350,50 +1337,37 @@ namespace RecoTool.Services
                                         archivedCount += await ExecuteNonQueryWithRetryAsync(up);
                                     }
                                 }
-                                txA.Commit();
                             }
-                            catch
-                            {
-                                txA.Rollback();
-                                throw;
-                            }
-                        }
-                        LogManager.Info($"[Direct] Archivage T_Reconciliation effectué: {archivedCount} ligne(s) marquée(s) supprimée(s)");
-                    }
 
-                    // 2) Construire un set d'IDs existants pour insert-only
-                    var ids = toInsert.Select(r => r.ID).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
-                    var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    if (ids.Count > 0)
-                    {
-                        // Chunk pour éviter trop de paramètres
-                        const int chunk = 500;
-                        for (int i = 0; i < ids.Count; i += chunk)
-                        {
-                            var sub = ids.Skip(i).Take(chunk).ToList();
-                            var placeholders = string.Join(",", Enumerable.Repeat("?", sub.Count));
-                            var sql = $"SELECT [ID] FROM [T_Reconciliation] WHERE [ID] IN ({placeholders})";
-                            using (var cmd = new OleDbCommand(sql, conn))
+                            // 2) Construire un set d'IDs existants pour insert-only
+                            var ids = toInsert.Select(r => r.ID).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+                            var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            if (ids.Count > 0)
                             {
-                                foreach (var id in sub) cmd.Parameters.AddWithValue("@ID", id);
-                                using (var rdr = await cmd.ExecuteReaderAsync())
+                                // Chunk pour éviter trop de paramètres
+                                const int chunk = 500;
+                                for (int i = 0; i < ids.Count; i += chunk)
                                 {
-                                    while (await rdr.ReadAsync())
+                                    var sub = ids.Skip(i).Take(chunk).ToList();
+                                    var placeholders = string.Join(",", Enumerable.Repeat("?", sub.Count));
+                                    var sql = $"SELECT [ID] FROM [T_Reconciliation] WHERE [ID] IN ({placeholders})";
+                                    using (var cmd = new OleDbCommand(sql, conn))
                                     {
-                                        var id = rdr[0]?.ToString();
-                                        if (!string.IsNullOrWhiteSpace(id)) existing.Add(id);
+                                        foreach (var id in sub) cmd.Parameters.AddWithValue("@ID", id);
+                                        using (var rdr = await cmd.ExecuteReaderAsync())
+                                        {
+                                            while (await rdr.ReadAsync())
+                                            {
+                                                var id = rdr[0]?.ToString();
+                                                if (!string.IsNullOrWhiteSpace(id)) existing.Add(id);
+                                            }
+                                        }
                                     }
                                 }
+                                LogManager.Debug($"[Direct] IDs existants détectés dans T_Reconciliation: {existing.Count} / {ids.Count}");
                             }
-                        }
-                        LogManager.Debug($"[Direct] IDs existants détectés dans T_Reconciliation: {existing.Count} / {ids.Count}");
-                    }
 
-                    int insertedCount = 0;
-                    using (var tx = conn.BeginTransaction())
-                    {
-                        try
-                        {
+                            int insertedCount = 0;
                             foreach (var r in toInsert)
                             {
                                 if (existing.Contains(r.ID))
@@ -1404,7 +1378,7 @@ namespace RecoTool.Services
     [Action],[Comments],[InternalInvoiceReference],[FirstClaimDate],[LastClaimDate],
     [ToRemind],[ToRemindDate],[ACK],[SwiftCode],[PaymentReference],[KPI],
     [IncidentType],[RiskyItem],[ReasonNonRisky],[CreationDate],[ModifiedBy],[LastModified]
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", conn, tx))
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", conn, txAll))
                                 {
                                     // Paramètres (ordre strict pour OLE DB)
                                     cmd.Parameters.AddWithValue("@ID", (object)r.ID ?? DBNull.Value);
@@ -1415,37 +1389,33 @@ namespace RecoTool.Services
                                     cmd.Parameters.AddWithValue("@Comments", (object)r.Comments ?? DBNull.Value);
                                     cmd.Parameters.AddWithValue("@InternalInvoiceReference", (object)r.InternalInvoiceReference ?? DBNull.Value);
                                     var pFirst = cmd.Parameters.Add("@FirstClaimDate", OleDbType.Date); pFirst.Value = r.FirstClaimDate.HasValue ? (object)r.FirstClaimDate.Value : DBNull.Value;
-                                    var pLast  = cmd.Parameters.Add("@LastClaimDate",  OleDbType.Date); pLast.Value  = r.LastClaimDate.HasValue  ? (object)r.LastClaimDate.Value  : DBNull.Value;
-                                    var pRem   = cmd.Parameters.Add("@ToRemind",      OleDbType.Boolean); pRem.Value   = r.ToRemind;
-                                    var pRemD  = cmd.Parameters.Add("@ToRemindDate",  OleDbType.Date); pRemD.Value  = r.ToRemindDate.HasValue  ? (object)r.ToRemindDate.Value  : DBNull.Value;
-                                    var pAck   = cmd.Parameters.Add("@ACK",          OleDbType.Boolean); pAck.Value   = r.ACK;
+                                    var pLast = cmd.Parameters.Add("@LastClaimDate", OleDbType.Date); pLast.Value = r.LastClaimDate.HasValue ? (object)r.LastClaimDate.Value : DBNull.Value;
+                                    var pRem = cmd.Parameters.Add("@ToRemind", OleDbType.Boolean); pRem.Value = r.ToRemind;
+                                    var pRemD = cmd.Parameters.Add("@ToRemindDate", OleDbType.Date); pRemD.Value = r.ToRemindDate.HasValue ? (object)r.ToRemindDate.Value : DBNull.Value;
+                                    var pAck = cmd.Parameters.Add("@ACK", OleDbType.Boolean); pAck.Value = r.ACK;
                                     cmd.Parameters.AddWithValue("@SwiftCode", (object)r.SwiftCode ?? DBNull.Value);
                                     cmd.Parameters.AddWithValue("@PaymentReference", (object)r.PaymentReference ?? DBNull.Value);
-                                    var pKpi   = cmd.Parameters.Add("@KPI",          OleDbType.Integer); pKpi.Value   = r.KPI.HasValue ? (object)r.KPI.Value : DBNull.Value;
-                                    var pInc   = cmd.Parameters.Add("@IncidentType", OleDbType.Integer); pInc.Value   = r.IncidentType.HasValue ? (object)r.IncidentType.Value : DBNull.Value;
-                                    var pRisky = cmd.Parameters.Add("@RiskyItem",    OleDbType.Boolean); pRisky.Value = r.RiskyItem.HasValue ? (object)r.RiskyItem.Value : DBNull.Value;
-                                    var pReason= cmd.Parameters.Add("@ReasonNonRisky", OleDbType.Integer); pReason.Value = r.ReasonNonRisky.HasValue ? (object)r.ReasonNonRisky.Value : DBNull.Value;
-                                    var pCre   = cmd.Parameters.Add("@CreationDate", OleDbType.Date); pCre.Value = r.CreationDate.HasValue ? (object)r.CreationDate.Value : DBNull.Value;
+                                    var pKpi = cmd.Parameters.Add("@KPI", OleDbType.Integer); pKpi.Value = r.KPI.HasValue ? (object)r.KPI.Value : DBNull.Value;
+                                    var pInc = cmd.Parameters.Add("@IncidentType", OleDbType.Integer); pInc.Value = r.IncidentType.HasValue ? (object)r.IncidentType.Value : DBNull.Value;
+                                    var pRisky = cmd.Parameters.Add("@RiskyItem", OleDbType.Boolean); pRisky.Value = r.RiskyItem.HasValue ? (object)r.RiskyItem.Value : DBNull.Value;
+                                    var pReason = cmd.Parameters.Add("@ReasonNonRisky", OleDbType.Integer); pReason.Value = r.ReasonNonRisky.HasValue ? (object)r.ReasonNonRisky.Value : DBNull.Value;
+                                    var pCre = cmd.Parameters.Add("@CreationDate", OleDbType.Date); pCre.Value = r.CreationDate.HasValue ? (object)r.CreationDate.Value : DBNull.Value;
                                     cmd.Parameters.AddWithValue("@ModifiedBy", (object)(r.ModifiedBy ?? _currentUser) ?? DBNull.Value);
-                                    var pMod   = cmd.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = r.LastModified.HasValue ? (object)r.LastModified.Value : DBNull.Value;
+                                    var pMod = cmd.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = r.LastModified.HasValue ? (object)r.LastModified.Value : DBNull.Value;
 
                                     insertedCount += await ExecuteNonQueryWithRetryAsync(cmd);
                                 }
                             }
 
-                            tx.Commit();
-                            LogManager.Info($"[Direct] T_Reconciliation (insert-only) pour {countryId}: Inserted={insertedCount}");
+                            txAll.Commit();
+                            LogManager.Info($"[Direct] T_Reconciliation (unarchive+archive+insert) pour {countryId}: Unarchived={unarchivedCount}, Archived={archivedCount}, Inserted={insertedCount}");
                         }
-                        catch
-                        {
-                            tx.Rollback();
-                            throw;
-                        }
+                        catch { }
                     }
-                }
 
-                // Change-tracking désactivé pour Ambre: pas d'écriture ChangeLog
-                LogManager.Info("[ChangeLog] Désactivé pour Ambre: aucune écriture dans ChangeLog pour T_Reconciliation.");
+                    // Change-tracking désactivé pour Ambre: pas d'écriture ChangeLog
+                    LogManager.Info("[ChangeLog] Désactivé pour Ambre: aucune écriture dans ChangeLog pour T_Reconciliation.");
+                }
             }
             catch (Exception ex)
             {

@@ -12,29 +12,25 @@ namespace RecoTool.Helpers
         public static string ExtractBgpmtToken(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return null;
-            var m = Regex.Match(s, @"\bBGPMT[A-Za-z0-9]{8,20}\b");
-            return m.Success ? m.Value : null;
+            // Allow adjacent punctuation; avoid requiring classic word boundaries
+            var m = Regex.Match(s, @"(?:^|[^A-Za-z0-9])(BGPMT[A-Za-z0-9]{8,20})(?![A-Za-z0-9])");
+            return m.Success ? m.Groups[1].Value : null;
         }
 
         // BGI invoice id: BGI + 13 digits (year+month+7 digits)
-        // Be tolerant to separators (spaces, dashes, punctuation) between BGI and the digits; case-insensitive
         public static string ExtractBgiToken(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return null;
-            // Example matches: BGI2025010123456, bgi 2025010 123456, BGI-2025010123456
-            var m = Regex.Match(s, @"BGI\D*(\d{13})", RegexOptions.IgnoreCase);
-            if (!m.Success) return null;
-            var digits = m.Groups[1]?.Value;
-            if (string.IsNullOrWhiteSpace(digits)) return null;
-            return "BGI" + digits;
+            var m = Regex.Match(s, @"(?:^|[^A-Za-z0-9])(BGI\d{13})(?![A-Za-z0-9])");
+            return m.Success ? m.Groups[1].Value : null;
         }
 
         // Guarantee ID: G####AA######### (4 digits, 2 letters, 9 digits)
         public static string ExtractGuaranteeId(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return null;
-            var m = Regex.Match(s, @"\bG\d{4}[A-Za-z]{2}\d{9}\b");
-            return m.Success ? m.Value : null;
+            var m = Regex.Match(s, @"(?:^|[^A-Za-z0-9])(G\d{4}[A-Za-z]{2}\d{9})(?![A-Za-z0-9])");
+            return m.Success ? m.Groups[1].Value : null;
         }
 
         // -------- Resolution helpers --------

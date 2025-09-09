@@ -172,6 +172,8 @@ namespace RecoTool.Services
             public string INVOICE_ID { get; set; }
             public string T_INVOICE_STATUS { get; set; }
             public decimal? BILLING_AMOUNT { get; set; }
+            public decimal? REQUESTED_AMOUNT { get; set; }
+            public decimal? FINAL_AMOUNT { get; set; }
             public string BILLING_CURRENCY { get; set; }
             public string BGPMT { get; set; }
             public string PAYMENT_METHOD { get; set; }
@@ -336,7 +338,7 @@ namespace RecoTool.Services
             {
                 await connection.OpenAsync().ConfigureAwait(false);
                 // Load invoices (include columns required for in-memory lookups)
-                using (var cmd = new OleDbCommand(@"SELECT INVOICE_ID, T_INVOICE_STATUS, BILLING_AMOUNT, BILLING_CURRENCY, BGPMT, PAYMENT_METHOD, SENDER_REFERENCE, RECEIVER_REFERENCE, BUSINESS_CASE_REFERENCE, BUSINESS_CASE_ID, START_DATE, END_DATE, DEBTOR_PARTY_NAME, CREDITOR_PARTY_NAME FROM T_DW_Data", connection))
+                using (var cmd = new OleDbCommand(@"SELECT INVOICE_ID, T_INVOICE_STATUS, BILLING_AMOUNT, REQUESTED_AMOUNT, FINAL_AMOUNT, BILLING_CURRENCY, BGPMT, PAYMENT_METHOD, SENDER_REFERENCE, RECEIVER_REFERENCE, BUSINESS_CASE_REFERENCE, BUSINESS_CASE_ID, START_DATE, END_DATE, DEBTOR_PARTY_NAME, CREDITOR_PARTY_NAME FROM T_DW_Data", connection))
                 using (var rd = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
                 {
                     while (await rd.ReadAsync().ConfigureAwait(false))
@@ -346,6 +348,8 @@ namespace RecoTool.Services
                             INVOICE_ID = rd["INVOICE_ID"]?.ToString(),
                             T_INVOICE_STATUS = rd["T_INVOICE_STATUS"]?.ToString(),
                             BILLING_AMOUNT = TryToDecimal(rd["BILLING_AMOUNT"]),
+                            REQUESTED_AMOUNT = TryToDecimal(rd["REQUESTED_AMOUNT"]),
+                            FINAL_AMOUNT = TryToDecimal(rd["FINAL_AMOUNT"]),
                             BILLING_CURRENCY = rd["BILLING_CURRENCY"]?.ToString(),
                             BGPMT = rd["BGPMT"]?.ToString(),
                             PAYMENT_METHOD = rd["PAYMENT_METHOD"]?.ToString(),
@@ -833,9 +837,15 @@ namespace RecoTool.Services
                     {
                         inv = foundByPm;
                     }
+                    // 3) By stored DWINGS_CommissionID (BGPMT) when PaymentReference is not set
+                    else if (!string.IsNullOrWhiteSpace(row.DWINGS_CommissionID) && byBgpmt.TryGetValue(row.DWINGS_CommissionID, out var foundByCommission))
+                    {
+                        inv = foundByCommission;
+                        if (string.IsNullOrWhiteSpace(row.PaymentReference)) row.PaymentReference = row.DWINGS_CommissionID;
+                    }
                     else
                     {
-                        // 3) Heuristic: extract BGI or BGPMT from available texts
+                        // 4) Heuristic: extract BGI or BGPMT from available texts
                         string TryNonEmpty(params string[] ss)
                         {
                             foreach (var s in ss)
@@ -873,6 +883,8 @@ namespace RecoTool.Services
                         row.INVOICE_ID = inv.INVOICE_ID;
                         row.I_T_INVOICE_STATUS = inv.T_INVOICE_STATUS;
                         row.I_BILLING_AMOUNT = inv.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture);
+                        row.I_REQUESTED_INVOICE_AMOUNT = inv.REQUESTED_AMOUNT?.ToString(CultureInfo.InvariantCulture) ?? row.I_REQUESTED_INVOICE_AMOUNT;
+                        row.I_FINAL_AMOUNT = inv.FINAL_AMOUNT?.ToString(CultureInfo.InvariantCulture) ?? row.I_FINAL_AMOUNT;
                         row.I_BILLING_CURRENCY = inv.BILLING_CURRENCY;
                         row.I_BGPMT = inv.BGPMT;
                         row.I_BUSINESS_CASE_REFERENCE = inv.BUSINESS_CASE_REFERENCE;

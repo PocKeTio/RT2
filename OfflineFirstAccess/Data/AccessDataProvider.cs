@@ -25,6 +25,22 @@ namespace OfflineFirstAccess.Data
             _config = config;
         }
 
+        // Detect common transient Access/ACE locking errors
+        private static bool IsAccessLockException(OleDbException ex)
+        {
+            try
+            {
+                // Common ACE/Jet lock/share violations seen in the field
+                var codes = new HashSet<int> { 3218, 3260, 3050, 3188, 3197, 3211, 3008 };
+                foreach (OleDbError err in ex.Errors)
+                {
+                    if (codes.Contains(err.NativeError)) return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
         // Minimal mapping to match schemas storing dates as numeric OADate (fallback only)
         private static object MapValueForDb(object value)
         {
@@ -293,42 +309,90 @@ namespace OfflineFirstAccess.Data
             using (var connection = new OleDbConnection(_connectionString))
             {
                 await connection.OpenAsync();
-                using (var transaction = connection.BeginTransaction())
+                OleDbTransaction transaction = null;
+                try
                 {
+                    transaction = connection.BeginTransaction();
+                    var colTypes = GetColumnTypes(connection, tableName);
+                    // Process records in primary key order to reduce page-lock hotspots
+                    var orderedChanges = changesToApply
+                        .OrderBy(r => r.ContainsKey(_config.PrimaryKeyColumn) ? Convert.ToString(r[_config.PrimaryKeyColumn], CultureInfo.InvariantCulture) : string.Empty, StringComparer.Ordinal)
+                        .ToList();
+                    // Detect fresh hydration: if target table is empty, use INSERT-first strategy to avoid UPDATE pass
+                    bool insertFirst = false;
                     try
                     {
-                        var colTypes = GetColumnTypes(connection, tableName);
-                        foreach (var record in changesToApply)
+                        using (var cntCmd = new OleDbCommand($"SELECT COUNT(*) FROM [{tableName}]", connection, transaction))
                         {
-                            var isDeleted = record.ContainsKey(_config.IsDeletedColumn) && (bool)record[_config.IsDeletedColumn];
-                            var idValue = record[_config.PrimaryKeyColumn];
+                            var obj = await cntCmd.ExecuteScalarAsync();
+                            int cnt = (obj != null && obj != DBNull.Value) ? Convert.ToInt32(obj, CultureInfo.InvariantCulture) : 0;
+                            insertFirst = (cnt == 0);
+                        }
+                    }
+                    catch { /* if count fails, keep default path */ }
+                    int processed = 0;
+                    const int chunkSize = 1000;
+                    var failedIds = new List<string>();
+                    foreach (var record in orderedChanges)
+                    {
+                        var isDeleted = record.ContainsKey(_config.IsDeletedColumn) && (bool)record[_config.IsDeletedColumn];
+                        var idValue = record[_config.PrimaryKeyColumn];
 
-                            if (isDeleted)
+                        if (isDeleted)
+                        {
+                            var deleteSql = $"DELETE FROM [{tableName}] WHERE [{_config.PrimaryKeyColumn}] = @id";
+                            using (var command = new OleDbCommand(deleteSql, connection, transaction))
                             {
-                                var deleteSql = $"DELETE FROM [{tableName}] WHERE [{_config.PrimaryKeyColumn}] = @id";
-                                using (var command = new OleDbCommand(deleteSql, connection, transaction))
+                                OleDbType? pkType = null;
+                                if (colTypes != null && colTypes.TryGetValue(_config.PrimaryKeyColumn, out var pkt)) pkType = pkt;
+                                command.Parameters.Add(CreateParameter("@id", idValue, pkType));
+                                try { LogManager.Debug($"APPLY DELETE: Table={tableName} SQL={deleteSql} Params: {BuildParamsDebug(command.Parameters)}"); } catch { }
+                                // Retry on transient lock errors
                                 {
-                                    OleDbType? pkType = null;
-                                    if (colTypes != null && colTypes.TryGetValue(_config.PrimaryKeyColumn, out var pkt)) pkType = pkt;
+                                    if (colTypes != null && colTypes.TryGetValue(_config.PrimaryKeyColumn, out var pkt2)) pkType = pkt2;
                                     command.Parameters.Add(CreateParameter("@id", idValue, pkType));
                                     try { LogManager.Debug($"APPLY DELETE: Table={tableName} SQL={deleteSql} Params: {BuildParamsDebug(command.Parameters)}"); } catch { }
-                                    await command.ExecuteNonQueryAsync();
+                                    // Retry on transient lock errors
+                                    {
+                                        int attempts = 0;
+                                        var rng = new Random();
+                                        while (true)
+                                        {
+                                            try
+                                            {
+                                                await command.ExecuteNonQueryAsync();
+                                                break;
+                                            }
+                                            catch (OleDbException ex) when (IsAccessLockException(ex) && attempts < 10)
+                                            {
+                                                attempts++;
+                                                int delay = Math.Min(1500, (int)(Math.Pow(2, attempts) * 25));
+                                                delay += rng.Next(0, 50);
+                                                await Task.Delay(delay);
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                            else
-                            {
-                                // Optimized Upsert logic: Try UPDATE first, then INSERT.
-                                // Use deterministic ordering to avoid OleDb positional parameter mismatch
-                                var hasSchema = colTypes != null && colTypes.Count > 0;
-                                var setKeys = record.Keys
-                                                    .Where(k => !string.Equals(k, _config.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase)
-                                                                && (!hasSchema || colTypes.ContainsKey(k)))
-                                                    .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
-                                                    .ToList();
-                                var updateSetClause = string.Join(", ", setKeys.Select(k => $"[{k}] = @{k}"));
-                                var updateSql = $"UPDATE [{tableName}] SET {updateSetClause} WHERE [{_config.PrimaryKeyColumn}] = @id";
-                                int rowsAffected;
+                        }
+                        else
+                        {
+                            // Optimized Upsert logic
+                            // If fresh hydration (empty target), try INSERT first to avoid UPDATE pass and reduce locks.
+                            // Use deterministic ordering to avoid OleDb positional parameter mismatch
+                            var hasSchema = colTypes != null && colTypes.Count > 0;
+                            var setKeys = record.Keys
+                                                .Where(k => !string.Equals(k, _config.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase)
+                                                            && (!hasSchema || colTypes.ContainsKey(k)))
+                                                .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+                                                .ToList();
+                            var updateSetClause = string.Join(", ", setKeys.Select(k => $"[{k}] = @{k}"));
+                            var updateSql = $"UPDATE [{tableName}] SET {updateSetClause} WHERE [{_config.PrimaryKeyColumn}] = @id";
+                            int rowsAffected;
 
+                            if (!insertFirst)
+                            {
+                                // UPDATE-first path (normal incremental sync)
                                 if (setKeys.Count > 0)
                                 {
                                     using (var updateCommand = new OleDbCommand(updateSql, connection, transaction))
@@ -343,15 +407,34 @@ namespace OfflineFirstAccess.Data
                                         if (colTypes != null && colTypes.TryGetValue(_config.PrimaryKeyColumn, out var pkt2)) pkType2 = pkt2;
                                         updateCommand.Parameters.Add(CreateParameter("@id", idValue, pkType2));
                                         try { LogManager.Debug($"APPLY UPDATE: Table={tableName} SQL={updateSql} SetKeys=[{string.Join(",", setKeys)}] Params: {BuildParamsDebug(updateCommand.Parameters)}"); } catch { }
-                                        try
+                                        // Retry on transient lock errors
                                         {
-                                            rowsAffected = await updateCommand.ExecuteNonQueryAsync();
-                                            try { LogManager.Debug($"APPLY UPDATE result: Table={tableName} ID={idValue} RowsAffected={rowsAffected}"); } catch { }
-                                        }
-                                        catch (OleDbException ex)
-                                        {
-                                            var dbg = BuildParamsDebug(updateCommand.Parameters);
-                                            throw new InvalidOperationException($"UPDATE failed on table '{tableName}'. SQL: {updateSql}. Params: {dbg}. Error: {ex.Message}", ex);
+                                            int attempts = 0;
+                                            var rng = new Random();
+                                            while (true)
+                                            {
+                                                try
+                                                {
+                                                    rowsAffected = await updateCommand.ExecuteNonQueryAsync();
+                                                    try { LogManager.Debug($"APPLY UPDATE result: Table={tableName} ID={idValue} RowsAffected={rowsAffected}"); } catch { }
+                                                    break;
+                                                }
+                                                catch (OleDbException ex) when (IsAccessLockException(ex) && attempts < 10)
+                                                {
+                                                    attempts++;
+                                                    int delay = Math.Min(1500, (int)(Math.Pow(2, attempts) * 25));
+                                                    delay += rng.Next(0, 50);
+                                                    await Task.Delay(delay);
+                                                }
+                                                catch (OleDbException ex)
+                                                {
+                                                    var dbg = BuildParamsDebug(updateCommand.Parameters);
+                                                    try { LogManager.Error($"APPLY UPDATE failed (will skip row) Table={tableName} ID={idValue} Error={ex.Message} Params={dbg}", null); } catch { }
+                                                    failedIds.Add(Convert.ToString(idValue, CultureInfo.InvariantCulture));
+                                                    rowsAffected = -1; // mark as failed so we don't attempt insert here
+                                                    break;
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -360,59 +443,133 @@ namespace OfflineFirstAccess.Data
                                     // No known columns to update; force insert path
                                     rowsAffected = 0;
                                 }
+                            }
+                            else
+                            {
+                                // INSERT-first path (fresh hydration)
+                                rowsAffected = 0; // set to 0 so we still try insert below
+                            }
 
-                                if (rowsAffected == 0)
+                            if (rowsAffected == 0)
+                            {
+                                // If no rows were updated, the record doesn't exist. Insert it.
+                                var allKeys = record.Keys
+                                                    .Where(k => !hasSchema || colTypes.ContainsKey(k))
+                                                    .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+                                                    .ToList();
+                                if (!allKeys.Contains(_config.PrimaryKeyColumn))
                                 {
-                                    // If no rows were updated, the record doesn't exist. Insert it.
-                                    var allKeys = record.Keys
-                                                        .Where(k => !hasSchema || colTypes.ContainsKey(k))
-                                                        .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
-                                                        .ToList();
-                                    if (!allKeys.Contains(_config.PrimaryKeyColumn))
+                                    allKeys.Insert(0, _config.PrimaryKeyColumn);
+                                }
+                                var insertColumns = string.Join(", ", allKeys.Select(k => $"[{k}]"));
+                                var insertValues = string.Join(", ", allKeys.Select(k => $"@{k}"));
+                                var insertSql = $"INSERT INTO [{tableName}] ({insertColumns}) VALUES ({insertValues})";
+                                using (var insertCommand = new OleDbCommand(insertSql, connection, transaction))
+                                {
+                                    foreach (var key in allKeys)
                                     {
-                                        allKeys.Insert(0, _config.PrimaryKeyColumn);
+                                        OleDbType? expected = null;
+                                        if (colTypes != null && colTypes.TryGetValue(key, out var t)) expected = t;
+                                        object valueForParam;
+                                        if (string.Equals(key, _config.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase) && !record.ContainsKey(key))
+                                        {
+                                            valueForParam = idValue;
+                                        }
+                                        else
+                                        {
+                                            valueForParam = record[key];
+                                        }
+                                        insertCommand.Parameters.Add(CreateParameter($"@{key}", valueForParam, expected));
                                     }
-                                    var insertColumns = string.Join(", ", allKeys.Select(k => $"[{k}]"));
-                                    var insertValues = string.Join(", ", allKeys.Select(k => $"@{k}"));
-                                    var insertSql = $"INSERT INTO [{tableName}] ({insertColumns}) VALUES ({insertValues})";
-                                    using (var insertCommand = new OleDbCommand(insertSql, connection, transaction))
+                                    try { LogManager.Debug($"APPLY INSERT: Table={tableName} SQL={insertSql} Keys=[{string.Join(",", allKeys)}] Params: {BuildParamsDebug(insertCommand.Parameters)}"); } catch { }
+                                    // Retry on transient lock errors; fallback to UPDATE if duplicate-key (3022) when in insert-first mode
                                     {
-                                        foreach (var key in allKeys)
+                                        int attempts = 0;
+                                        var rng = new Random();
+                                        while (true)
                                         {
-                                            OleDbType? expected = null;
-                                            if (colTypes != null && colTypes.TryGetValue(key, out var t)) expected = t;
-                                            object valueForParam;
-                                            if (string.Equals(key, _config.PrimaryKeyColumn, StringComparison.OrdinalIgnoreCase) && !record.ContainsKey(key))
+                                            try
                                             {
-                                                valueForParam = idValue;
+                                                await insertCommand.ExecuteNonQueryAsync();
+                                                break;
                                             }
-                                            else
+                                            catch (OleDbException ex) when (IsAccessLockException(ex) && attempts < 10)
                                             {
-                                                valueForParam = record[key];
+                                                attempts++;
+                                                int delay = Math.Min(1500, (int)(Math.Pow(2, attempts) * 25));
+                                                delay += rng.Next(0, 50);
+                                                await Task.Delay(delay);
                                             }
-                                            insertCommand.Parameters.Add(CreateParameter($"@{key}", valueForParam, expected));
-                                        }
-                                        try { LogManager.Debug($"APPLY INSERT: Table={tableName} SQL={insertSql} Keys=[{string.Join(",", allKeys)}] Params: {BuildParamsDebug(insertCommand.Parameters)}"); } catch { }
-                                        try
-                                        {
-                                            await insertCommand.ExecuteNonQueryAsync();
-                                        }
-                                        catch (OleDbException ex)
-                                        {
-                                            var dbg = BuildParamsDebug(insertCommand.Parameters);
-                                            throw new InvalidOperationException($"INSERT failed on table '{tableName}'. SQL: {insertSql}. Params: {dbg}. Error: {ex.Message}", ex);
+                                            catch (OleDbException ex)
+                                            {
+                                                // If fresh hydration and duplicate key, fallback to UPDATE for this row only
+                                                bool isDuplicate = false;
+                                                try { foreach (OleDbError e in ex.Errors) { if (e.NativeError == 3022) { isDuplicate = true; break; } } } catch { }
+                                                if (insertFirst && isDuplicate && setKeys.Count > 0)
+                                                {
+                                                    var updateSqlLocal = updateSql;
+                                                    using (var updateCommand = new OleDbCommand(updateSqlLocal, connection, transaction))
+                                                    {
+                                                        foreach (var key in setKeys)
+                                                        {
+                                                            OleDbType? expected2 = null;
+                                                            if (colTypes != null && colTypes.TryGetValue(key, out var t2)) expected2 = t2;
+                                                            updateCommand.Parameters.Add(CreateParameter($"@{key}", record[key], expected2));
+                                                        }
+                                                        OleDbType? pkType3 = null;
+                                                        if (colTypes != null && colTypes.TryGetValue(_config.PrimaryKeyColumn, out var pkt3)) pkType3 = pkt3;
+                                                        updateCommand.Parameters.Add(CreateParameter("@id", idValue, pkType3));
+                                                        // Apply the same lock-aware retry
+                                                        int attempts2 = 0;
+                                                        var rng2 = new Random();
+                                                        while (true)
+                                                        {
+                                                            try { await updateCommand.ExecuteNonQueryAsync(); break; }
+                                                            catch (OleDbException ex2) when (IsAccessLockException(ex2) && attempts2 < 10)
+                                                            {
+                                                                attempts2++;
+                                                                int delay2 = Math.Min(1500, (int)(Math.Pow(2, attempts2) * 25));
+                                                                delay2 += rng2.Next(0, 50);
+                                                                await Task.Delay(delay2);
+                                                            }
+                                                        }
+                                                    }
+                                                    break; // handled via update
+                                                }
+                                                else
+                                                {
+                                                    var dbg = BuildParamsDebug(insertCommand.Parameters);
+                                                    try { LogManager.Error($"APPLY INSERT failed (will skip row) Table={tableName} ID={idValue} Error={ex.Message} Params={dbg}", null); } catch { }
+                                                    failedIds.Add(Convert.ToString(idValue, CultureInfo.InvariantCulture));
+                                                    break;
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                        transaction.Commit();
+
+                        // Chunked commit to release locks periodically
+                        processed++;
+                        if (processed % chunkSize == 0)
+                        {
+                            try { transaction?.Commit(); } catch { }
+                            transaction?.Dispose();
+                            transaction = connection.BeginTransaction();
+                        }
                     }
-                    catch
+                    try { transaction?.Commit(); } catch { }
+                    // Log failures summary (do not throw, by design to avoid full rollback)
+                    if (failedIds.Count > 0)
                     {
-                        transaction.Rollback();
-                        throw;
+                        try { LogManager.Warn($"APPLY CHANGES completed with failures: {failedIds.Count} row(s) skipped. Example IDs: {string.Join(", ", failedIds.Take(5))}..."); } catch { }
                     }
+                }
+                catch
+                {
+                    try { transaction?.Rollback(); } catch { }
+                    throw;
                 }
             }
         }

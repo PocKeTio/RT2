@@ -54,6 +54,32 @@ namespace RecoTool.Services
             Error
         }
 
+        // Ambre import scope counter (supports nested scopes)
+        private int _ambreImportScopeCount;
+        private bool IsAmbreImport => Volatile.Read(ref _ambreImportScopeCount) > 0;
+
+        public IDisposable BeginAmbreImportScope()
+        {
+            Interlocked.Increment(ref _ambreImportScopeCount);
+            return new AmbreImportScope(this);
+        }
+
+        private sealed class AmbreImportScope : IDisposable
+        {
+            private OfflineFirstService _svc;
+            private int _disposed;
+            public AmbreImportScope(OfflineFirstService svc) { _svc = svc; }
+            public void Dispose()
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+                if (_svc != null)
+                {
+                    Interlocked.Decrement(ref _svc._ambreImportScopeCount);
+                    _svc = null;
+                }
+            }
+        }
+
         /// <summary>
         /// Returns true if a global lock is currently active AND held by another process (not this MachineName+ProcessId).
         /// Ignores expired rows and performs a best-effort cleanup of expired entries.
@@ -528,6 +554,26 @@ namespace RecoTool.Services
             catch { }
 
             onProgress?.Invoke(100, "Instantanés locaux à jour");
+        }
+
+        private static bool IsAccessLockException(OleDbException ex)
+        {
+            // Common Access/Jet/ACE locking and sharing violation error codes
+            // 3218: Could not update; currently locked by another session/user
+            // 3260: Couldn't lock table; already in use
+            // 3050: Couldn't lock file
+            // 3188/3197: Couldn't update; currently locked
+            // 3704: Operation not allowed when the object is closed (may follow a lock)
+            var codes = new HashSet<int> { 3218, 3260, 3050, 3188, 3197 };
+            try
+            {
+                foreach (OleDbError err in ex.Errors)
+                {
+                    if (codes.Contains(err.NativeError)) return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         /// <summary>
@@ -1566,7 +1612,23 @@ namespace RecoTool.Services
                                 var p = tup.Cmd.Parameters[i];
                                 p.Value = CoerceValueForOleDb(entity.Properties[tup.Cols[i]], p.OleDbType);
                             }
-                            await tup.Cmd.ExecuteNonQueryAsync();
+                            // Retry on transient Access lock errors (e.g., 3218/3260)
+                            {
+                                int attempts = 0;
+                                while (true)
+                                {
+                                    try
+                                    {
+                                        await tup.Cmd.ExecuteNonQueryAsync();
+                                        break;
+                                    }
+                                    catch (OleDbException ex) when (IsAccessLockException(ex) && attempts < 4)
+                                    {
+                                        attempts++;
+                                        await Task.Delay(100 * attempts);
+                                    }
+                                }
+                            }
                             // Determine PK value for change logging: prefer provided PK else fetch last identity
                             var pkColumn = await getPkColAsync(entity.TableName);
                             object keyVal = null;
@@ -1768,7 +1830,24 @@ namespace RecoTool.Services
                                 var pCrc = upd.Cmd.Parameters[upd.KeyIndex + 1];
                                 pCrc.Value = crcValue.HasValue ? (object)CoerceValueForOleDb(crcValue.Value, pCrc.OleDbType) : DBNull.Value;
                             }
-                            var affected = await upd.Cmd.ExecuteNonQueryAsync();
+                            int affected;
+                            // Retry on transient Access lock errors (e.g., 3218/3260)
+                            {
+                                int attempts = 0;
+                                while (true)
+                                {
+                                    try
+                                    {
+                                        affected = await upd.Cmd.ExecuteNonQueryAsync();
+                                        break;
+                                    }
+                                    catch (OleDbException ex) when (IsAccessLockException(ex) && attempts < 4)
+                                    {
+                                        attempts++;
+                                        await Task.Delay(100 * attempts);
+                                    }
+                                }
+                            }
                             if (affected > 0 && !suppressChangeLog)
                             {
                                 string chKey = keyValue?.ToString();
@@ -4188,6 +4267,12 @@ namespace RecoTool.Services
 
             // 1) Initialiser/assurer la base locale principale (et positionner _currentCountryId)
             onProgress?.Invoke(10, "Préparation de la base locale...");
+            // Detect cold-local to avoid incremental UPDATE flood
+            string dataDirectory_cold = GetParameter("DataDirectory");
+            string countryDatabasePrefix_cold = GetParameter("CountryDatabasePrefix") ?? "DB_";
+            string localDbPath_cold = Path.Combine(dataDirectory_cold, $"{countryDatabasePrefix_cold}{countryId}.accdb");
+            bool wasColdLocal = !File.Exists(localDbPath_cold);
+
             var initialized = await InitializeLocalDatabaseAsync(countryId);
             if (!initialized)
                 return false;
@@ -4214,9 +4299,23 @@ namespace RecoTool.Services
             }
             onProgress?.Invoke(35, "Référentiels pays chargés");
 
+            // Augment cold-local if table exists but is empty (fresh DB): skip sync as well
+            if (!wasColdLocal)
+            {
+                try
+                {
+                    if (await IsLocalReconciliationEmptyAsync(countryId))
+                    {
+                        wasColdLocal = true;
+                    }
+                }
+                catch { }
+            }
+
             // 2) Synchronisation complète (PUSH puis PULL) des tables configurées (ici: T_Reconciliation)
             //    Évite tout push fire-and-forget et garantit que la base locale est alignée proprement.
-            if (!suppressPush)
+            //    IMPORTANT: si la base locale était absente (cold local), ne PAS faire d'incrémental, on vient de copier depuis le réseau.
+            if (!suppressPush && !wasColdLocal)
             {
                 try
                 {
@@ -4233,6 +4332,14 @@ namespace RecoTool.Services
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"[{nameof(SetCurrentCountryAsync)}] Error during synchronization for {countryId}: {ex.Message}");
+                }
+            }
+            else
+            {
+                if (wasColdLocal)
+                {
+                    // Just hydrated local DB from network copy; skip incremental updates.
+                    onProgress?.Invoke(45, "Synchronisation ignorée (base locale initialisée depuis le réseau)");
                 }
             }
 
@@ -4282,29 +4389,51 @@ namespace RecoTool.Services
         {
             try
             {
-                // Essayer d'ouvrir la base en mode exclusif pour vérifier si elle est verrouillée
                 using (var connection = new OleDbConnection($"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={databasePath};Mode=Share Exclusive;"))
                 {
                     await connection.OpenAsync();
-                    // Si on arrive ici, la base n'est pas verrouillée
-                    return false;
+                    return false; // ouverture exclusive OK => non verrouillée
                 }
             }
-            catch (OleDbException ex)
+            catch
             {
-                // Si l'erreur indique que la base est déjà ouverte, elle est verrouillée
-                if (ex.Message.Contains("already opened exclusively") || 
-                    ex.Message.Contains("could not use") ||
-                    ex.Message.Contains("installable ISAM"))
-                {
-                    return true;
-                }
-                throw;
-            }
-            catch (Exception)
-            {
-                // En cas d'autre erreur, considérer la base comme verrouillée par précaution
+                // Toute exception lors de l'ouverture exclusive => considérer comme verrouillée
                 return true;
+            }
+        }
+
+        /// <summary>
+        /// Indique si la table locale T_Reconciliation est vide pour le pays donné.
+        /// Utilisé pour traiter un cas "cold-local" même si le fichier existe (DB fraîche).
+        /// </summary>
+        private async Task<bool> IsLocalReconciliationEmptyAsync(string countryId)
+        {
+            try
+            {
+                var connStr = GetCountryConnectionString(countryId);
+                using (var connection = new OleDbConnection(connStr))
+                {
+                    await connection.OpenAsync();
+                    // Vérifier l'existence de la table
+                    var schema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new object[] { null, null, null, "TABLE" });
+                    bool hasTable = schema != null && schema.Rows.OfType<System.Data.DataRow>()
+                        .Any(r => string.Equals(Convert.ToString(r["TABLE_NAME"]), "T_Reconciliation", StringComparison.OrdinalIgnoreCase));
+                    if (!hasTable) return true; // considérer vide si la table n'existe pas
+
+                    using (var cmd = new OleDbCommand("SELECT COUNT(*) FROM [T_Reconciliation]", connection))
+                    {
+                        var obj = await cmd.ExecuteScalarAsync();
+                        int count = 0;
+                        if (obj != null && obj != DBNull.Value)
+                            count = Convert.ToInt32(obj, System.Globalization.CultureInfo.InvariantCulture);
+                        return count == 0;
+                    }
+                }
+            }
+            catch
+            {
+                // En cas d'erreur, rester conservateur et retourner false pour ne pas masquer d'autres problèmes
+                return false;
             }
         }
 

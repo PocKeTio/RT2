@@ -147,6 +147,8 @@ namespace RecoTool.Services
 
                 try
                 {
+                    // Enter AMBRE import local-only scope: suppress background sync/push until final publish
+                    using (_offlineFirstService.BeginAmbreImportScope())
                     using (var globalLock = await AcquireGlobalLockAsync(countryId, result))
                     {
                         if (globalLock == null) return result;
@@ -205,7 +207,8 @@ namespace RecoTool.Services
                 try
                 {
                     await _offlineFirstService.RefreshConfigurationAsync();
-                    await _offlineFirstService.SetCurrentCountryAsync(countryId);
+                    // IMPORTANT: do not trigger push+pull right after import; we just published the snapshot.
+                    await _offlineFirstService.SetCurrentCountryAsync(countryId, suppressPush: true);
                     await _offlineFirstService.SetLastSyncAnchorAsync(countryId, DateTime.UtcNow);
                 }
                 catch (Exception refreshEx)
@@ -695,8 +698,8 @@ namespace RecoTool.Services
                             LogManager.Warning($"Cleanup of ChangeLog/compaction failed (non-blocking): {cleanupEx.Message}");
                         }
 
-                        // Completed: the workflow ends after publishing without refreshing from network
-                        try { await _offlineFirstService.SetSyncStatusAsync("Completed"); } catch { }
+                        // Note: do NOT mark Completed here. We'll do it at the very end of ImportAmbreCoreAsync
+                        // after post-refresh steps to guarantee that when we say "completed", everything is finished.
                     }
                     catch (Exception ex)
                     {
@@ -1288,86 +1291,112 @@ namespace RecoTool.Services
                 {
                     await conn.OpenAsync();
 
-                    // Single atomic transaction for unarchive, archive, and insert-only
+                    // 0) Désarchiver côté réconciliation les IDs "revenus" (présents en mises à jour)
                     int unarchivedCount = 0;
-                    int archivedCount = 0;
-                    using (var txAll = conn.BeginTransaction())
+                    var toUnarchiveIds = (updatedRecords ?? new List<DataAmbre>()).
+                        Select(d => d?.ID).
+                        Where(id => !string.IsNullOrWhiteSpace(id)).
+                        Distinct(StringComparer.OrdinalIgnoreCase).
+                        ToList();
+                    if (toUnarchiveIds.Count > 0)
                     {
-                        try
+                        using (var txU = conn.BeginTransaction())
                         {
-                            // 0) Désarchiver côté réconciliation les IDs "revenus" (présents en mises à jour)
-                            var toUnarchiveIds = (updatedRecords ?? new List<DataAmbre>()).
-                                Select(d => d?.ID).
-                                Where(id => !string.IsNullOrWhiteSpace(id)).
-                                Distinct(StringComparer.OrdinalIgnoreCase).
-                                ToList();
-                            if (toUnarchiveIds.Count > 0)
+                            try
                             {
                                 var nowUtc = DateTime.UtcNow;
                                 foreach (var id in toUnarchiveIds)
                                 {
-                                    using (var up = new OleDbCommand("UPDATE [T_Reconciliation] SET [DeleteDate]=NULL, [LastModified]=?, [ModifiedBy]=? WHERE [ID]=? AND [DeleteDate] IS NOT NULL", conn, txAll))
+                                    using (var up = new OleDbCommand("UPDATE [T_Reconciliation] SET [DeleteDate]=NULL, [LastModified]=?, [ModifiedBy]=? WHERE [ID]=? AND [DeleteDate] IS NOT NULL", conn, txU))
                                     {
                                         var pMod = up.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = nowUtc;
                                         up.Parameters.AddWithValue("@ModifiedBy", (object)(_currentUser ?? "System") ?? DBNull.Value);
                                         up.Parameters.AddWithValue("@ID", id);
-                                        unarchivedCount += await ExecuteNonQueryWithRetryAsync(up);
+                                        unarchivedCount += await up.ExecuteNonQueryAsync();
                                     }
                                 }
+                                txU.Commit();
                             }
-
-                            // 1) Archiver côté réconciliation les IDs supprimés côté AMBRE (DeleteDate)
-                            var toArchiveIds = (deletedRecords ?? new List<DataAmbre>())
-                                .Select(d => d?.ID)
-                                .Where(id => !string.IsNullOrWhiteSpace(id))
-                                .Distinct(StringComparer.OrdinalIgnoreCase)
-                                .ToList();
-                            if (toArchiveIds.Count > 0)
+                            catch
                             {
-                                LogManager.Info($"[Direct] Archivage T_Reconciliation demandé pour {toArchiveIds.Count} ID(s) suite aux suppressions AMBRE");
+                                txU.Rollback();
+                                throw;
+                            }
+                        }
+                        LogManager.Info($"[Direct] Désarchivage T_Reconciliation effectué: {unarchivedCount} ligne(s) réactivée(s)");
+                    }
+
+                    // 1) Archiver côté réconciliation les IDs supprimés côté AMBRE (DeleteDate)
+                    int archivedCount = 0;
+                    var toArchiveIds = (deletedRecords ?? new List<DataAmbre>())
+                        .Select(d => d?.ID)
+                        .Where(id => !string.IsNullOrWhiteSpace(id))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    if (toArchiveIds.Count > 0)
+                    {
+                        LogManager.Info($"[Direct] Archivage T_Reconciliation demandé pour {toArchiveIds.Count} ID(s) suite aux suppressions AMBRE");
+                        using (var txA = conn.BeginTransaction())
+                        {
+                            try
+                            {
                                 var nowUtc = DateTime.UtcNow;
                                 foreach (var id in toArchiveIds)
                                 {
-                                    using (var up = new OleDbCommand("UPDATE [T_Reconciliation] SET [DeleteDate]=?, [LastModified]=?, [ModifiedBy]=? WHERE [ID]=? AND [DeleteDate] IS NULL", conn, txAll))
+                                    using (var up = new OleDbCommand("UPDATE [T_Reconciliation] SET [DeleteDate]=?, [LastModified]=?, [ModifiedBy]=? WHERE [ID]=? AND [DeleteDate] IS NULL", conn, txA))
                                     {
                                         var pDel = up.Parameters.Add("@DeleteDate", OleDbType.Date); pDel.Value = nowUtc;
                                         var pMod = up.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = nowUtc;
                                         up.Parameters.AddWithValue("@ModifiedBy", (object)(_currentUser ?? "System") ?? DBNull.Value);
                                         up.Parameters.AddWithValue("@ID", id);
-                                        archivedCount += await ExecuteNonQueryWithRetryAsync(up);
+                                        archivedCount += await up.ExecuteNonQueryAsync();
                                     }
                                 }
+                                txA.Commit();
                             }
-
-                            // 2) Construire un set d'IDs existants pour insert-only
-                            var ids = toInsert.Select(r => r.ID).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
-                            var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                            if (ids.Count > 0)
+                            catch
                             {
-                                // Chunk pour éviter trop de paramètres
-                                const int chunk = 500;
-                                for (int i = 0; i < ids.Count; i += chunk)
+                                txA.Rollback();
+                                throw;
+                            }
+                        }
+                        LogManager.Info($"[Direct] Archivage T_Reconciliation effectué: {archivedCount} ligne(s) marquée(s) supprimée(s)");
+                    }
+
+                    // 2) Construire un set d'IDs existants pour insert-only
+                    var ids = toInsert.Select(r => r.ID).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+                    var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    if (ids.Count > 0)
+                    {
+                        // Chunk pour éviter trop de paramètres
+                        const int chunk = 500;
+                        for (int i = 0; i < ids.Count; i += chunk)
+                        {
+                            var sub = ids.Skip(i).Take(chunk).ToList();
+                            var placeholders = string.Join(",", Enumerable.Repeat("?", sub.Count));
+                            var sql = $"SELECT [ID] FROM [T_Reconciliation] WHERE [ID] IN ({placeholders})";
+                            using (var cmd = new OleDbCommand(sql, conn))
+                            {
+                                foreach (var id in sub) cmd.Parameters.AddWithValue("@ID", id);
+                                using (var rdr = await cmd.ExecuteReaderAsync())
                                 {
-                                    var sub = ids.Skip(i).Take(chunk).ToList();
-                                    var placeholders = string.Join(",", Enumerable.Repeat("?", sub.Count));
-                                    var sql = $"SELECT [ID] FROM [T_Reconciliation] WHERE [ID] IN ({placeholders})";
-                                    using (var cmd = new OleDbCommand(sql, conn))
+                                    while (await rdr.ReadAsync())
                                     {
-                                        foreach (var id in sub) cmd.Parameters.AddWithValue("@ID", id);
-                                        using (var rdr = await cmd.ExecuteReaderAsync())
-                                        {
-                                            while (await rdr.ReadAsync())
-                                            {
-                                                var id = rdr[0]?.ToString();
-                                                if (!string.IsNullOrWhiteSpace(id)) existing.Add(id);
-                                            }
-                                        }
+                                        var id = rdr[0]?.ToString();
+                                        if (!string.IsNullOrWhiteSpace(id)) existing.Add(id);
                                     }
                                 }
-                                LogManager.Debug($"[Direct] IDs existants détectés dans T_Reconciliation: {existing.Count} / {ids.Count}");
                             }
+                        }
+                        LogManager.Debug($"[Direct] IDs existants détectés dans T_Reconciliation: {existing.Count} / {ids.Count}");
+                    }
 
-                            int insertedCount = 0;
+                    int insertedCount = 0;
+                    using (var tx = conn.BeginTransaction())
+                    {
+                        try
+                        {
                             foreach (var r in toInsert)
                             {
                                 if (existing.Contains(r.ID))
@@ -1378,7 +1407,7 @@ namespace RecoTool.Services
     [Action],[Comments],[InternalInvoiceReference],[FirstClaimDate],[LastClaimDate],
     [ToRemind],[ToRemindDate],[ACK],[SwiftCode],[PaymentReference],[KPI],
     [IncidentType],[RiskyItem],[ReasonNonRisky],[CreationDate],[ModifiedBy],[LastModified]
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", conn, txAll))
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", conn, tx))
                                 {
                                     // Paramètres (ordre strict pour OLE DB)
                                     cmd.Parameters.AddWithValue("@ID", (object)r.ID ?? DBNull.Value);
@@ -1389,96 +1418,43 @@ namespace RecoTool.Services
                                     cmd.Parameters.AddWithValue("@Comments", (object)r.Comments ?? DBNull.Value);
                                     cmd.Parameters.AddWithValue("@InternalInvoiceReference", (object)r.InternalInvoiceReference ?? DBNull.Value);
                                     var pFirst = cmd.Parameters.Add("@FirstClaimDate", OleDbType.Date); pFirst.Value = r.FirstClaimDate.HasValue ? (object)r.FirstClaimDate.Value : DBNull.Value;
-                                    var pLast = cmd.Parameters.Add("@LastClaimDate", OleDbType.Date); pLast.Value = r.LastClaimDate.HasValue ? (object)r.LastClaimDate.Value : DBNull.Value;
-                                    var pRem = cmd.Parameters.Add("@ToRemind", OleDbType.Boolean); pRem.Value = r.ToRemind;
-                                    var pRemD = cmd.Parameters.Add("@ToRemindDate", OleDbType.Date); pRemD.Value = r.ToRemindDate.HasValue ? (object)r.ToRemindDate.Value : DBNull.Value;
-                                    var pAck = cmd.Parameters.Add("@ACK", OleDbType.Boolean); pAck.Value = r.ACK;
+                                    var pLast  = cmd.Parameters.Add("@LastClaimDate",  OleDbType.Date); pLast.Value  = r.LastClaimDate.HasValue  ? (object)r.LastClaimDate.Value  : DBNull.Value;
+                                    var pRem   = cmd.Parameters.Add("@ToRemind",      OleDbType.Boolean); pRem.Value   = r.ToRemind;
+                                    var pRemD  = cmd.Parameters.Add("@ToRemindDate",  OleDbType.Date); pRemD.Value  = r.ToRemindDate.HasValue  ? (object)r.ToRemindDate.Value  : DBNull.Value;
+                                    var pAck   = cmd.Parameters.Add("@ACK",          OleDbType.Boolean); pAck.Value   = r.ACK;
                                     cmd.Parameters.AddWithValue("@SwiftCode", (object)r.SwiftCode ?? DBNull.Value);
                                     cmd.Parameters.AddWithValue("@PaymentReference", (object)r.PaymentReference ?? DBNull.Value);
-                                    var pKpi = cmd.Parameters.Add("@KPI", OleDbType.Integer); pKpi.Value = r.KPI.HasValue ? (object)r.KPI.Value : DBNull.Value;
-                                    var pInc = cmd.Parameters.Add("@IncidentType", OleDbType.Integer); pInc.Value = r.IncidentType.HasValue ? (object)r.IncidentType.Value : DBNull.Value;
-                                    var pRisky = cmd.Parameters.Add("@RiskyItem", OleDbType.Boolean); pRisky.Value = r.RiskyItem.HasValue ? (object)r.RiskyItem.Value : DBNull.Value;
-                                    var pReason = cmd.Parameters.Add("@ReasonNonRisky", OleDbType.Integer); pReason.Value = r.ReasonNonRisky.HasValue ? (object)r.ReasonNonRisky.Value : DBNull.Value;
-                                    var pCre = cmd.Parameters.Add("@CreationDate", OleDbType.Date); pCre.Value = r.CreationDate.HasValue ? (object)r.CreationDate.Value : DBNull.Value;
+                                    var pKpi   = cmd.Parameters.Add("@KPI",          OleDbType.Integer); pKpi.Value   = r.KPI.HasValue ? (object)r.KPI.Value : DBNull.Value;
+                                    var pInc   = cmd.Parameters.Add("@IncidentType", OleDbType.Integer); pInc.Value   = r.IncidentType.HasValue ? (object)r.IncidentType.Value : DBNull.Value;
+                                    var pRisky = cmd.Parameters.Add("@RiskyItem",    OleDbType.Boolean); pRisky.Value = r.RiskyItem.HasValue ? (object)r.RiskyItem.Value : DBNull.Value;
+                                    var pReason= cmd.Parameters.Add("@ReasonNonRisky", OleDbType.Integer); pReason.Value = r.ReasonNonRisky.HasValue ? (object)r.ReasonNonRisky.Value : DBNull.Value;
+                                    var pCre   = cmd.Parameters.Add("@CreationDate", OleDbType.Date); pCre.Value = r.CreationDate.HasValue ? (object)r.CreationDate.Value : DBNull.Value;
                                     cmd.Parameters.AddWithValue("@ModifiedBy", (object)(r.ModifiedBy ?? _currentUser) ?? DBNull.Value);
-                                    var pMod = cmd.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = r.LastModified.HasValue ? (object)r.LastModified.Value : DBNull.Value;
+                                    var pMod   = cmd.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = r.LastModified.HasValue ? (object)r.LastModified.Value : DBNull.Value;
 
-                                    insertedCount += await ExecuteNonQueryWithRetryAsync(cmd);
+                                    insertedCount += await cmd.ExecuteNonQueryAsync();
                                 }
                             }
 
-                            txAll.Commit();
-                            LogManager.Info($"[Direct] T_Reconciliation (unarchive+archive+insert) pour {countryId}: Unarchived={unarchivedCount}, Archived={archivedCount}, Inserted={insertedCount}");
+                            tx.Commit();
+                            LogManager.Info($"[Direct] T_Reconciliation (insert-only) pour {countryId}: Inserted={insertedCount}");
                         }
-                        catch { }
+                        catch
+                        {
+                            tx.Rollback();
+                            throw;
+                        }
                     }
-
-                    // Change-tracking désactivé pour Ambre: pas d'écriture ChangeLog
-                    LogManager.Info("[ChangeLog] Désactivé pour Ambre: aucune écriture dans ChangeLog pour T_Reconciliation.");
                 }
+
+                // Change-tracking désactivé pour Ambre: pas d'écriture ChangeLog
+                LogManager.Info("[ChangeLog] Désactivé pour Ambre: aucune écriture dans ChangeLog pour T_Reconciliation.");
             }
             catch (Exception ex)
             {
                 LogManager.Error($"Erreur lors de la mise à jour de T_Reconciliation pour {countryId}: {ex.Message}", ex);
                 throw new InvalidOperationException($"Erreur lors de la mise à jour de la table T_Reconciliation: {ex.Message}", ex);
             }
-        }
-
-        /// <summary>
-        /// Exécute un OleDbCommand.ExecuteNonQueryAsync avec retry sur verrous transitoires (Access/JET).
-        /// Cible notamment les erreurs "record is locked" (erreurs 3197, 3218, 3260) et exceptions InvalidOperation encapsulant OleDbException.
-        /// Backoff exponentiel simple.
-        /// </summary>
-        private static async Task<int> ExecuteNonQueryWithRetryAsync(OleDbCommand cmd, int maxAttempts = 5)
-        {
-            int attempt = 0;
-            Exception last = null;
-            while (attempt < maxAttempts)
-            {
-                try
-                {
-                    return await cmd.ExecuteNonQueryAsync();
-                }
-                catch (Exception ex) when (ShouldRetryOleDb(ex))
-                {
-                    last = ex;
-                    attempt++;
-                    int delayMs = (int)Math.Min(2000, 100 * Math.Pow(2, attempt));
-                    await Task.Delay(delayMs);
-                    continue;
-                }
-            }
-            throw new InvalidOperationException($"OleDb command failed after {maxAttempts} attempts (possible lock contention)", last);
-        }
-
-        private static bool ShouldRetryOleDb(Exception ex)
-        {
-            try
-            {
-                // Unwrap InvalidOperationException -> OleDbException if present
-                var ole = ex as System.Data.OleDb.OleDbException ?? ex.InnerException as System.Data.OleDb.OleDbException;
-                if (ole != null)
-                {
-                    foreach (System.Data.OleDb.OleDbError err in ole.Errors)
-                    {
-                        // JET/ACE common lock-related errors
-                        // 3197: stopped process because another user attempting to change same data
-                        // 3218: couldn't update; currently locked
-                        // 3260: couldn't update; currently locked by another session on this machine
-                        if (err.NativeError == 3197 || err.NativeError == 3218 || err.NativeError == 3260)
-                            return true;
-                        var msg = (err.Message ?? string.Empty).ToLowerInvariant();
-                        if (msg.Contains("locked") || msg.Contains("another user") || msg.Contains("couldn't update"))
-                            return true;
-                    }
-                }
-                // Some providers wrap as InvalidOperation with lock wording
-                var s = (ex.Message ?? string.Empty).ToLowerInvariant();
-                if (s.Contains("locked") || s.Contains("another user") || s.Contains("couldn't update"))
-                    return true;
-            }
-            catch { }
-            return false;
         }
 
 

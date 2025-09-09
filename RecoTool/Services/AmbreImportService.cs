@@ -1309,7 +1309,7 @@ namespace RecoTool.Services
                                         var pMod = up.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = nowUtc;
                                         up.Parameters.AddWithValue("@ModifiedBy", (object)(_currentUser ?? "System") ?? DBNull.Value);
                                         up.Parameters.AddWithValue("@ID", id);
-                                        unarchivedCount += await up.ExecuteNonQueryAsync();
+                                        unarchivedCount += await ExecuteNonQueryWithRetryAsync(up);
                                     }
                                 }
                                 txU.Commit();
@@ -1347,7 +1347,7 @@ namespace RecoTool.Services
                                         var pMod = up.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = nowUtc;
                                         up.Parameters.AddWithValue("@ModifiedBy", (object)(_currentUser ?? "System") ?? DBNull.Value);
                                         up.Parameters.AddWithValue("@ID", id);
-                                        archivedCount += await up.ExecuteNonQueryAsync();
+                                        archivedCount += await ExecuteNonQueryWithRetryAsync(up);
                                     }
                                 }
                                 txA.Commit();
@@ -1429,7 +1429,7 @@ namespace RecoTool.Services
                                     cmd.Parameters.AddWithValue("@ModifiedBy", (object)(r.ModifiedBy ?? _currentUser) ?? DBNull.Value);
                                     var pMod   = cmd.Parameters.Add("@LastModified", OleDbType.Date); pMod.Value = r.LastModified.HasValue ? (object)r.LastModified.Value : DBNull.Value;
 
-                                    insertedCount += await cmd.ExecuteNonQueryAsync();
+                                    insertedCount += await ExecuteNonQueryWithRetryAsync(cmd);
                                 }
                             }
 
@@ -1452,6 +1452,63 @@ namespace RecoTool.Services
                 LogManager.Error($"Erreur lors de la mise à jour de T_Reconciliation pour {countryId}: {ex.Message}", ex);
                 throw new InvalidOperationException($"Erreur lors de la mise à jour de la table T_Reconciliation: {ex.Message}", ex);
             }
+        }
+
+        /// <summary>
+        /// Exécute un OleDbCommand.ExecuteNonQueryAsync avec retry sur verrous transitoires (Access/JET).
+        /// Cible notamment les erreurs "record is locked" (erreurs 3197, 3218, 3260) et exceptions InvalidOperation encapsulant OleDbException.
+        /// Backoff exponentiel simple.
+        /// </summary>
+        private static async Task<int> ExecuteNonQueryWithRetryAsync(OleDbCommand cmd, int maxAttempts = 5)
+        {
+            int attempt = 0;
+            Exception last = null;
+            while (attempt < maxAttempts)
+            {
+                try
+                {
+                    return await cmd.ExecuteNonQueryAsync();
+                }
+                catch (Exception ex) when (ShouldRetryOleDb(ex))
+                {
+                    last = ex;
+                    attempt++;
+                    int delayMs = (int)Math.Min(2000, 100 * Math.Pow(2, attempt));
+                    await Task.Delay(delayMs);
+                    continue;
+                }
+            }
+            throw new InvalidOperationException($"OleDb command failed after {maxAttempts} attempts (possible lock contention)", last);
+        }
+
+        private static bool ShouldRetryOleDb(Exception ex)
+        {
+            try
+            {
+                // Unwrap InvalidOperationException -> OleDbException if present
+                var ole = ex as System.Data.OleDb.OleDbException ?? ex.InnerException as System.Data.OleDb.OleDbException;
+                if (ole != null)
+                {
+                    foreach (System.Data.OleDb.OleDbError err in ole.Errors)
+                    {
+                        // JET/ACE common lock-related errors
+                        // 3197: stopped process because another user attempting to change same data
+                        // 3218: couldn't update; currently locked
+                        // 3260: couldn't update; currently locked by another session on this machine
+                        if (err.NativeError == 3197 || err.NativeError == 3218 || err.NativeError == 3260)
+                            return true;
+                        var msg = (err.Message ?? string.Empty).ToLowerInvariant();
+                        if (msg.Contains("locked") || msg.Contains("another user") || msg.Contains("couldn't update"))
+                            return true;
+                    }
+                }
+                // Some providers wrap as InvalidOperation with lock wording
+                var s = (ex.Message ?? string.Empty).ToLowerInvariant();
+                if (s.Contains("locked") || s.Contains("another user") || s.Contains("couldn't update"))
+                    return true;
+            }
+            catch { }
+            return false;
         }
 
 

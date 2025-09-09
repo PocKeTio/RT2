@@ -725,7 +725,7 @@ namespace RecoTool.Services
             if (string.IsNullOrWhiteSpace(prefix))
                 prefix = GetParameter("CountryDatabasePrefix") ?? "DB_";
 
-            string file = $"{prefix}{countryId}.accdb";
+            string file = $"{prefix}{countryId}_lock.accdb";
             return Path.Combine(dir, file);
         }
 

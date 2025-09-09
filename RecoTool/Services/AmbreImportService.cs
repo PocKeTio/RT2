@@ -1140,7 +1140,7 @@ namespace RecoTool.Services
                 var recoSvc = new ReconciliationService(_offlineFirstService.GetCurrentLocalConnectionString(), _currentUser, countries, _offlineFirstService);
                 var businessToday = DateTime.Today; // local time per spec
 
-                // Preload DWINGS invoice cache once
+                // Preload DWINGS invoice cache once (and guarantees list if needed later)
                 var dwInvoices = await recoSvc.GetDwingsInvoicesAsync();
 
                 // Staging for later action assignment across Pivot/Receivable
@@ -1157,8 +1157,18 @@ namespace RecoTool.Services
 
                     // Resolve DWINGS references per rules
                     string resolvedBgi = null;
+                    string resolvedBgpmt = null;
+                    string resolvedGuaranteeId = null;
                     try
                     {
+                        // Extract tokens from the richest set of candidate fields first
+                        // These tokens are used for both pivot/receivable paths and to populate DWINGS_* fields
+                        resolvedBgpmt = DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.Reconciliation_Num)
+                                         ?? DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.ReconciliationOrigin_Num)
+                                         ?? DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.RawLabel);
+                        resolvedGuaranteeId = DwingsLinkingHelper.ExtractGuaranteeId(dataAmbre.Reconciliation_Num)
+                                               ?? DwingsLinkingHelper.ExtractGuaranteeId(dataAmbre.RawLabel);
+
                         if (!isPivot)
                         {
                             // Receivable: rely on BGI (prefer explicit field), fallback to regex in RawLabel then Reconciliation fields
@@ -1171,6 +1181,20 @@ namespace RecoTool.Services
                             if (hit != null)
                             {
                                 rec.DWINGS_InvoiceID = hit.INVOICE_ID;
+                            }
+                            else if (!string.IsNullOrWhiteSpace(resolvedBgpmt))
+                            {
+                                // Try BGPMT if BGI path did not resolve
+                                var byBgpmt = DwingsLinkingHelper.ResolveInvoiceByBgpmt(dwInvoices, resolvedBgpmt, dataAmbre.SignedAmount);
+                                if (byBgpmt != null)
+                                    rec.DWINGS_InvoiceID = byBgpmt.INVOICE_ID;
+                            }
+                            else if (!string.IsNullOrWhiteSpace(resolvedGuaranteeId))
+                            {
+                                // Fallback: try resolve by Guarantee when available
+                                var byG = DwingsLinkingHelper.ResolveInvoicesByGuarantee(dwInvoices, resolvedGuaranteeId, dataAmbre.Operation_Date, dataAmbre.SignedAmount)?.FirstOrDefault();
+                                if (byG != null)
+                                    rec.DWINGS_InvoiceID = byG.INVOICE_ID;
                             }
                         }
                         else
@@ -1190,9 +1214,7 @@ namespace RecoTool.Services
                             }
                             else
                             {
-                                var bgpmt = DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.Reconciliation_Num)
-                                            ?? DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.ReconciliationOrigin_Num)
-                                            ?? DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.RawLabel);
+                                var bgpmt = resolvedBgpmt;
                                 if (!string.IsNullOrWhiteSpace(bgpmt))
                                 {
                                     var hit = DwingsLinkingHelper.ResolveInvoiceByBgpmt(dwInvoices, bgpmt, dataAmbre.SignedAmount);
@@ -1212,6 +1234,28 @@ namespace RecoTool.Services
                     catch (Exception linkEx)
                     {
                         LogManager.Warning($"DWINGS resolution failed for {dataAmbre?.ID}: {linkEx.Message}");
+                    }
+
+                    // Populate DWINGS_CommissionID from BGPMT when available
+                    if (!string.IsNullOrWhiteSpace(resolvedBgpmt))
+                    {
+                        rec.DWINGS_CommissionID = resolvedBgpmt;
+                    }
+                    // Populate DWINGS_GuaranteeID from extracted token when available
+                    if (!string.IsNullOrWhiteSpace(resolvedGuaranteeId))
+                    {
+                        rec.DWINGS_GuaranteeID = resolvedGuaranteeId;
+                    }
+                    // If no invoice resolved yet but we have GuaranteeID, try resolve by guarantee as a fallback
+                    if (string.IsNullOrWhiteSpace(rec.DWINGS_InvoiceID) && !string.IsNullOrWhiteSpace(resolvedGuaranteeId))
+                    {
+                        try
+                        {
+                            var byG = DwingsLinkingHelper.ResolveInvoicesByGuarantee(dwInvoices, resolvedGuaranteeId, dataAmbre.Operation_Date, dataAmbre.SignedAmount)?.FirstOrDefault();
+                            if (byG != null)
+                                rec.DWINGS_InvoiceID = byG.INVOICE_ID;
+                        }
+                        catch { }
                     }
 
                     // KPI via mapping (independent of action assignment below)

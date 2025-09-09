@@ -17,11 +17,16 @@ namespace RecoTool.Helpers
         }
 
         // BGI invoice id: BGI + 13 digits (year+month+7 digits)
+        // Be tolerant to separators (spaces, dashes, punctuation) between BGI and the digits; case-insensitive
         public static string ExtractBgiToken(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return null;
-            var m = Regex.Match(s, @"\bBGI\d{13}\b");
-            return m.Success ? m.Value : null;
+            // Example matches: BGI2025010123456, bgi 2025010 123456, BGI-2025010123456
+            var m = Regex.Match(s, @"BGI\D*(\d{13})", RegexOptions.IgnoreCase);
+            if (!m.Success) return null;
+            var digits = m.Groups[1]?.Value;
+            if (string.IsNullOrWhiteSpace(digits)) return null;
+            return "BGI" + digits;
         }
 
         // Guarantee ID: G####AA######### (4 digits, 2 letters, 9 digits)

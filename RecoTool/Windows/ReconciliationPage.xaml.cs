@@ -1293,11 +1293,23 @@ namespace RecoTool.Windows
 
         private async Task AddReconciliationView(bool asPopup = false)
         {
+            // Defensive: if DI did not inject the service (timing), try resolving now
             if (_reconciliationService == null)
             {
-                ShowWarning("Reconciliation service is not available.");
-                return;
+                try
+                {
+                    _reconciliationService = RecoTool.App.ServiceProvider?.GetService(typeof(RecoTool.Services.ReconciliationService)) as RecoTool.Services.ReconciliationService;
+                }
+                catch { }
+                if (_reconciliationService == null)
+                {
+                    ShowWarning("Reconciliation service is not available.");
+                    return;
+                }
             }
+
+            // Ensure top filters (Accounts/Status) reflect the current country just before opening
+            try { UpdateTopFiltersFromData(); } catch { }
 
             // Créer la vue et l'attacher aux services existants
             var view = new ReconciliationView(_reconciliationService, _offlineFirstService)

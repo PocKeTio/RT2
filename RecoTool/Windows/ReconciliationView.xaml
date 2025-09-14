@@ -14,6 +14,7 @@
         <local:UserFieldIdToNameConverter x:Key="UserFieldIdToNameConverter" />
         <local:ActionColorConverter x:Key="ActionColorConverter" />
         <local:AssigneeIdToNameConverter x:Key="AssigneeIdToNameConverter" />
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
         <!-- Item template that renders null items as an empty option so users can clear selection -->
         <DataTemplate x:Key="UserFieldItemTemplate">
             <TextBlock>
@@ -222,7 +223,7 @@
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Reconciliation #:" VerticalAlignment="Center"/>
-                                    <TextBox Grid.Column="1" Margin="5,0,0,0" Text="{Binding FilterReconciliationNum, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <TextBox Grid.Column="1" Margin="5,0,0,0" Text="{Binding VM.FilterReconciliationNum, UpdateSourceTrigger=PropertyChanged}"/>
                                 </Grid>
 
                                 <Grid Margin="0,5">
@@ -231,7 +232,7 @@
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Label:" VerticalAlignment="Center"/>
-                                    <TextBox Grid.Column="1" Margin="5,0,0,0" Text="{Binding FilterRawLabel, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <TextBox Grid.Column="1" Margin="5,0,0,0" Text="{Binding VM.FilterRawLabel, UpdateSourceTrigger=PropertyChanged}"/>
                                 </Grid>
 
                                 <Grid Margin="0,5">
@@ -240,7 +241,7 @@
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Event #:" VerticalAlignment="Center"/>
-                                    <TextBox Grid.Column="1" Margin="5,0,0,0" Text="{Binding FilterEventNum, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <TextBox Grid.Column="1" Margin="5,0,0,0" Text="{Binding VM.FilterEventNum, UpdateSourceTrigger=PropertyChanged}"/>
                                 </Grid>
 
                                 <Grid Margin="0,8">
@@ -250,7 +251,7 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Operation Date From:" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
-                                        <DatePicker SelectedDate="{Binding FilterFromDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
+                                        <DatePicker SelectedDate="{Binding VM.FilterFromDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
                                     </Border>
                                 </Grid>
 
@@ -261,7 +262,7 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Operation Date To:" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
-                                        <DatePicker SelectedDate="{Binding FilterToDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
+                                        <DatePicker SelectedDate="{Binding VM.FilterToDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
                                     </Border>
                                 </Grid>
 
@@ -272,7 +273,7 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Deleted Date:" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
-                                        <DatePicker SelectedDate="{Binding FilterDeletedDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
+                                        <DatePicker SelectedDate="{Binding VM.FilterDeletedDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
                                     </Border>
                                 </Grid>
 
@@ -285,7 +286,7 @@
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
                                         <ComboBox x:Name="CurrencyComboBox" Margin="5,0" BorderThickness="0" Background="Transparent" Style="{StaticResource ModernComboBoxStyle}"
                                                   ItemsSource="{Binding CurrencyOptions}"
-                                                  SelectedItem="{Binding FilterCurrency, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                  SelectedItem="{Binding VM.FilterCurrency, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                     </Border>
                                 </Grid>
 
@@ -295,7 +296,7 @@
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Amount Min:" VerticalAlignment="Center"/>
-                                    <TextBox Grid.Column="1" Margin="5,0,0,0" Text="{Binding FilterMinAmount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <TextBox Grid.Column="1" Margin="5,0,0,0" Text="{Binding VM.FilterMinAmount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                 </Grid>
 
                                 <Grid Margin="0,8">
@@ -305,7 +306,7 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Amount Max:" VerticalAlignment="Center"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
-                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding FilterMaxAmount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding VM.FilterMaxAmount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                     </Border>
                                 </Grid>
                             </StackPanel>
@@ -327,7 +328,7 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Guarantee Ref:" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
-                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding FilterDwGuaranteeId, UpdateSourceTrigger=PropertyChanged}"/>
+                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding VM.FilterDwGuaranteeId, UpdateSourceTrigger=PropertyChanged}"/>
                                     </Border>
                                 </Grid>
 
@@ -349,7 +350,7 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Commission Ref:" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
-                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding FilterDwCommissionId, UpdateSourceTrigger=PropertyChanged}"/>
+                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding VM.FilterDwCommissionId, UpdateSourceTrigger=PropertyChanged}"/>
                                     </Border>
                                 </Grid>
 
@@ -362,7 +363,7 @@
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
                                         <ComboBox x:Name="TypeComboBox" Margin="5,0" BorderThickness="0" Background="Transparent" Style="{StaticResource ModernComboBoxStyle}"
                                                   ItemsSource="{Binding GuaranteeTypeOptions}"
-                                                  SelectedItem="{Binding FilterGuaranteeType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                  SelectedItem="{Binding VM.FilterGuaranteeType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                     </Border>
                                 </Grid>
 
@@ -374,10 +375,10 @@
                                     <TextBlock Grid.Column="0" Text="Transaction Type:" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
                                         <ComboBox x:Name="TransactionTypeComboBox" Margin="5,0" BorderThickness="0" Background="Transparent" Style="{StaticResource ModernComboBoxStyle}"
-                                                  ItemsSource="{Binding TransactionTypeOptions}"
+                                                  ItemsSource="{Binding VM.TransactionTypeOptions}"
                                                   DisplayMemberPath="Name"
                                                   SelectedValuePath="Id"
-                                                  SelectedValue="{Binding FilterTransactionTypeId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                                  SelectedValue="{Binding VM.FilterTransactionTypeId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
                                         </ComboBox>
                                     </Border>
                                 </Grid>
@@ -401,7 +402,7 @@
                                     <TextBlock Grid.Column="0" Text="Guarantee Status:" VerticalAlignment="Center"/>
                                     <ComboBox x:Name="GuaranteeStatusComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
                                               ItemsSource="{Binding GuaranteeStatusOptions}"
-                                              SelectedItem="{Binding FilterGuaranteeStatus, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                              SelectedItem="{Binding VM.FilterGuaranteeStatus, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                 </Grid>
                             </StackPanel>
                         </GroupBox>
@@ -426,10 +427,10 @@
                                     <ComboBox x:Name="ActionComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
                                               SelectedValuePath="USR_ID"
                                               ItemTemplate="{StaticResource UserFieldItemTemplate}"
-                                              SelectedValue="{Binding FilterActionId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                              SelectedValue="{Binding VM.FilterActionId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
                                         <ComboBox.ItemsSource>
                                             <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Action">
-                                                <Binding Path="DataContext.FilterAccountId" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                <Binding Path="DataContext.VM.FilterAccountId" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
                                                 <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
                                                 <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
                                             </MultiBinding>
@@ -446,10 +447,10 @@
                                     <ComboBox x:Name="KPIComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
                                               SelectedValuePath="USR_ID"
                                               ItemTemplate="{StaticResource UserFieldItemTemplate}"
-                                              SelectedValue="{Binding FilterKpiId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                              SelectedValue="{Binding VM.FilterKpiId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
                                         <ComboBox.ItemsSource>
                                             <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="KPI">
-                                                <Binding Path="DataContext.FilterAccountId" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                <Binding Path="DataContext.VM.FilterAccountId" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
                                                 <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
                                                 <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
                                             </MultiBinding>
@@ -466,10 +467,10 @@
                                     <ComboBox x:Name="IncidentTypeComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
                                               SelectedValuePath="USR_ID"
                                               ItemTemplate="{StaticResource UserFieldItemTemplate}"
-                                              SelectedValue="{Binding FilterIncidentTypeId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                              SelectedValue="{Binding VM.FilterIncidentTypeId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
                                         <ComboBox.ItemsSource>
                                             <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Incident Type">
-                                                <Binding Path="DataContext.FilterAccountId" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                                <Binding Path="DataContext.VM.FilterAccountId" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
                                                 <Binding Path="DataContext.AllUserFields" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
                                                 <Binding Path="DataContext.CurrentCountryObject" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
                                             </MultiBinding>
@@ -485,7 +486,7 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Action Done:" VerticalAlignment="Center"/>
                                     <ComboBox Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
-                                              SelectedValue="{Binding FilterActionDone, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              SelectedValue="{Binding VM.FilterActionDone, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                               SelectedValuePath="Tag">
                                         <ComboBoxItem Tag="{x:Null}">All</ComboBoxItem>
                                         <ComboBoxItem Tag="False">Pending</ComboBoxItem>
@@ -501,7 +502,7 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Action Date From:" VerticalAlignment="Center"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
-                                        <DatePicker SelectedDate="{Binding FilterActionDateFrom, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
+                                        <DatePicker SelectedDate="{Binding VM.FilterActionDateFrom, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
                                     </Border>
                                 </Grid>
                                 <Grid Margin="0,5">
@@ -511,7 +512,7 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Action Date To:" VerticalAlignment="Center"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
-                                        <DatePicker SelectedDate="{Binding FilterActionDateTo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
+                                        <DatePicker SelectedDate="{Binding VM.FilterActionDateTo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,0" BorderThickness="0" Background="Transparent"/>
                                     </Border>
                                 </Grid>
 
@@ -524,7 +525,7 @@
                                     <TextBlock Grid.Column="0" Text="Potential Duplicates:" VerticalAlignment="Center"/>
                                     <CheckBox x:Name="PotentialDuplicatesCheckBox" Grid.Column="1" Margin="5,0,0,0"
                                               Content="Show only potential duplicates"
-                                              IsChecked="{Binding FilterPotentialDuplicates, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                              IsChecked="{Binding VM.FilterPotentialDuplicates, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                 </Grid>
 
                                 <!-- Assignee filter -->
@@ -538,7 +539,7 @@
                                               ItemsSource="{Binding AssigneeOptions, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                               DisplayMemberPath="Name"
                                               SelectedValuePath="Id"
-                                              SelectedValue="{Binding FilterAssigneeId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                              SelectedValue="{Binding VM.FilterAssigneeId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
                                         <!-- optional: no static items; list includes empty entry -->
                                     </ComboBox>
                                 </Grid>
@@ -550,7 +551,13 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Comments:" VerticalAlignment="Top" Margin="0,5,0,0" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
-                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent" TextWrapping="Wrap" AcceptsReturn="True" Height="60"/>
+                                        <TextBox Margin="5"
+                                             BorderThickness="0"
+                                             Background="Transparent"
+                                             TextWrapping="Wrap"
+                                             AcceptsReturn="True"
+                                             Height="60"
+                                             Text="{Binding VM.FilterComments, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                     </Border>
                                 </Grid>
 
@@ -653,20 +660,25 @@
                     <DataGrid x:Name="ResultsDataGrid" Grid.Row="0"
                               AutoGenerateColumns="False"
                               CanUserAddRows="False"
+                              CanUserDeleteRows="False"
                               IsReadOnly="False"
-                              CanUserSortColumns="True"
+                              HeadersVisibility="All"
+                              GridLinesVisibility="Horizontal"
+                              AlternationCount="2"
+                              Margin="0,0,0,0"
+                              ItemsSource="{Binding VM.ViewData, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                              EnableRowVirtualization="True"
+                              EnableColumnVirtualization="True"
+                              VirtualizingPanel.IsVirtualizing="True"
+                              VirtualizingPanel.VirtualizationMode="Recycling"
+                              FrozenColumnCount="0"
                               SelectionMode="Extended"
-                              ItemsSource="{Binding ViewData, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                              Margin="0"
-                              MaxHeight="400"
-                              SelectionChanged="ResultsDataGrid_SelectionChanged"
-                              MouseDoubleClick="ResultsDataGrid_MouseDoubleClick"
-                              CellEditEnding="ResultsDataGrid_CellEditEnding"
-                              AlternationCount="0"
-                              TextOptions.TextFormattingMode="Display"
-                              GridLinesVisibility="None"
-                              RowHeight="26"
-                              ColumnHeaderHeight="28">
+                              SelectionUnit="FullRow"
+                              Loaded="ResultsDataGrid_Loaded"
+                              ColumnReordering="ResultsDataGrid_ColumnReordering"
+                              PreviewMouseWheel="ResultsDataGrid_PreviewMouseWheel"
+                              PreviewMouseRightButtonUp="ResultsDataGrid_PreviewMouseRightButtonUp"
+                              MouseDoubleClick="ResultsDataGrid_MouseDoubleClick">
                         <DataGrid.Resources>
                             <!-- In-grid editing: decouple ComboBox visuals from theme to avoid ancestor-binding errors -->
                             <Style TargetType="ComboBox" BasedOn="{x:Null}">
@@ -780,6 +792,52 @@
                             </Style>
                         </DataGrid.RowStyle>
                         <DataGrid.Columns>
+                            <!-- New/Updated indicators placed first -->
+                            <DataGridTemplateColumn Header="" Width="30" IsReadOnly="True" CanUserResize="False" CanUserReorder="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="N" Foreground="Red" FontWeight="Bold" HorizontalAlignment="Center"
+                                                   ToolTip="New line imported (not present previously)"
+                                                   Visibility="{Binding IsNewlyAdded, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="" Width="36" IsReadOnly="True" CanUserResize="False" CanUserReorder="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="U" Foreground="#1976D2" FontWeight="Bold" HorizontalAlignment="Center"
+                                                   ToolTip="Updated since last import"
+                                                   Visibility="{Binding IsUpdated, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <!-- Matched indicator (clickable) -->
+                            <DataGridTemplateColumn Header="" Width="36" IsReadOnly="True" CanUserResize="False" CanUserReorder="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="M" Foreground="#2E7D32" FontWeight="Bold" HorizontalAlignment="Center" Cursor="Hand"
+                                                   ToolTip="Show matched entries across accounts"
+                                                   MouseLeftButtonUp="MatchedIndicator_MouseLeftButtonUp"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <!-- Account side column (P/R) -->
+                            <DataGridTextColumn Header="Account" Binding="{Binding AccountSide}" Width="60" IsReadOnly="True">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="HorizontalAlignment" Value="Center"/>
+                                        <Setter Property="ToolTip" Value="P = Pivot, R = Receivable"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding AccountSide}" Value="P">
+                                                <Setter Property="ToolTip" Value="P = Pivot account"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding AccountSide}" Value="R">
+                                                <Setter Property="ToolTip" Value="R = Receivable account"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
                             <DataGridTextColumn Header="Event Num" Binding="{Binding Event_Num}" Width="100" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Folder" Binding="{Binding Folder}" Width="100" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Pivot Transaction Codes" Binding="{Binding Pivot_TransactionCodesFromLabel}" Width="150" IsReadOnly="True"/>

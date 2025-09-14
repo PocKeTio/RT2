@@ -2,7 +2,7 @@ using System;
 using System.ComponentModel;
 using RecoTool.Models;
 
-namespace RecoTool.Services
+namespace RecoTool.Services.DTOs
 {
     #region Enums and Helper Classes
 
@@ -146,6 +146,16 @@ namespace RecoTool.Services
 
         // Trigger date from T_Reconciliation
         public DateTime? TriggerDate { get; set; }
+
+        // Reconciliation timestamps (used to compute UI indicators)
+        public DateTime? Reco_CreationDate { get; set; }
+        public DateTime? Reco_LastModified { get; set; }
+
+        // Account side: 'P' for Pivot, 'R' for Receivable (used in matched popup)
+        public string AccountSide { get; set; }
+
+        // True if the reference (DWINGS_InvoiceID or InternalInvoiceReference) exists on both accounts
+        public bool IsMatchedAcrossAccounts { get; set; }
 
         // Propriétés DWINGS
         public string GUARANTEE_ID { get; set; }

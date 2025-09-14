@@ -16,6 +16,7 @@ using System.Windows.Media;
 using System.Text.Json;
 using System.Text;
 using System.Globalization;
+using RecoTool.Services.DTOs;
 
 namespace RecoTool.Windows
 {
@@ -29,6 +30,7 @@ namespace RecoTool.Windows
 
         private ReconciliationService _reconciliationService;
         private OfflineFirstService _offlineFirstService;
+        private KpiSnapshotService _kpiSnapshotService;
         private bool _isLoading;
         private bool _canRefresh = true;
         private List<ReconciliationViewData> _reconciliationViewData;
@@ -89,10 +91,12 @@ namespace RecoTool.Windows
         {
             try
             {
-                if (_reconciliationService == null || string.IsNullOrWhiteSpace(CurrentCountryId) || SnapshotDatePicker == null)
+                if ((_reconciliationService == null && _kpiSnapshotService == null) || string.IsNullOrWhiteSpace(CurrentCountryId) || SnapshotDatePicker == null)
                     return;
 
-                var dates = await _reconciliationService.GetKpiSnapshotDatesAsync(CurrentCountryId);
+                if (_kpiSnapshotService == null && _offlineFirstService != null && _reconciliationService != null)
+                    _kpiSnapshotService = new KpiSnapshotService(_offlineFirstService, _reconciliationService);
+                var dates = await _kpiSnapshotService.GetKpiSnapshotDatesAsync(CurrentCountryId);
                 _availableSnapshotDates = dates ?? new List<DateTime>();
 
                 await Dispatcher.InvokeAsync(() =>
@@ -468,6 +472,8 @@ namespace RecoTool.Windows
             InitializeProperties();
             _offlineFirstService = offlineFirstService;
             _reconciliationService = reconciliationService;
+            if (_offlineFirstService != null && _reconciliationService != null)
+                _kpiSnapshotService = new KpiSnapshotService(_offlineFirstService, _reconciliationService);
             DataContext = this;
             _defaultBackground = MainScrollViewer?.Background;
         }
@@ -481,6 +487,8 @@ namespace RecoTool.Windows
         {
             _offlineFirstService = offlineFirstService;
             _reconciliationService = reconciliationService;
+            if (_offlineFirstService != null && _reconciliationService != null)
+                _kpiSnapshotService = new KpiSnapshotService(_offlineFirstService, _reconciliationService);
             DataContext = this;
             // Reload available snapshot dates when services/country change
             _ = RefreshSnapshotDatePickerAsync();
@@ -876,8 +884,11 @@ namespace RecoTool.Windows
         {
             try
             {
-                if (_reconciliationService == null || string.IsNullOrWhiteSpace(countryId)) return false;
-                var table = await _reconciliationService.GetKpiSnapshotAsync(date.Date, countryId);
+                if ((_reconciliationService == null && _kpiSnapshotService == null) || string.IsNullOrWhiteSpace(countryId)) return false;
+                if (_kpiSnapshotService == null && _offlineFirstService != null && _reconciliationService != null)
+                    _kpiSnapshotService = new KpiSnapshotService(_offlineFirstService, _reconciliationService);
+                var table = await _kpiSnapshotService.GetKpiSnapshotAsync(date.Date, countryId);
+
                 if (table == null || table.Rows.Count == 0)
                 {
                     _usingSnapshot = false;
@@ -1132,7 +1143,9 @@ namespace RecoTool.Windows
                 }
 
                 // Determine range: from first to last available snapshot
-                var dates = _availableSnapshotDates ?? await _reconciliationService.GetKpiSnapshotDatesAsync(CurrentCountryId);
+                if (_kpiSnapshotService == null && _offlineFirstService != null && _reconciliationService != null)
+                    _kpiSnapshotService = new KpiSnapshotService(_offlineFirstService, _reconciliationService);
+                var dates = _availableSnapshotDates ?? await _kpiSnapshotService.GetKpiSnapshotDatesAsync(CurrentCountryId);
                 if (dates == null || dates.Count == 0)
                 {
                     ShowError("No snapshots to export.");
@@ -1141,7 +1154,7 @@ namespace RecoTool.Windows
                 var from = dates.Min().Date;
                 var to = dates.Max().Date;
 
-                var table = await _reconciliationService.GetKpiSnapshotsAsync(from, to, CurrentCountryId);
+                var table = await _kpiSnapshotService.GetKpiSnapshotsAsync(from, to, CurrentCountryId);
                 if (table == null || table.Rows.Count == 0)
                 {
                     ShowError("No data returned for export.");
@@ -1653,73 +1666,6 @@ namespace RecoTool.Windows
                 StatusMessage = "Data load error";
                 _reconciliationViewData = new List<ReconciliationViewData>();
                 throw new Exception($"Error loading database data: {ex.Message}", ex);
-            }
-        }
-
-        /// <summary>
-        /// Convertit une entité OfflineFirst vers DataAmbre (legacy - plus utilisé)
-        /// </summary>
-        private DataAmbre ConvertToDataAmbre(dynamic entity)
-        {
-            try
-            {
-                return new DataAmbre
-                {
-                    ID = entity.ID?.ToString(),
-                    Account_ID = entity.Account_ID?.ToString(),
-                    CCY = entity.CCY?.ToString(),
-                    Country = entity.Country?.ToString(),
-                    Event_Num = entity.Event_Num?.ToString(),
-                    Folder = entity.Folder?.ToString(),
-                    RawLabel = entity.RawLabel?.ToString(),
-                    SignedAmount = ConvertToDecimal(entity.SignedAmount),
-                    LocalSignedAmount = ConvertToDecimal(entity.LocalSignedAmount),
-                    Operation_Date = ConvertToDateTime(entity.Operation_Date),
-                    Value_Date = ConvertToDateTime(entity.Value_Date),
-                    Reconciliation_Num = entity.Reconciliation_Num?.ToString(),
-                    ReconciliationOrigin_Num = entity.ReconciliationOrigin_Num?.ToString()
-                };
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"DataAmbre conversion error: {ex.Message}");
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Convertit une entité OfflineFirst vers Reconciliation
-        /// </summary>
-        private Reconciliation ConvertToReconciliation(dynamic entity)
-        {
-            try
-            {
-                return new Reconciliation
-                {
-                    ID = entity.ID?.ToString(),
-                    DWINGS_GuaranteeID = entity.DWINGS_GuaranteeID?.ToString(),
-                    DWINGS_InvoiceID = entity.DWINGS_InvoiceID?.ToString(),
-                    DWINGS_CommissionID = entity.DWINGS_CommissionID?.ToString(),
-                    Action = ConvertToNullableInt(entity.Action),
-                    KPI = ConvertToNullableInt(entity.KPI),
-                    Comments = entity.Comments?.ToString(),
-                    InternalInvoiceReference = entity.InternalInvoiceReference?.ToString(),
-                    FirstClaimDate = ConvertToDateTime(entity.FirstClaimDate),
-                    LastClaimDate = ConvertToDateTime(entity.LastClaimDate),
-                    ToRemind = ConvertToBool(entity.ToRemind),
-                    ToRemindDate = ConvertToDateTime(entity.ToRemindDate),
-                    ACK = ConvertToBool(entity.ACK),
-                    SwiftCode = entity.SwiftCode?.ToString(),
-                    PaymentReference = entity.PaymentReference?.ToString(),
-                    IncidentType = ConvertToNullableInt(entity.IncidentType),
-                    RiskyItem = ConvertToNullableBool(entity.RiskyItem),
-                    ReasonNonRisky = ConvertToNullableInt(entity.ReasonNonRisky)
-                };
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Reconciliation conversion error: {ex.Message}");
-                return null;
             }
         }
 

@@ -40,7 +40,7 @@ namespace OfflineFirstAccess.Helpers
                 .WithPrimaryKey("ChangeID", typeof(long), true)
                 .WithColumn("TableName", typeof(string), true)
                 .WithColumn("RecordID", typeof(string), true)
-                .WithColumn("Operation", typeof(string), "TEXT(50)", true)
+                .WithColumn("Operation", typeof(string), "TEXT(255)", true)
                 // Stocké en DATETIME (UTC) pour un typage correct
                 .WithColumn("Timestamp", typeof(DateTime), "DATETIME", true)
                 .WithColumn("Synchronized", typeof(bool), true)

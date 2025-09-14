@@ -183,7 +183,7 @@ namespace RecoTool.Services
                 // Process queued bulk pushes and periodic best-effort push when online and not locked
                 try
                 {
-                    if (networkAvailable && !lockActive)
+                    if (networkAvailable && !lockActive && svc.AllowBackgroundPushes)
                     {
                         foreach (var cid in _bulkPushQueue.Keys.ToArray())
                         {
@@ -213,7 +213,7 @@ namespace RecoTool.Services
                 // Lightweight remote reconciliation DB change check (timestamp + length) every minute
                 try
                 {
-                    if (networkAvailable && !lockActive)
+                    if (networkAvailable && !lockActive && svc.AllowBackgroundPushes)
                     {
                         var nowUtc = DateTime.UtcNow;
                         if (nowUtc - _lastRemoteReconCheckUtc >= RemoteReconCheckInterval)

@@ -168,7 +168,7 @@ namespace OfflineFirstAccess.Models
                     ChangeID COUNTER PRIMARY KEY,
                     TableName TEXT(255),
                     RecordID TEXT(255),
-                    Operation TEXT(50),
+                    Operation TEXT(255),
                     [Timestamp] DATETIME,
                     Synchronized BIT
                 )"
@@ -177,7 +177,7 @@ namespace OfflineFirstAccess.Models
             changeLogTable.Columns.Add(new ColumnDefinition("ChangeID", typeof(long), "LONG", false, true, true));
             changeLogTable.Columns.Add(new ColumnDefinition("TableName", typeof(string), "TEXT(255)", true));
             changeLogTable.Columns.Add(new ColumnDefinition("RecordID", typeof(string), "TEXT(255)", true));
-            changeLogTable.Columns.Add(new ColumnDefinition("Operation", typeof(string), "TEXT(50)", true));
+            changeLogTable.Columns.Add(new ColumnDefinition("Operation", typeof(string), "TEXT(255)", true));
             changeLogTable.Columns.Add(new ColumnDefinition("Timestamp", typeof(DateTime), "DATETIME", true));
             changeLogTable.Columns.Add(new ColumnDefinition("Synchronized", typeof(bool), "BIT", true));
 

@@ -55,9 +55,7 @@
                 </WrapPanel>
             </Grid>
 
-            <!-- Charts will be inserted after the Missing Invoices section -->
-
-            <!-- Missing Invoices Section -->
+            <!-- Missing Invoices Section --><!--
             <TextBlock Text="MISSING INVOICES" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" Foreground="{DynamicResource BNPMainGreenBrush}"/>
 
             <Border Style="{StaticResource KPICardStyle}" Margin="0,0,0,20">
@@ -91,7 +89,7 @@
                         </StackPanel>
                     </Grid>
 
-                    <!-- Report Missing Invoice Button -->
+                    --><!-- Report Missing Invoice Button --><!--
                     <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,0,0,10">
                         <Button Height="30" MinWidth="200" Style="{StaticResource StandardButtonStyle}" Click="ReportMissingInvoices_Click">
                             <StackPanel Orientation="Horizontal">
@@ -101,7 +99,7 @@
                         </Button>
                     </StackPanel>
                 </Grid>
-            </Border>
+            </Border>-->
 
             <!-- Time to Reconciliation (Archived) -->
             <TextBlock Text="TIME TO RECONCILIATION (ARCHIVED)" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" Foreground="{DynamicResource BNPMainGreenBrush}"/>

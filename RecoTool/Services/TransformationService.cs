@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using RecoTool.Models;
+using RecoTool.Helpers;
 
 namespace RecoTool.Services
 {
@@ -69,6 +70,13 @@ namespace RecoTool.Services
                 return string.Empty;
 
             // Si c'est une simple référence de champ
+            // Back-compat: 'Label' legacy => map to RawLabel if needed
+            if (string.Equals(sourceExpression, "Label", StringComparison.OrdinalIgnoreCase))
+            {
+                var raw = sourceData.ContainsKey("RawLabel") ? sourceData["RawLabel"]?.ToString() : null;
+                if (!string.IsNullOrEmpty(raw)) return raw;
+            }
+
             if (sourceData.ContainsKey(sourceExpression))
             {
                 return sourceData[sourceExpression]?.ToString() ?? string.Empty;
@@ -81,9 +89,20 @@ namespace RecoTool.Services
             foreach (Match match in fieldMatches)
             {
                 var fieldName = match.Groups[1].Value;
-                var fieldValue = sourceData.ContainsKey(fieldName) 
-                    ? sourceData[fieldName]?.ToString() ?? string.Empty 
-                    : string.Empty;
+                string fieldValue;
+                if (sourceData.ContainsKey(fieldName))
+                {
+                    fieldValue = sourceData[fieldName]?.ToString() ?? string.Empty;
+                }
+                else if (string.Equals(fieldName, "Label", StringComparison.OrdinalIgnoreCase) && sourceData.ContainsKey("RawLabel"))
+                {
+                    // Back-compat: replace [Label] by RawLabel if present
+                    fieldValue = sourceData["RawLabel"]?.ToString() ?? string.Empty;
+                }
+                else
+                {
+                    fieldValue = string.Empty;
+                }
                 
                 result = result.Replace(match.Value, fieldValue);
             }
@@ -187,14 +206,13 @@ namespace RecoTool.Services
             if (string.IsNullOrEmpty(label))
                 return string.Empty;
 
-            // Extraction de l'ID d'invoice (format BGIYYYYMMXXXXXXX)
-            var invoiceMatch = Regex.Match(label, @"BGI\d{13}", RegexOptions.IgnoreCase);
-            if (invoiceMatch.Success)
-                return invoiceMatch.Value.ToUpper();
+            // Utiliser les extracteurs centralisés pour garantir des patterns uniformes
+            var bgi = DwingsLinkingHelper.ExtractBgiToken(label);
+            if (!string.IsNullOrWhiteSpace(bgi))
+                return bgi.ToUpperInvariant();
 
-            // Extraction d'autres références utiles pour Receivable
-            var referenceMatch = Regex.Match(label, @"\bG\d{4}[A-Z]{2}\d{8}\b");
-            return referenceMatch.Success ? referenceMatch.Value.ToUpper() : string.Empty;
+            var guaranteeId = DwingsLinkingHelper.ExtractGuaranteeId(label);
+            return string.IsNullOrWhiteSpace(guaranteeId) ? string.Empty : guaranteeId.ToUpperInvariant();
         }
 
         /// <summary>

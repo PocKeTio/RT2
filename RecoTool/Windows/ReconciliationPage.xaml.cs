@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using RecoTool.Domain.Repositories;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -63,7 +64,7 @@ namespace RecoTool.Windows
             {
                 using var _ = BeginWaitCursor();
                 IsLoading = true;
-                await TrySynchronizeIfSafeAsync(cancellationToken).ConfigureAwait(false);
+                // Sync restricted: do not synchronize here
                 await LoadDataAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -228,15 +229,31 @@ namespace RecoTool.Windows
             Unloaded += ReconciliationPage_Unloaded;
         }
 
-        public ReconciliationPage(ReconciliationService reconciliationService, OfflineFirstService offlineFirstService) : this()
+        public ReconciliationPage(ReconciliationService reconciliationService, OfflineFirstService offlineFirstService, IReconciliationRepository recoRepository) : this()
         {
             _reconciliationService = reconciliationService;
             _offlineFirstService = offlineFirstService;
+            _recoRepository = recoRepository;
             
             // Synchroniser avec la country courante du service
             _currentCountryId = _offlineFirstService?.CurrentCountry?.CNT_Id;
             LoadAvailableCountries();
             // Le chargement initial est confirmé dans l'événement Loaded pour garantir que le pays a été initialisé
+        }
+
+        // Lock first 4 columns (N, U, M, Account) from being moved
+        private void ResultsDataGrid_ColumnReordering(object sender, DataGridColumnReorderingEventArgs e)
+        {
+            try
+            {
+                var dg = sender as DataGrid;
+                if (dg == null) return;
+                int protectedCount = 4;
+                int currentIndex = e.Column.DisplayIndex;
+                if (currentIndex < protectedCount)
+                    e.Cancel = true; // disallow moving protected columns
+            }
+            catch { }
         }
 
         // Constructeur de compatibilité (obsolète)
@@ -424,7 +441,7 @@ namespace RecoTool.Windows
                 {
                     try
                     {
-                        var refPath = _offlineFirstService?.ReferentialDatabasePath;
+                        var refPath = _offlineFirstService?.ReferentialConnectionString;
                         var curUser = _offlineFirstService?.CurrentUser;
                         if (!string.IsNullOrWhiteSpace(refPath))
                         {
@@ -567,7 +584,7 @@ namespace RecoTool.Windows
                 _pageCts?.Dispose();
                 _pageCts = new CancellationTokenSource();
                 var token = _pageCts.Token;
-                await TrySynchronizeIfSafeAsync(token).ConfigureAwait(false);
+                // Sync restricted: do not synchronize here
                 await LoadDataAsync(token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -665,7 +682,10 @@ namespace RecoTool.Windows
                         return;
 
                     cancellationToken.ThrowIfCancellationRequested();
-                    var prefs = await _reconciliationService.GetUserFieldsPreferencesAsync();
+                    var refCs = _offlineFirstService?.ReferentialConnectionString ?? RecoTool.Properties.Settings.Default.ReferentialDB;
+                    var curUser = _offlineFirstService?.CurrentUser ?? Environment.UserName;
+                    var viewSvc = new UserViewPreferenceService(refCs, curUser);
+                    var prefs = await viewSvc.GetAllAsync();
                     var ordered = prefs.OrderBy(x => x.UPF_Name).ToList();
 
                     // Marshal mutations to UI thread
@@ -752,16 +772,13 @@ namespace RecoTool.Windows
                     {
                         _currentCountryId = svcCountryId;
                     }
-                    // Pousser en best-effort les changements locaux en attente au démarrage
-                    try { await _offlineFirstService.RunStartupPushAsync().ConfigureAwait(false); } catch { }
                 }
                 // Démarrer le polling d'état du verrou
                 StartLockPolling();
-                // Synchroniser au chargement si aucun verrou global actif
+                // Charger les listes (filtres/vues) et initialiser les combos de haut de page
                 _pageCts?.Dispose();
                 _pageCts = new CancellationTokenSource();
                 var token = _pageCts.Token;
-                await TrySynchronizeIfSafeAsync(token).ConfigureAwait(false);
                 await LoadDataAsync(token).ConfigureAwait(false);
 
                 // Ne pas ouvrir de vue par défaut. Laisser l'utilisateur en sélectionner/ajouter une.
@@ -775,9 +792,12 @@ namespace RecoTool.Windows
             }
         }
 
-        private void ReconciliationPage_Unloaded(object sender, RoutedEventArgs e)
+        private async void ReconciliationPage_Unloaded(object sender, RoutedEventArgs e)
         {
             try { StopLockPolling(); } catch { }
+            // Do not sync on page unload: navigation to Reconciliation replaces the page and fires Unloaded,
+            // which was causing an unintended synchronization on click. We keep sync only on explicit events
+            // (country change and app/window close handled elsewhere).
         }
 
         /// <summary>
@@ -829,6 +849,10 @@ namespace RecoTool.Windows
                 }
             }
             catch { }
+
+            // Trigger synchronization only on country selection change
+            try { await TrySynchronizeIfSafeAsync(token).ConfigureAwait(false); } catch { }
+            try { await LoadDataAsync(token).ConfigureAwait(false); } catch { }
         }
 
         // Legacy DataGrid editing/selection handlers removed with page-level grid.
@@ -898,7 +922,10 @@ namespace RecoTool.Windows
                                     child.SetViewTitle(preset?.Name);
                                     try
                                     {
-                                        var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(preset?.Name);
+                                        var refCs = _offlineFirstService?.ReferentialConnectionString ?? RecoTool.Properties.Settings.Default.ReferentialDB;
+                                        var curUser = _offlineFirstService?.CurrentUser ?? Environment.UserName;
+                                        var viewSvc = new UserViewPreferenceService(refCs, curUser);
+                                        var pref = await viewSvc.GetByNameAsync(preset?.Name);
                                         if (!string.IsNullOrWhiteSpace(pref?.UPF_ColumnWidths))
                                         {
                                             await child.Dispatcher.InvokeAsync(() =>
@@ -1084,46 +1111,8 @@ namespace RecoTool.Windows
                 _onSyncSuggested = async (reason) =>
                 {
                     // Gate and pre-checks on background thread
-                    if (DateTime.UtcNow - _lastAutoSyncUtc <= AutoSyncCooldown) return;
-                    if (_offlineFirstService == null || string.IsNullOrEmpty(_offlineFirstService.CurrentCountryId)) return;
-                    if (IsGlobalLockActive) return;
-
-                    if (System.Threading.Interlocked.CompareExchange(ref _autoSyncRunningFlag, 1, 0) != 0)
-                        return;
-                    try
-                    {
-                        // Ensure UI-affecting ops are dispatched and fully awaited
-                        await (await Dispatcher.InvokeAsync(async () =>
-                        {
-                            if (string.Equals(reason, "LockReleased", StringComparison.OrdinalIgnoreCase))
-                            {
-                                // Après fin de verrou global (publication réseau d'un import), effectuer une réconciliation post-publication
-                                await ReconcileAfterImportAsync();
-                                _lastAutoSyncUtc = DateTime.UtcNow;
-                                try { ShowInfo("Reconciliation completed after publish (global lock released)"); } catch { }
-                            }
-                            else
-                            {
-                                // Comportement existant pour les autres raisons (ex: réseau rétabli)
-                                await TrySynchronizeIfSafeAsync().ConfigureAwait(false);
-                                await LoadDataAsync().ConfigureAwait(false);
-                                _lastAutoSyncUtc = DateTime.UtcNow;
-                                try { ShowInfo("Synchronization complete (network restored)"); } catch { }
-                            }
-                        })).ConfigureAwait(false);
-                    }
-                    catch
-                    {
-                        try
-                        {
-                            await Dispatcher.InvokeAsync(() =>
-                                ShowWarning(string.Equals(reason, "LockReleased", StringComparison.OrdinalIgnoreCase)
-                                    ? "Reconciliation failed after lock release"
-                                    : "Synchronization failed when network restored"));
-                        }
-                        catch { }
-                    }
-                    finally { System.Threading.Interlocked.Exchange(ref _autoSyncRunningFlag, 0); }
+                    // Sync restricted: ignore auto-sync suggestions for now
+                    await Task.CompletedTask;
                 };
 
                 monitor.LockStateChanged += _onLockStateChanged;
@@ -1383,10 +1372,12 @@ namespace RecoTool.Windows
         /// Configure la vue (pays, filtres, layout) et précharge les données à partir du cache ou du service.
         /// Utilisée pour les ouvertures Popup et intégrées afin d'éviter la duplication et garantir le même comportement.
         /// </summary>
+        private readonly IReconciliationRepository _recoRepository;
+
         private async Task ConfigureAndPreloadView(ReconciliationView view)
         {
-            // Aligner le pays avant toute action
-            try { view.SyncCountryFromService(); } catch { }
+            // Aligner le pays avant toute action (sans déclencher un Refresh prématuré)
+            try { view.SyncCountryFromService(false); } catch { }
             // Synchroniser l'affichage des filtres d'en-tête
             view.UpdateExternalFilters(SelectedAccount, SelectedStatus);
 
@@ -1401,7 +1392,10 @@ namespace RecoTool.Windows
                     {
                         try
                         {
-                            var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(_currentFilterName);
+                            var refCs = _offlineFirstService?.ReferentialConnectionString ?? RecoTool.Properties.Settings.Default.ReferentialDB;
+                            var curUser = _offlineFirstService?.CurrentUser ?? Environment.UserName;
+                            var viewSvc = new UserViewPreferenceService(refCs, curUser);
+                            var pref = await viewSvc.GetByNameAsync(_currentFilterName);
                             if (!string.IsNullOrWhiteSpace(pref?.UPF_ColumnWidths))
                             {
                                 await view.Dispatcher.InvokeAsync(() =>
@@ -1423,7 +1417,10 @@ namespace RecoTool.Windows
                 {
                     try
                     {
-                        var pref = await _reconciliationService.GetUserFieldsPreferenceByNameAsync(SelectedSavedView.Name);
+                        var refCs = _offlineFirstService?.ReferentialDatabasePath ?? RecoTool.Properties.Settings.Default.ReferentialDB;
+                        var curUser = _offlineFirstService?.CurrentUser ?? Environment.UserName;
+                        var viewSvc = new UserViewPreferenceService(refCs, curUser);
+                        var pref = await viewSvc.GetByNameAsync(SelectedSavedView.Name);
                         if (!string.IsNullOrWhiteSpace(pref?.UPF_ColumnWidths))
                         {
                             await view.Dispatcher.InvokeAsync(() =>
@@ -1436,32 +1433,24 @@ namespace RecoTool.Windows
                 });
             }
 
-            // Attendre la fin d'une synchronisation éventuelle et l'état page prêt
-            await AwaitSafeToOpenViewAsync();
-
-            // Précharger les données: cache si dispo, sinon service
+            // No synchronization when opening a view: preload from service, then initialize and refresh
             var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
             var backendSql = _currentFilter;
-            var cached = _reconciliationService.TryGetCachedReconciliationView(countryId, backendSql);
-            if (cached != null)
+            _ = System.Threading.Tasks.Task.Run(async () =>
             {
-                try { await view.Dispatcher.InvokeAsync(() => { try { view.InitializeWithPreloadedData(cached, backendSql); } catch { } }); } catch { }
-            }
-            else
-            {
-                _ = System.Threading.Tasks.Task.Run(async () =>
+                try
                 {
-                    try
+                    var list = _recoRepository != null
+                        ? await _recoRepository.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false)
+                        : await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
+                    await view.Dispatcher.InvokeAsync(() =>
                     {
-                        var list = await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
-                        await view.Dispatcher.InvokeAsync(() =>
-                        {
-                            try { view.InitializeWithPreloadedData(list, backendSql); } catch { }
-                        });
-                    }
-                    catch { }
-                });
-            }
+                        try { view.InitializeWithPreloadedData(list, backendSql); } catch { }
+                        try { view.Refresh(); } catch { }
+                    });
+                }
+                catch { }
+            });
         }
 
         /// <summary>

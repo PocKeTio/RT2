@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using RecoTool.Services;
+using RecoTool.Services.DTOs;
 
 namespace RecoTool.Helpers
 {
@@ -17,12 +18,17 @@ namespace RecoTool.Helpers
             return m.Success ? m.Groups[1].Value : null;
         }
 
-        // BGI invoice id: BGI + 13 digits (year+month+7 digits)
+        // BGI invoice id supported formats:
+        //  - BGI + YYYYMM (6 digits) + 7 chars (digits or A-F)
+        //  - BGI + YYMM (4 digits) + CountryCode (2 letters) + 7 chars (digits or A-F)
         public static string ExtractBgiToken(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return null;
-            var m = Regex.Match(s, @"(?:^|[^A-Za-z0-9])(BGI\d{13})(?![A-Za-z0-9])");
-            return m.Success ? m.Groups[1].Value : null;
+            var m = Regex.Match(
+                s,
+                @"(?:^|[^A-Za-z0-9])(BGI(?:\d{6}[A-F0-9]{7}|\d{4}[A-Za-z]{2}[A-F0-9]{7}))(?![A-Za-z0-9])",
+                RegexOptions.IgnoreCase);
+            return m.Success ? m.Groups[1].Value.ToUpperInvariant() : null;
         }
 
         // Guarantee ID: G####AA######### (4 digits, 2 letters, 9 digits)
@@ -46,8 +52,8 @@ namespace RecoTool.Helpers
         /// <summary>
         /// Resolve a DWINGS invoice by exact BGI match, refine by amount when multiple hits.
         /// </summary>
-        public static ReconciliationService.DwingsInvoiceDto ResolveInvoiceByBgiWithAmount(
-            IEnumerable<ReconciliationService.DwingsInvoiceDto> invoices,
+        public static DwingsInvoiceDto ResolveInvoiceByBgiWithAmount(
+            IEnumerable<DwingsInvoiceDto> invoices,
             string bgi,
             decimal? ambreSignedAmount)
         {
@@ -72,28 +78,28 @@ namespace RecoTool.Helpers
         /// Return related invoices for a given Guarantee ID, ranked by date proximity then amount proximity.
         /// Matches against BUSINESS_CASE_REFERENCE and BUSINESS_CASE_ID, with exact match preferred over contains.
         /// </summary>
-        public static List<ReconciliationService.DwingsInvoiceDto> ResolveInvoicesByGuarantee(
-            IEnumerable<ReconciliationService.DwingsInvoiceDto> invoices,
+        public static List<DwingsInvoiceDto> ResolveInvoicesByGuarantee(
+            IEnumerable<DwingsInvoiceDto> invoices,
             string guaranteeId,
             DateTime? ambreDate,
             decimal? ambreAmount,
             int take = 50)
         {
-            var list = (invoices ?? Enumerable.Empty<ReconciliationService.DwingsInvoiceDto>()).ToList();
+            var list = (invoices ?? Enumerable.Empty<DwingsInvoiceDto>()).ToList();
             var key = Norm(guaranteeId);
-            if (string.IsNullOrWhiteSpace(key) || list.Count == 0) return new List<ReconciliationService.DwingsInvoiceDto>();
+            if (string.IsNullOrWhiteSpace(key) || list.Count == 0) return new List<DwingsInvoiceDto>();
 
-            bool MatchEq(RecoTool.Services.ReconciliationService.DwingsInvoiceDto i) =>
+            bool MatchEq(DwingsInvoiceDto i) =>
                 Norm(i?.BUSINESS_CASE_REFERENCE) == key || Norm(i?.BUSINESS_CASE_ID) == key;
-            bool MatchContains(RecoTool.Services.ReconciliationService.DwingsInvoiceDto i) =>
+            bool MatchContains(DwingsInvoiceDto i) =>
                 (!string.IsNullOrEmpty(i?.BUSINESS_CASE_REFERENCE) && Norm(i.BUSINESS_CASE_REFERENCE)?.Contains(key) == true)
                 || (!string.IsNullOrEmpty(i?.BUSINESS_CASE_ID) && Norm(i.BUSINESS_CASE_ID)?.Contains(key) == true);
 
             var exact = list.Where(MatchEq).ToList();
-            var partial = exact.Count > 0 ? new List<ReconciliationService.DwingsInvoiceDto>() : list.Where(MatchContains).ToList();
+            var partial = exact.Count > 0 ? new List<DwingsInvoiceDto>() : list.Where(MatchContains).ToList();
             var candidates = exact.Count > 0 ? exact : partial;
 
-            Func<RecoTool.Services.ReconciliationService.DwingsInvoiceDto, double> dateScore = (i) =>
+            Func<DwingsInvoiceDto, double> dateScore = (i) =>
             {
                 if (!ambreDate.HasValue) return double.MaxValue;
                 var best = i?.START_DATE ?? i?.END_DATE;
@@ -101,7 +107,7 @@ namespace RecoTool.Helpers
                 return Math.Abs((best.Value.Date - ambreDate.Value.Date).TotalDays);
             };
 
-            Func<RecoTool.Services.ReconciliationService.DwingsInvoiceDto, decimal> amountScore = (i) =>
+            Func<DwingsInvoiceDto, decimal> amountScore = (i) =>
             {
                 if (!ambreAmount.HasValue || !i?.BILLING_AMOUNT.HasValue == true) return decimal.MaxValue;
                 return Math.Abs(ambreAmount.Value - i.BILLING_AMOUNT.Value);
@@ -118,8 +124,8 @@ namespace RecoTool.Helpers
         /// Suggest a best invoice for a given AMBRE item using BGI → BGPMT → Guarantee strategies.
         /// Returns a ranked list (best first).
         /// </summary>
-        public static List<ReconciliationService.DwingsInvoiceDto> SuggestInvoicesForAmbre(
-            IEnumerable<ReconciliationService.DwingsInvoiceDto> invoices,
+        public static List<DwingsInvoiceDto> SuggestInvoicesForAmbre(
+            IEnumerable<DwingsInvoiceDto> invoices,
             string rawLabel,
             string reconciliationNum,
             string reconciliationOriginNum,
@@ -129,7 +135,7 @@ namespace RecoTool.Helpers
             decimal? ambreAmount,
             int take = 20)
         {
-            var list = new List<ReconciliationService.DwingsInvoiceDto>();
+            var list = new List<DwingsInvoiceDto>();
             // 1) BGI direct
             var bgi = explicitBgi?.Trim()
                       ?? ExtractBgiToken(reconciliationNum)
@@ -171,8 +177,8 @@ namespace RecoTool.Helpers
         /// Resolve a DWINGS invoice by BGPMT reference.
         /// If multiple invoices share the BGPMT, refine by amount.
         /// </summary>
-        public static ReconciliationService.DwingsInvoiceDto ResolveInvoiceByBgpmt(
-            IEnumerable<ReconciliationService.DwingsInvoiceDto> invoices,
+        public static DwingsInvoiceDto ResolveInvoiceByBgpmt(
+            IEnumerable<DwingsInvoiceDto> invoices,
             string bgpmt,
             decimal? ambreSignedAmount)
         {

@@ -2,6 +2,9 @@ using System;
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using RecoTool.Services;
+using RecoTool.Services.Policies;
+using RecoTool.Domain.Repositories;
+using RecoTool.Infrastructure.Repositories;
 using RecoTool.Windows;
 
 namespace RecoTool
@@ -27,6 +30,9 @@ namespace RecoTool
             // Notre service offline-first (singleton pour tout l'app)
             services.AddSingleton<OfflineFirstService>();
 
+            // Sync policy: centralize when background pushes and syncs are allowed
+            services.AddSingleton<ISyncPolicy, SyncPolicy>();
+
             // Services métiers
             services.AddTransient<AmbreImportService>();
             services.AddTransient<ReconciliationService>(sp =>
@@ -38,11 +44,32 @@ namespace RecoTool
                 var countries = offline.Countries;
                 return new ReconciliationService(connStr, currentUser, countries, offline);
             });
+            // Lookup/Referential/Options services
+            services.AddTransient<LookupService>(sp => new LookupService(sp.GetRequiredService<OfflineFirstService>()));
+            services.AddTransient<ReferentialService>(sp =>
+            {
+                var offline = sp.GetRequiredService<OfflineFirstService>();
+                var recoSvc = sp.GetRequiredService<ReconciliationService>();
+                return new ReferentialService(offline, recoSvc?.CurrentUser);
+            });
+            services.AddTransient<OptionsService>(sp => new OptionsService(
+                sp.GetRequiredService<ReconciliationService>(),
+                sp.GetRequiredService<ReferentialService>(),
+                sp.GetRequiredService<LookupService>()));
+
+            // Repositories (transition: wraps existing services)
+            services.AddTransient<IReconciliationRepository, ReconciliationRepository>();
 
             // Fenêtres principales
             services.AddTransient<MainWindow>();
             services.AddTransient<ImportAmbreWindow>();
-            services.AddTransient<ReconciliationPage>();
+            services.AddTransient<ReconciliationPage>(sp =>
+            {
+                var recoSvc = sp.GetRequiredService<ReconciliationService>();
+                var offline = sp.GetRequiredService<OfflineFirstService>();
+                var repo = sp.GetRequiredService<IReconciliationRepository>();
+                return new ReconciliationPage(recoSvc, offline, repo);
+            });
             services.AddTransient<ReconciliationView>();
             services.AddTransient<ReportsWindow>();
 
@@ -52,6 +79,9 @@ namespace RecoTool
             try
             {
                 var offline = ServiceProvider.GetRequiredService<OfflineFirstService>();
+                var policy = ServiceProvider.GetRequiredService<ISyncPolicy>();
+                // Propagate policy to service (background pushes disabled by default)
+                try { offline.AllowBackgroundPushes = policy.AllowBackgroundPushes; } catch { }
                 // Complete referential load
                 offline.LoadReferentialsAsync().GetAwaiter().GetResult();
 

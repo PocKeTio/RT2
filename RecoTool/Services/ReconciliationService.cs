@@ -1,4 +1,3 @@
-using Microsoft.Office.Interop.Excel;
 using OfflineFirstAccess.ChangeTracking;
 using OfflineFirstAccess.Helpers;
 using RecoTool.Models;
@@ -20,6 +19,12 @@ using System.Text.RegularExpressions;
 using RecoTool.Helpers;
 using System.Threading;
 using System.Threading.Tasks;
+using RecoTool.Services.DTOs;
+using RecoTool.Domain.Filters;
+using RecoTool.Services.Queries;
+using RecoTool.Helpers;
+using RecoTool.Services.Rules;
+using RecoTool.Services.Helpers;
 
 namespace RecoTool.Services
 {
@@ -33,6 +38,7 @@ namespace RecoTool.Services
         private readonly string _currentUser;
         private readonly Dictionary<string, Country> _countries;
         private readonly OfflineFirstService _offlineFirstService;
+        private DwingsService _dwingsService;
 
         public ReconciliationService(string connectionString, string currentUser, IEnumerable<Country> countries)
         {
@@ -41,36 +47,10 @@ namespace RecoTool.Services
             _countries = countries?.ToDictionary(c => c.CNT_Id, c => c) ?? new Dictionary<string, Country>();
         }
 
-        /// <summary>
-        /// Returns all distinct snapshot dates available for a country, sorted ascending.
-        /// </summary>
-        public async Task<List<DateTime>> GetKpiSnapshotDatesAsync(string countryId, CancellationToken cancellationToken = default)
-        {
-            var dates = new List<DateTime>();
-            if (string.IsNullOrWhiteSpace(countryId)) return dates;
+        // Expose for infrastructure wiring (e.g., exports). Keep read-only.
+        public string MainConnectionString => _connectionString;
 
-            // KPI snapshots are stored in the Control DB, not the country DB
-            using (var connection = new OleDbConnection(GetControlConnectionString()))
-            {
-                await connection.OpenAsync(cancellationToken);
-                await EnsureKpiDailySnapshotTableAsync(connection, cancellationToken);
-                var cmd = new OleDbCommand("SELECT DISTINCT SnapshotDate FROM KpiDailySnapshot WHERE CountryId = ? ORDER BY SnapshotDate", connection);
-                cmd.Parameters.AddWithValue("@p1", countryId);
-                using (var reader = await cmd.ExecuteReaderAsync(cancellationToken))
-                {
-                    while (await reader.ReadAsync(cancellationToken))
-                    {
-                        if (!reader.IsDBNull(0))
-                        {
-                            var dt = Convert.ToDateTime(reader.GetValue(0));
-                            dates.Add(dt.Date);
-                        }
-                    }
-                }
-            }
-
-            return dates.Distinct().OrderBy(d => d).ToList();
-        }
+        
 
         /// <summary>
         /// Returns the last known AMBRE operation date in the current dataset for the country.
@@ -83,7 +63,7 @@ namespace RecoTool.Services
             // Use the AMBRE database for this country
             var ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
             if (string.IsNullOrWhiteSpace(ambrePath) || !File.Exists(ambrePath)) return null;
-            var ambreCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={ambrePath};";
+            var ambreCs = _offlineFirstService?.GetAmbreConnectionString(countryId);
 
             using (var connection = new OleDbConnection(ambreCs))
             {
@@ -98,64 +78,6 @@ namespace RecoTool.Services
             return null;
         }
 
-        /// <summary>
-        /// Execute a query that returns a single column list of values.
-        /// </summary>
-        private async Task<List<T>> ExecuteScalarListAsync<T>(string query, string connectionString, params object[] parameters)
-        {
-            var results = new List<T>();
-            using (var connection = new OleDbConnection(connectionString))
-            {
-                await connection.OpenAsync().ConfigureAwait(false);
-                using (var command = new OleDbCommand(query, connection))
-                {
-                    if (parameters != null)
-                    {
-                        for (int i = 0; i < parameters.Length; i++)
-                        {
-                            command.Parameters.AddWithValue($"@param{i}", parameters[i] ?? DBNull.Value);
-                        }
-                    }
-
-                    using (var reader = await command.ExecuteReaderAsync().ConfigureAwait(false))
-                    {
-                        while (await reader.ReadAsync().ConfigureAwait(false))
-                        {
-                            object value = reader.IsDBNull(0) ? null : reader.GetValue(0);
-                            if (value == null)
-                            {
-                                results.Add(default);
-                                continue;
-                            }
-
-                            try
-                            {
-                                var targetType = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
-                                if (targetType.IsEnum)
-                                {
-                                    results.Add((T)Enum.Parse(targetType, value.ToString()));
-                                }
-                                else
-                                {
-                                    results.Add((T)Convert.ChangeType(value, targetType));
-                                }
-                            }
-                            catch
-                            {
-                                // Fallback to string conversion then cast if possible
-                                try
-                                {
-                                    results.Add((T)(object)value.ToString());
-                                }
-                                catch { results.Add(default); }
-                            }
-                        }
-                    }
-                }
-            }
-            return results;
-        }
-
         public ReconciliationService(string connectionString, string currentUser, IEnumerable<Country> countries, OfflineFirstService offlineFirstService)
             : this(connectionString, currentUser, countries)
         {
@@ -166,71 +88,9 @@ namespace RecoTool.Services
 
         #region Data Retrieval
 
-        // Simple in-memory DWINGS caches for UI assistance searches
-        public class DwingsInvoiceDto
-        {
-            public string INVOICE_ID { get; set; }
-            public string T_INVOICE_STATUS { get; set; }
-            public decimal? BILLING_AMOUNT { get; set; }
-            public decimal? REQUESTED_AMOUNT { get; set; }
-            public decimal? FINAL_AMOUNT { get; set; }
-            public string BILLING_CURRENCY { get; set; }
-            public string BGPMT { get; set; }
-            public string PAYMENT_METHOD { get; set; }
-            public string SENDER_REFERENCE { get; set; }
-            public string RECEIVER_REFERENCE { get; set; }
-            public string BUSINESS_CASE_REFERENCE { get; set; }
-            public string BUSINESS_CASE_ID { get; set; }
-            public DateTime? START_DATE { get; set; }
-            public DateTime? END_DATE { get; set; }
-            public string DEBTOR_PARTY_NAME { get; set; }
-            public string CREDITOR_PARTY_NAME { get; set; }
-        }
+        // Simple in-memory DWINGS caches for UI assistance searches (DTOs moved to Services/DTOs)
 
-        public class DwingsGuaranteeDto
-        {
-            public string GUARANTEE_ID { get; set; }
-            public string GUARANTEE_STATUS { get; set; }
-            public decimal? OUTSTANDING_AMOUNT { get; set; }
-            public string CURRENCYNAME { get; set; }
-            public string NAME1 { get; set; }
-            public string NAME2 { get; set; }
-            public string GUARANTEE_TYPE { get; set; }
-            public string NATURE { get; set; }
-            public string EVENT_STATUS { get; set; }
-            public DateTime? EVENT_EFFECTIVEDATE { get; set; }
-            public DateTime? ISSUEDATE { get; set; }
-            public string OFFICIALREF { get; set; }
-            public string UNDERTAKINGEVENT { get; set; }
-            public string PROCESS { get; set; }
-            public string EXPIRYDATETYPE { get; set; }
-            public DateTime? EXPIRYDATE { get; set; }
-            public string PARTY_ID { get; set; }
-            public string PARTY_REF { get; set; }
-            public string SECONDARY_OBLIGOR { get; set; }
-            public string SECONDARY_OBLIGOR_NATURE { get; set; }
-            public string ROLE { get; set; }
-            public string COUNTRY { get; set; }
-            public string CENTRAL_PARTY_CODE { get; set; }
-            public string GROUPE { get; set; }
-            public string PREMIUM { get; set; }
-            public string BRANCH_CODE { get; set; }
-            public string BRANCH_NAME { get; set; }
-            public string OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY { get; set; }
-            public DateTime? CANCELLATIONDATE { get; set; }
-            public string CONTROLER { get; set; }
-            public string AUTOMATICBOOKOFF { get; set; }
-            public string NATUREOFDEAL { get; set; }
-        }
-
-        private List<DwingsInvoiceDto> _dwInvoicesCache;
-        private List<DwingsGuaranteeDto> _dwGuaranteesCache;
-        private string _dwCachePath;
-        private volatile bool _dwCacheInvalidated; // set true after AMBRE import to force reload
-
-        // Shared per-DW path cache across all service instances
-        private static readonly ConcurrentDictionary<string, Lazy<Task<(List<DwingsInvoiceDto> invoices, List<DwingsGuaranteeDto> guarantees)>>> _sharedDwCache
-            = new ConcurrentDictionary<string, Lazy<Task<(List<DwingsInvoiceDto>, List<DwingsGuaranteeDto>)>>>();
+        // DWINGS access delegated to DwingsService
 
         // Cache for reconciliation view queries (task coalescing)
         private static readonly ConcurrentDictionary<string, Lazy<Task<List<ReconciliationViewData>>>> _recoViewCache
@@ -290,207 +150,22 @@ namespace RecoTool.Services
             catch { }
         }
 
-        private async Task EnsureDwingsCachesAsync()
-        {
-            var dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
-            if (string.IsNullOrWhiteSpace(dwPath) || !File.Exists(dwPath))
-            {
-                _dwInvoicesCache = new List<DwingsInvoiceDto>();
-                _dwGuaranteesCache = new List<DwingsGuaranteeDto>();
-                _dwCachePath = null;
-                _dwCacheInvalidated = false;
-                return;
-            }
-
-            // Reload only if path changed or cache is empty (DWINGS DB is stable between big imports)
-            bool needReload = _dwCacheInvalidated
-                              || _dwInvoicesCache == null || _dwGuaranteesCache == null
-                              || !string.Equals(_dwCachePath, dwPath, StringComparison.OrdinalIgnoreCase);
-            if (!needReload) return;
-
-            // If invalidated, drop the shared entry for the previous path to force a reload
-            if (_dwCacheInvalidated && !string.IsNullOrWhiteSpace(_dwCachePath))
-            {
-                _sharedDwCache.TryRemove(_dwCachePath, out _);
-            }
-
-            // Coalesce concurrent loads per DW path across all instances
-            var loader = _sharedDwCache.GetOrAdd(dwPath,
-                new Lazy<Task<(List<DwingsInvoiceDto>, List<DwingsGuaranteeDto>)>>(
-                    () => LoadDwingsAsync(dwPath),
-                    System.Threading.LazyThreadSafetyMode.ExecutionAndPublication));
-
-            var tuple = await loader.Value.ConfigureAwait(false);
-            _dwInvoicesCache = tuple.Item1;
-            _dwGuaranteesCache = tuple.Item2;
-            _dwCachePath = dwPath;
-            _dwCacheInvalidated = false;
-        }
+        
 
         // Shared loader used by the shared cache
-        private static async Task<(List<DwingsInvoiceDto> invoices, List<DwingsGuaranteeDto> guarantees)> LoadDwingsAsync(string dwPath)
-        {
-            var dwCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={dwPath};";
-            var invoices = new List<DwingsInvoiceDto>();
-            var guarantees = new List<DwingsGuaranteeDto>();
-
-            using (var connection = new OleDbConnection(dwCs))
-            {
-                await connection.OpenAsync().ConfigureAwait(false);
-                // Load invoices (include columns required for in-memory lookups)
-                using (var cmd = new OleDbCommand(@"SELECT INVOICE_ID, T_INVOICE_STATUS, BILLING_AMOUNT, REQUESTED_AMOUNT, FINAL_AMOUNT, BILLING_CURRENCY, BGPMT, PAYMENT_METHOD, SENDER_REFERENCE, RECEIVER_REFERENCE, BUSINESS_CASE_REFERENCE, BUSINESS_CASE_ID, START_DATE, END_DATE, DEBTOR_PARTY_NAME, CREDITOR_PARTY_NAME FROM T_DW_Data", connection))
-                using (var rd = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
-                {
-                    while (await rd.ReadAsync().ConfigureAwait(false))
-                    {
-                        invoices.Add(new DwingsInvoiceDto
-                        {
-                            INVOICE_ID = rd["INVOICE_ID"]?.ToString(),
-                            T_INVOICE_STATUS = rd["T_INVOICE_STATUS"]?.ToString(),
-                            BILLING_AMOUNT = TryToDecimal(rd["BILLING_AMOUNT"]),
-                            REQUESTED_AMOUNT = TryToDecimal(rd["REQUESTED_AMOUNT"]),
-                            FINAL_AMOUNT = TryToDecimal(rd["FINAL_AMOUNT"]),
-                            BILLING_CURRENCY = rd["BILLING_CURRENCY"]?.ToString(),
-                            BGPMT = rd["BGPMT"]?.ToString(),
-                            PAYMENT_METHOD = rd["PAYMENT_METHOD"]?.ToString(),
-                            SENDER_REFERENCE = rd["SENDER_REFERENCE"]?.ToString(),
-                            RECEIVER_REFERENCE = rd["RECEIVER_REFERENCE"]?.ToString(),
-                            BUSINESS_CASE_REFERENCE = rd["BUSINESS_CASE_REFERENCE"]?.ToString(),
-                            BUSINESS_CASE_ID = rd["BUSINESS_CASE_ID"]?.ToString(),
-                            START_DATE = TryToDate(rd["START_DATE"]),
-                            END_DATE = TryToDate(rd["END_DATE"]),
-                            DEBTOR_PARTY_NAME = rd["DEBTOR_PARTY_NAME"]?.ToString(),
-                            CREDITOR_PARTY_NAME = rd["CREDITOR_PARTY_NAME"]?.ToString(),
-                        });
-                    }
-                }
-
-                // Load guarantees (expanded shape for UI enrichment)
-                using (var cmdG = new OleDbCommand(@"SELECT 
-                            GUARANTEE_ID,
-                            GUARANTEE_STATUS,
-                            OUTSTANDING_AMOUNT,
-                            CURRENCYNAME,
-                            NAME1,
-                            NAME2,
-                            GUARANTEE_TYPE,
-                            NATURE,
-                            EVENT_STATUS,
-                            EVENT_EFFECTIVEDATE,
-                            ISSUEDATE,
-                            OFFICIALREF,
-                            UNDERTAKINGEVENT,
-                            PROCESS,
-                            EXPIRYDATETYPE,
-                            EXPIRYDATE,
-                            PARTY_ID,
-                            PARTY_REF,
-                            SECONDARY_OBLIGOR,
-                            SECONDARY_OBLIGOR_NATURE,
-                            ROLE,
-                            COUNTRY,
-                            CENTRAL_PARTY_CODE,
-                            GROUPE,
-                            PREMIUM,
-                            BRANCH_CODE,
-                            BRANCH_NAME,
-                            OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY,
-                            CANCELLATIONDATE,
-                            CONTROLER,
-                            AUTOMATICBOOKOFF,
-                            NATUREOFDEAL
-                        FROM T_DW_Guarantee", connection))
-                using (var rdG = await cmdG.ExecuteReaderAsync().ConfigureAwait(false))
-                {
-                    while (await rdG.ReadAsync().ConfigureAwait(false))
-                    {
-                        guarantees.Add(new DwingsGuaranteeDto
-                        {
-                            GUARANTEE_ID = rdG["GUARANTEE_ID"]?.ToString(),
-                            GUARANTEE_STATUS = rdG["GUARANTEE_STATUS"]?.ToString(),
-                            OUTSTANDING_AMOUNT = TryToDecimal(rdG["OUTSTANDING_AMOUNT"]),
-                            CURRENCYNAME = rdG["CURRENCYNAME"]?.ToString(),
-                            NAME1 = rdG["NAME1"]?.ToString(),
-                            NAME2 = rdG["NAME2"]?.ToString(),
-                            GUARANTEE_TYPE = rdG["GUARANTEE_TYPE"]?.ToString(),
-                            NATURE = rdG["NATURE"]?.ToString(),
-                            EVENT_STATUS = rdG["EVENT_STATUS"]?.ToString(),
-                            EVENT_EFFECTIVEDATE = TryToDate(rdG["EVENT_EFFECTIVEDATE"]),
-                            ISSUEDATE = TryToDate(rdG["ISSUEDATE"]),
-                            OFFICIALREF = rdG["OFFICIALREF"]?.ToString(),
-                            UNDERTAKINGEVENT = rdG["UNDERTAKINGEVENT"]?.ToString(),
-                            PROCESS = rdG["PROCESS"]?.ToString(),
-                            EXPIRYDATETYPE = rdG["EXPIRYDATETYPE"]?.ToString(),
-                            EXPIRYDATE = TryToDate(rdG["EXPIRYDATE"]),
-                            PARTY_ID = rdG["PARTY_ID"]?.ToString(),
-                            PARTY_REF = rdG["PARTY_REF"]?.ToString(),
-                            SECONDARY_OBLIGOR = rdG["SECONDARY_OBLIGOR"]?.ToString(),
-                            SECONDARY_OBLIGOR_NATURE = rdG["SECONDARY_OBLIGOR_NATURE"]?.ToString(),
-                            ROLE = rdG["ROLE"]?.ToString(),
-                            COUNTRY = rdG["COUNTRY"]?.ToString(),
-                            CENTRAL_PARTY_CODE = rdG["CENTRAL_PARTY_CODE"]?.ToString(),
-                            GROUPE = rdG["GROUPE"]?.ToString(),
-                            PREMIUM = rdG["PREMIUM"]?.ToString(),
-                            BRANCH_CODE = rdG["BRANCH_CODE"]?.ToString(),
-                            BRANCH_NAME = rdG["BRANCH_NAME"]?.ToString(),
-                            OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY = rdG["OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY"]?.ToString(),
-                            CANCELLATIONDATE = TryToDate(rdG["CANCELLATIONDATE"]),
-                            CONTROLER = rdG["CONTROLER"]?.ToString(),
-                            AUTOMATICBOOKOFF = rdG["AUTOMATICBOOKOFF"]?.ToString(),
-                            NATUREOFDEAL = rdG["NATUREOFDEAL"]?.ToString(),
-                        });
-                    }
-                }
-            }
-
-            return (invoices, guarantees);
-        }
-
-        /// <summary>
-        /// Explicitly invalidate DWINGS caches so next access will reload from the DWINGS database.
-        /// Call this after an AMBRE import completes if the import affects DWINGS-derived linkages.
-        /// </summary>
-        public void InvalidateDwingsCaches()
-        {
-            _dwCacheInvalidated = true;
-            if (!string.IsNullOrWhiteSpace(_dwCachePath))
-            {
-                _sharedDwCache.TryRemove(_dwCachePath, out _);
-            }
-        }
-
-        /// <summary>
-        /// Optionally prime DWINGS caches (e.g., right after selecting a country).
-        /// Safe to call multiple times; subsequent calls are cheap.
-        /// </summary>
-        public Task PrimeDwingsCachesAsync()
-        {
-            // fire the ensure, caller can await if they want readiness
-            return EnsureDwingsCachesAsync();
-        }
-
-        private static decimal? TryToDecimal(object o)
-        {
-            if (o == null || o == DBNull.Value) return null;
-            try { return Convert.ToDecimal(o, CultureInfo.InvariantCulture); } catch { return null; }
-        }
-
-        private static DateTime? TryToDate(object o)
-        {
-            if (o == null || o == DBNull.Value) return null;
-            try { return Convert.ToDateTime(o, CultureInfo.InvariantCulture); } catch { return null; }
-        }
+      
+        
 
         public async Task<IReadOnlyList<DwingsInvoiceDto>> GetDwingsInvoicesAsync()
         {
-            await EnsureDwingsCachesAsync().ConfigureAwait(false);
-            return _dwInvoicesCache ?? new List<DwingsInvoiceDto>();
+            if (_dwingsService == null) _dwingsService = new DwingsService(_offlineFirstService);
+            return await _dwingsService.GetInvoicesAsync().ConfigureAwait(false);
         }
 
         public async Task<IReadOnlyList<DwingsGuaranteeDto>> GetDwingsGuaranteesAsync()
         {
-            await EnsureDwingsCachesAsync().ConfigureAwait(false);
-            return _dwGuaranteesCache ?? new List<DwingsGuaranteeDto>();
+            if (_dwingsService == null) _dwingsService = new DwingsService(_offlineFirstService);
+            return await _dwingsService.GetGuaranteesAsync().ConfigureAwait(false);
         }
 
         /// <summary>
@@ -502,7 +177,7 @@ namespace RecoTool.Services
             var ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
             if (string.IsNullOrWhiteSpace(ambrePath))
                 throw new InvalidOperationException("Chemin de la base AMBRE introuvable pour le pays courant.");
-            var ambreCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={ambrePath};";
+            var ambreCs = _offlineFirstService?.GetAmbreConnectionString(countryId);
 
             var query = @"SELECT * FROM T_Data_Ambre";
             if (!includeDeleted)
@@ -510,25 +185,6 @@ namespace RecoTool.Services
             query += " ORDER BY Operation_Date DESC";
 
             return await ExecuteQueryAsync<DataAmbre>(query, ambreCs);
-        }
-
-        /// <summary>
-        /// Récupère les données de réconciliation pour un pays
-        /// </summary>
-        public async Task<List<Reconciliation>> GetReconciliationDataAsync(string countryId, bool includeDeleted = false)
-        {
-            // Jointure entre Réconciliation (base locale courante) et AMBRE (base séparée)
-            string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
-            string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
-            string ambreJoin = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre AS a" : $"(SELECT * FROM [{ambreEsc}].T_Data_Ambre) AS a";
-
-            var query = $@"SELECT r.* FROM (T_Reconciliation AS r 
-                         INNER JOIN {ambreJoin} ON r.ID = a.ID)";
-            if (!includeDeleted)
-                query += " WHERE r.DeleteDate IS NULL";
-            query += " ORDER BY r.LastModified DESC";
-
-            return await ExecuteQueryAsync<Reconciliation>(query);
         }
 
         /// <summary>
@@ -550,12 +206,7 @@ namespace RecoTool.Services
             return await ExecuteQueryAsync<Reconciliation>(query, _connectionString, (int)ActionType.Trigger);
         }
 
-        // Minimal preset shape to parse JSON snapshot comment embedded by the UI
-        // Only include the fields we actually need on the service side
-        private class ViewFilterPreset
-        {
-            public bool? PotentialDuplicates { get; set; }
-        }
+        // JSON filter preset is defined in Domain/Filters/FilterPreset
 
         /// <summary>
         /// Récupère les données jointes Ambre + Réconciliation
@@ -574,19 +225,6 @@ namespace RecoTool.Services
             return result;
         }
 
-        /// <summary>
-        /// Returns the current cached reconciliation view list for the given key if available.
-        /// This avoids triggering a background load when the data was already loaded recently
-        /// (e.g., on country selection) and allows the UI to bind immediately.
-        /// </summary>
-        public List<ReconciliationViewData> TryGetCachedReconciliationView(string countryId, string filterSql = null, bool dashboardOnly = false)
-        {
-            var key = $"{countryId ?? string.Empty}|{dashboardOnly}|{NormalizeFilterForCache(filterSql)}";
-            if (_recoViewDataCache.TryGetValue(key, out var list))
-                return list;
-            return null;
-        }
-
         private async Task<List<ReconciliationViewData>> BuildReconciliationViewAsyncCore(string countryId, string filterSql, bool dashboardOnly, string cacheKey)
         {
             var swBuild = Stopwatch.StartNew();
@@ -595,177 +233,11 @@ namespace RecoTool.Services
             string dwEsc = string.IsNullOrEmpty(dwPath) ? null : dwPath.Replace("'", "''");
             string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
 
-            string ambreJoin = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre AS a" : $"(SELECT * FROM [{ambreEsc}].T_Data_Ambre) AS a";
-            // Base AMBRE source for subqueries/aggregates (no alias), used to compute duplicates safely in the main query
-            string ambreBase = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre" : $"[{ambreEsc}].T_Data_Ambre";
+            // Detect PotentialDuplicates flag from optional JSON comment prefix (centralized helper)
+            bool dupOnly = FilterSqlHelper.TryExtractPotentialDuplicatesFlag(filterSql);
 
-            // Detect PotentialDuplicates flag from optional JSON comment prefix
-            bool dupOnly = false;
-            try
-            {
-                if (!string.IsNullOrWhiteSpace(filterSql))
-                {
-                    var mDup = Regex.Match(filterSql, @"^/\*JSON:(.*?)\*/", RegexOptions.Singleline);
-                    if (mDup.Success)
-                    {
-                        var json = mDup.Groups[1].Value;
-                        var preset = JsonSerializer.Deserialize<ViewFilterPreset>(json);
-                        dupOnly = preset?.PotentialDuplicates == true;
-                    }
-                }
-            }
-            catch { dupOnly = false; }
-
-            string query;
-            if (dashboardOnly)
-            {
-                query = $@"
-                        SELECT 
-                            a.ID, 
-                            a.Account_ID, 
-                            a.CCY, 
-                            a.SignedAmount, 
-                            a.Operation_Date, 
-                            a.Value_Date, 
-                            a.CreationDate, 
-                            a.DeleteDate,
-                            r.Action, 
-                            r.KPI, 
-                            r.RiskyItem,
-                            IIF(dup.DupCount > 1, True, False) AS IsPotentialDuplicate
-                        FROM 
-                            (
-                                (
-                                    {ambreJoin}
-                                    LEFT JOIN T_Reconciliation AS r 
-                                        ON a.ID = r.ID
-                                )
-                                LEFT JOIN 
-                                    (
-                                        SELECT Event_Num, COUNT(*) AS DupCount 
-                                        FROM {ambreBase} 
-                                        GROUP BY Event_Num
-                                    ) AS dup 
-                                    ON dup.Event_Num = a.Event_Num
-                            )
-                        WHERE 
-                            a.DeleteDate IS NULL 
-                            AND (r.DeleteDate IS NULL) ";
-            }
-            else
-            {
-                // Build JOIN targets: use IN 'path' subqueries when external, otherwise direct tables
-                string dwGuaranteeJoin = string.IsNullOrEmpty(dwEsc) ? "T_DW_Guarantee AS g" : $"(SELECT * FROM [{dwEsc}].T_DW_Guarantee) AS g";
-
-                query = $@"SELECT
-                                   a.*,
-                                   r.DWINGS_GuaranteeID,
-                                   r.DWINGS_InvoiceID,
-                                   r.DWINGS_CommissionID,
-                                   r.Action,
-                                   r.ActionStatus,
-                                   r.ActionDate,
-                                   r.Assignee,
-                                   r.Comments,
-                                   r.InternalInvoiceReference,
-                                   r.FirstClaimDate,
-                                   r.LastClaimDate,
-                                   r.ToRemind,
-                                   r.ToRemindDate,
-                                   r.ACK,
-                                   r.SwiftCode,
-                                   r.PaymentReference,
-                                   r.KPI,
-                                   r.IncidentType,
-                                   r.RiskyItem,
-                                   r.ReasonNonRisky,
-                                   r.ModifiedBy AS Reco_ModifiedBy,
-                                   IIF(dup.DupCount > 1, True, False) AS IsPotentialDuplicate,
-                                    NULL AS SYNDICATE,
-                                    g.OUTSTANDING_AMOUNT AS GUARANTEE_AMOUNT,
-                                    g.CURRENCYNAME AS GUARANTEE_CURRENCY,
-                                    g.GUARANTEE_STATUS AS GUARANTEE_STATUS,
-                                    g.GUARANTEE_TYPE AS GUARANTEE_TYPE,
-                                    NULL AS COMMISSION_ID,
-                                    g.GUARANTEE_ID,
-                                 
-                                  g.NATURE AS G_NATURE,
-                                  g.EVENT_STATUS AS G_EVENT_STATUS,
-                                  g.EVENT_EFFECTIVEDATE AS G_EVENT_EFFECTIVEDATE,
-                                  g.ISSUEDATE AS G_ISSUEDATE,
-                                  g.OFFICIALREF AS G_OFFICIALREF,
-                                  g.UNDERTAKINGEVENT AS G_UNDERTAKINGEVENT,
-                                  g.PROCESS AS G_PROCESS,
-                                  g.EXPIRYDATETYPE AS G_EXPIRYDATETYPE,
-                                  g.EXPIRYDATE AS G_EXPIRYDATE,
-                                  g.PARTY_ID AS G_PARTY_ID,
-                                  g.PARTY_REF AS G_PARTY_REF,
-                                  g.SECONDARY_OBLIGOR AS G_SECONDARY_OBLIGOR,
-                                  g.SECONDARY_OBLIGOR_NATURE AS G_SECONDARY_OBLIGOR_NATURE,
-                                  g.ROLE AS G_ROLE,
-                                  g.COUNTRY AS G_COUNTRY,
-                                  g.CENTRAL_PARTY_CODE AS G_CENTRAL_PARTY_CODE,
-                                  g.NAME1 AS G_NAME1,
-                                  g.NAME2 AS G_NAME2,
-                                  g.GROUPE AS G_GROUPE,
-                                  g.PREMIUM AS G_PREMIUM,
-                                  g.BRANCH_CODE AS G_BRANCH_CODE,
-                                  g.BRANCH_NAME AS G_BRANCH_NAME,
-                                  g.OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY AS G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY,
-                                  g.CANCELLATIONDATE AS G_CANCELLATIONDATE,
-                                  g.CONTROLER AS G_CONTROLER,
-                                  g.AUTOMATICBOOKOFF AS G_AUTOMATICBOOKOFF,
-                                  g.NATUREOFDEAL AS G_NATUREOFDEAL,
-                                  g.GUARANTEE_TYPE AS G_GUARANTEE_TYPE,
-
-                                  NULL AS INVOICE_ID,
-                                  NULL AS I_REQUESTED_INVOICE_AMOUNT,
-                                  NULL AS I_SENDER_NAME,
-                                  NULL AS I_RECEIVER_NAME,
-                                  NULL AS I_SENDER_REFERENCE,
-                                  NULL AS I_RECEIVER_REFERENCE,
-                                  NULL AS I_T_INVOICE_STATUS,
-                                  NULL AS I_BILLING_AMOUNT,
-                                  NULL AS I_BILLING_CURRENCY,
-                                  NULL AS I_START_DATE,
-                                  NULL AS I_END_DATE,
-                                  NULL AS I_FINAL_AMOUNT,
-                                  NULL AS I_T_COMMISSION_PERIOD_STATUS,
-                                  NULL AS I_BUSINESS_CASE_REFERENCE,
-                                  NULL AS I_BUSINESS_CASE_ID,
-                                  NULL AS I_POSTING_PERIODICITY,
-                                  NULL AS I_EVENT_ID,
-                                  NULL AS I_COMMENTS,
-                                  NULL AS I_SENDER_ACCOUNT_NUMBER,
-                                  NULL AS I_SENDER_ACCOUNT_BIC,
-                                  NULL AS I_RECEIVER_ACCOUNT_NUMBER,
-                                  NULL AS I_RECEIVER_ACCOUNT_BIC,
-                                  NULL AS I_REQUESTED_AMOUNT,
-                                  NULL AS I_EXECUTED_AMOUNT,
-                                  NULL AS I_REQUESTED_EXECUTION_DATE,
-                                  NULL AS I_T_PAYMENT_REQUEST_STATUS,
-                                  NULL AS I_BGPMT,
-                                  NULL AS I_DEBTOR_ACCOUNT_ID,
-                                  NULL AS I_CREDITOR_ACCOUNT_ID,
-                                  NULL AS I_MT_STATUS,
-                                  NULL AS I_REMINDER_NUMBER,
-                                  NULL AS I_ERROR_MESSAGE,
-                                  NULL AS I_DEBTOR_PARTY_ID,
-                                  NULL AS I_PAYMENT_METHOD,
-                                  NULL AS I_PAYMENT_TYPE,
-                                  NULL AS I_DEBTOR_PARTY_NAME,
-                                  NULL AS I_DEBTOR_ACCOUNT_NUMBER,
-                                  NULL AS I_CREDITOR_PARTY_ID,
-                                  NULL AS I_CREDITOR_ACCOUNT_NUMBER
-
-                           FROM (({ambreJoin}
-                           LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
-                           LEFT JOIN {dwGuaranteeJoin} ON  g.GUARANTEE_ID = r.DWINGS_GuaranteeID)
-                           LEFT JOIN (SELECT Event_Num, COUNT(*) AS DupCount FROM {ambreBase} GROUP BY Event_Num) AS dup ON dup.Event_Num = a.Event_Num
-                           WHERE 1=1";
-
-                // invoice join and projections added above
-            }
+            // Build the base query via centralized builder
+            string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql, dashboardOnly);
 
             // Apply Potential Duplicates predicate if requested via JSON
             if (dupOnly)
@@ -773,37 +245,10 @@ namespace RecoTool.Services
                 query += " AND (dup.DupCount) > 1";
             }
 
-            if (!string.IsNullOrEmpty(filterSql))
+            var predicate = FilterSqlHelper.ExtractNormalizedPredicate(filterSql);
+            if (!string.IsNullOrEmpty(predicate))
             {
-                var cond = filterSql.Trim();
-                // 1) Strip optional embedded JSON snapshot comment prefix first
-                var m = Regex.Match(cond, @"^/\*JSON:(.*?)\*/\s*(.*)$", RegexOptions.Singleline);
-                if (m.Success)
-                    cond = m.Groups[2].Value?.Trim();
-                // 2) If wrapped in a single pair of parentheses, unwrap and trim repeatedly
-                while (!string.IsNullOrEmpty(cond) && cond.StartsWith("(") && cond.EndsWith(")"))
-                {
-                    cond = cond.Substring(1, cond.Length - 2).Trim();
-                }
-                // 3) Strip leading WHERE if present (case-insensitive)
-                if (cond.StartsWith("WHERE ", StringComparison.OrdinalIgnoreCase))
-                    cond = cond.Substring(6).Trim();
-
-                // 4) Minimal safety gate: reject dangerous keywords to avoid logic injections or heavy subqueries
-                if (!string.IsNullOrEmpty(cond))
-                {
-                    var lower = cond.ToLowerInvariant();
-                    string[] banned = { " union ", " select ", " insert ", " delete ", " update ", " drop ", " alter ", " exec ", ";" };
-                    bool hasBanned = banned.Any(k => lower.Contains(k));
-                    if (!hasBanned)
-                    {
-                        query += $" AND ({cond})";
-                    }
-                    else
-                    {
-                        try { System.Diagnostics.Debug.WriteLine("[RecoView][WARN] Unsafe filterSql detected and ignored."); } catch { }
-                    }
-                }
+                query += $" AND ({predicate})";
             }
 
             query += " ORDER BY a.Operation_Date DESC";
@@ -812,98 +257,78 @@ namespace RecoTool.Services
             var swExec = Stopwatch.StartNew();
             var list = await ExecuteQueryAsync<ReconciliationViewData>(query);
 
-            // Enrich invoice fields from in-memory DWINGS cache (no SQL join to T_DW_Data)
+            // Enrich invoice fields via centralized helper (no SQL join to T_DW_Data)
             try
             {
                 var invoices = await GetDwingsInvoicesAsync().ConfigureAwait(false);
-                // Build quick lookups (handle duplicates gracefully by picking first)
-                var byInvoiceId = invoices.Where(i => !string.IsNullOrWhiteSpace(i.INVOICE_ID))
-                                          .GroupBy(i => i.INVOICE_ID, StringComparer.OrdinalIgnoreCase)
-                                          .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
-                var byBgpmt = invoices.Where(i => !string.IsNullOrWhiteSpace(i.BGPMT))
-                                      .GroupBy(i => i.BGPMT, StringComparer.OrdinalIgnoreCase)
-                                      .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+                ReconciliationViewEnricher.EnrichWithDwingsInvoices(list, invoices);
+            }
+            catch { /* best-effort enrichment */ }
 
+            // Compute transient UI flags for new/updated based on reconciliation timestamps
+            try
+            {
+                var today = DateTime.Today;
                 foreach (var row in list)
                 {
-                    DwingsInvoiceDto inv = null;
-                    // 1) Direct by DWINGS_InvoiceID
-                    if (!string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID) && byInvoiceId.TryGetValue(row.DWINGS_InvoiceID, out var foundById))
+                    // New if reconciliation CreationDate is today
+                    if (row.Reco_CreationDate.HasValue && row.Reco_CreationDate.Value.Date == today)
                     {
-                        inv = foundById;
+                        row.IsNewlyAdded = true;
                     }
-                    // 2) By stored PaymentReference (BGPMT)
-                    else if (!string.IsNullOrWhiteSpace(row.PaymentReference) && byBgpmt.TryGetValue(row.PaymentReference, out var foundByPm))
+                    // Updated if reconciliation LastModified is today and differs from CreationDate
+                    if (row.Reco_LastModified.HasValue && row.Reco_LastModified.Value.Date == today)
                     {
-                        inv = foundByPm;
-                    }
-                    // 3) By stored DWINGS_CommissionID (BGPMT) when PaymentReference is not set
-                    else if (!string.IsNullOrWhiteSpace(row.DWINGS_CommissionID) && byBgpmt.TryGetValue(row.DWINGS_CommissionID, out var foundByCommission))
-                    {
-                        inv = foundByCommission;
-                        if (string.IsNullOrWhiteSpace(row.PaymentReference)) row.PaymentReference = row.DWINGS_CommissionID;
-                    }
-                    else
-                    {
-                        // 4) Heuristic: extract BGI or BGPMT from available texts
-                        string TryNonEmpty(params string[] ss)
+                        if (!row.Reco_CreationDate.HasValue || row.Reco_LastModified.Value > row.Reco_CreationDate.Value)
                         {
-                            foreach (var s in ss)
-                                if (!string.IsNullOrWhiteSpace(s)) return s;
-                            return null;
-                        }
-
-                        // Extract tokens from potential sources
-                        var bgi = DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.Reconciliation_Num))
-                                  ?? DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.Comments))
-                                  ?? DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.RawLabel))
-                                  ?? DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.Receivable_DWRefFromAmbre));
-
-                        var bgpmt = DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.Reconciliation_Num))
-                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.Comments))
-                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.RawLabel))
-                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.PaymentReference));
-
-                        if (!string.IsNullOrWhiteSpace(bgi) && byInvoiceId.TryGetValue(bgi, out var foundByBgi))
-                        {
-                            inv = foundByBgi;
-                            // Backfill missing fields to strengthen link in UI
-                            if (string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID)) row.DWINGS_InvoiceID = inv.INVOICE_ID;
-                        }
-                        else if (!string.IsNullOrWhiteSpace(bgpmt) && byBgpmt.TryGetValue(bgpmt, out var foundByBgpmt))
-                        {
-                            inv = foundByBgpmt;
-                            if (string.IsNullOrWhiteSpace(row.PaymentReference)) row.PaymentReference = bgpmt;
-                            if (string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID)) row.DWINGS_InvoiceID = inv.INVOICE_ID;
-                        }
-                    }
-
-                    if (inv != null)
-                    {
-                        row.INVOICE_ID = inv.INVOICE_ID;
-                        row.I_T_INVOICE_STATUS = inv.T_INVOICE_STATUS;
-                        row.I_BILLING_AMOUNT = inv.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture);
-                        row.I_REQUESTED_INVOICE_AMOUNT = inv.REQUESTED_AMOUNT?.ToString(CultureInfo.InvariantCulture) ?? row.I_REQUESTED_INVOICE_AMOUNT;
-                        row.I_FINAL_AMOUNT = inv.FINAL_AMOUNT?.ToString(CultureInfo.InvariantCulture) ?? row.I_FINAL_AMOUNT;
-                        row.I_BILLING_CURRENCY = inv.BILLING_CURRENCY;
-                        row.I_BGPMT = inv.BGPMT;
-                        row.I_BUSINESS_CASE_REFERENCE = inv.BUSINESS_CASE_REFERENCE;
-                        row.I_BUSINESS_CASE_ID = inv.BUSINESS_CASE_ID;
-                        row.I_START_DATE = inv.START_DATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                        row.I_END_DATE = inv.END_DATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                        row.I_DEBTOR_PARTY_NAME = inv.DEBTOR_PARTY_NAME;
-                        row.I_RECEIVER_NAME = inv.CREDITOR_PARTY_NAME; // map as available
-
-                        // If guarantee link is missing but invoice carries Business Case reference, propose it
-                        if (string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID) && !string.IsNullOrWhiteSpace(inv.BUSINESS_CASE_REFERENCE))
-                        {
-                            row.DWINGS_GuaranteeID = inv.BUSINESS_CASE_REFERENCE;
+                            row.IsUpdated = true;
                         }
                     }
                 }
             }
-            catch { /* best-effort enrichment */ }
+            catch { }
             
+            // Compute AccountSide and Matched-across-accounts flag (instance context; use _offlineFirstService)
+            try
+            {
+                var currentCountry = _offlineFirstService?.CurrentCountry;
+                var pivotId = currentCountry?.CNT_AmbrePivot;
+                var recvId = currentCountry?.CNT_AmbreReceivable;
+                foreach (var row in list)
+                {
+                    if (!string.IsNullOrWhiteSpace(pivotId) && string.Equals(row.Account_ID, pivotId, StringComparison.OrdinalIgnoreCase))
+                        row.AccountSide = "P";
+                    else if (!string.IsNullOrWhiteSpace(recvId) && string.Equals(row.Account_ID, recvId, StringComparison.OrdinalIgnoreCase))
+                        row.AccountSide = "R";
+                    else row.AccountSide = null;
+                }
+
+                // Group by DWINGS_InvoiceID first; if empty, group by InternalInvoiceReference
+                var byInvoice = list.Where(r => !string.IsNullOrWhiteSpace(r.DWINGS_InvoiceID))
+                                    .GroupBy(r => r.DWINGS_InvoiceID, StringComparer.OrdinalIgnoreCase);
+                foreach (var g in byInvoice)
+                {
+                    bool hasP = g.Any(x => string.Equals(x.AccountSide, "P", StringComparison.OrdinalIgnoreCase));
+                    bool hasR = g.Any(x => string.Equals(x.AccountSide, "R", StringComparison.OrdinalIgnoreCase));
+                    if (hasP && hasR)
+                    {
+                        foreach (var row in g) row.IsMatchedAcrossAccounts = true;
+                    }
+                }
+                var byInternal = list.Where(r => string.IsNullOrWhiteSpace(r.DWINGS_InvoiceID) && !string.IsNullOrWhiteSpace(r.InternalInvoiceReference))
+                                      .GroupBy(r => r.InternalInvoiceReference, StringComparer.OrdinalIgnoreCase);
+                foreach (var g in byInternal)
+                {
+                    bool hasP = g.Any(x => string.Equals(x.AccountSide, "P", StringComparison.OrdinalIgnoreCase));
+                    bool hasR = g.Any(x => string.Equals(x.AccountSide, "R", StringComparison.OrdinalIgnoreCase));
+                    if (hasP && hasR)
+                    {
+                        foreach (var row in g) row.IsMatchedAcrossAccounts = true;
+                    }
+                }
+            }
+            catch { }
+
             // Enrich guarantee fields from in-memory DWINGS cache (avoid heavy SQL joins and keep UI robust)
             try
             {
@@ -1073,240 +498,11 @@ namespace RecoTool.Services
             // ELSE BLANK (no automatic action)
             return null;
         }
-        // Distinct values for dynamic filter ComboBoxes
-        public async Task<List<string>> GetDistinctCurrenciesAsync(string countryId)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(countryId)) return new List<string>();
-                var ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
-                if (string.IsNullOrWhiteSpace(ambrePath) || !File.Exists(ambrePath)) return new List<string>();
-                var ambreCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={ambrePath};";
-                var query = @"SELECT DISTINCT CCY FROM T_Data_Ambre WHERE DeleteDate IS NULL AND CCY IS NOT NULL AND CCY <> '' ORDER BY CCY";
-                var values = await ExecuteScalarListAsync<string>(query, ambreCs).ConfigureAwait(false);
-                return values?.Where(s => !string.IsNullOrWhiteSpace(s))
-                              .Select(s => s.Trim())
-                              .Distinct(StringComparer.OrdinalIgnoreCase)
-                              .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
-                              .ToList() ?? new List<string>();
-            }
-            catch { return new List<string>(); }
-        }
-
-        public async Task<List<string>> GetDistinctGuaranteeStatusesAsync()
-        {
-            try
-            {
-                var dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
-                if (string.IsNullOrWhiteSpace(dwPath) || !File.Exists(dwPath)) return new List<string>();
-                var dwCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={dwPath};";
-                var query = @"SELECT DISTINCT GUARANTEE_STATUS FROM T_DW_Guarantee WHERE GUARANTEE_STATUS IS NOT NULL AND GUARANTEE_STATUS <> '' ORDER BY GUARANTEE_STATUS";
-                var values = await ExecuteScalarListAsync<string>(query, dwCs).ConfigureAwait(false);
-                return values?.Where(s => !string.IsNullOrWhiteSpace(s))
-                              .Select(s => s.Trim())
-                              .Distinct(StringComparer.OrdinalIgnoreCase)
-                              .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
-                              .ToList() ?? new List<string>();
-            }
-            catch { return new List<string>(); }
-        }
-
-        public async Task<List<string>> GetDistinctGuaranteeTypesAsync()
-        {
-            try
-            {
-                var dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
-                if (string.IsNullOrWhiteSpace(dwPath) || !File.Exists(dwPath)) return new List<string>();
-                var dwCs = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={dwPath};";
-                var query = @"SELECT DISTINCT GUARANTEE_TYPE FROM T_DW_Guarantee WHERE GUARANTEE_TYPE IS NOT NULL AND GUARANTEE_TYPE <> '' ORDER BY GUARANTEE_TYPE";
-                var values = await ExecuteScalarListAsync<string>(query, dwCs).ConfigureAwait(false);
-                return values?.Where(s => !string.IsNullOrWhiteSpace(s))
-                              .Select(s => s.Trim())
-                              .Distinct(StringComparer.OrdinalIgnoreCase)
-                              .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
-                              .ToList() ?? new List<string>();
-            }
-            catch { return new List<string>(); }
-        }
-
         #endregion
 
-        /// <summary>
-        /// Returns Control DB connection string via OfflineFirstService, with fallback to local DB if not configured.
-        /// </summary>
-        private string GetControlConnectionString()
-        {
-            if (_offlineFirstService != null)
-                return _offlineFirstService.GetControlConnectionString(_offlineFirstService.CurrentCountryId);
-            return _connectionString;
-        }
+        
 
-        /// <summary>
-        /// Ensure KpiDailySnapshot table exists in the provided connection. Creates it if missing.
-        /// </summary>
-        private async Task EnsureKpiDailySnapshotTableAsync(OleDbConnection connection, CancellationToken ct)
-        {
-            // Check existence via schema
-            var tables = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new object[] { null, null, "KpiDailySnapshot", "TABLE" });
-            if (tables != null && tables.Rows.Count > 0) return;
-
-            var createSql = @"CREATE TABLE KpiDailySnapshot (
-                Id COUNTER PRIMARY KEY,
-                SnapshotDate DATETIME,
-                CountryId TEXT(50),
-                MissingInvoices LONG,
-                PaidNotReconciled LONG,
-                UnderInvestigation LONG,
-                ReceivableCount LONG,
-                ReceivableAmount CURRENCY,
-                PivotCount LONG,
-                PivotAmount CURRENCY,
-                NewCount LONG,
-                DeletedCount LONG,
-                DeletionDelayBucketsJson LONGTEXT,
-                ReceivablePivotByActionJson LONGTEXT,
-                KpiDistributionJson LONGTEXT,
-                KpiRiskMatrixJson LONGTEXT,
-                CurrencyDistributionJson LONGTEXT,
-                ActionDistributionJson LONGTEXT,
-                CreatedAtUtc DATETIME,
-                SourceVersion TEXT(255),
-                FrozenAt DATETIME
-            )";
-
-            using (var cmd = new OleDbCommand(createSql, connection))
-            {
-                await cmd.ExecuteNonQueryAsync(ct);
-            }
-        }
-
-        #region Exports (T_param driven)
-
-        /// <summary>
-        /// Reads a SQL payload from referential table T_param.Par_Value using a flexible key lookup.
-        /// Accepts keys like Export_KPI, Export_PastDUE, Export_IT.
-        /// </summary>
-        public async Task<string> GetParamValueAsync(string paramKey, CancellationToken cancellationToken = default)
-        {
-            if (string.IsNullOrWhiteSpace(paramKey)) return null;
-
-            var cs = GetReferentialConnectionString();
-            using (var connection = new OleDbConnection(cs))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                await connection.OpenAsync();
-
-                // Try common key column names to avoid coupling to a specific schema naming
-                string[] keyColumns = { "Par_Key", "Par_Code", "Par_Name", "PAR_Key", "PAR_Code", "PAR_Name" };
-                foreach (var col in keyColumns)
-                {
-                    try
-                    {
-                        var cmd = new OleDbCommand($"SELECT TOP 1 Par_Value FROM T_param WHERE {col} = ?", connection);
-                        cmd.Parameters.AddWithValue("@p1", paramKey);
-                        cancellationToken.ThrowIfCancellationRequested();
-                        var obj = await cmd.ExecuteScalarAsync();
-                        if (obj != null && obj != DBNull.Value)
-                            return obj.ToString();
-                    }
-                    catch
-                    {
-                        // Ignore and try next column variant
-                    }
-                }
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// Build OleDb parameters for a detected parameter name set.
-        /// Supported names: @CountryId, @AccountId, @FromDate, @ToDate, @UserId
-        /// </summary>
-        public IEnumerable<DbParameter> BuildSqlParameters(IEnumerable<string> paramNames, string countryId, string accountId, DateTime? fromDate, DateTime? toDate, string userId)
-        {
-            var list = new List<DbParameter>();
-            if (paramNames == null) return list;
-
-            foreach (var name in paramNames)
-            {
-                var p = new OleDbParameter();
-                p.ParameterName = "@" + name;
-                switch (name.ToLowerInvariant())
-                {
-                    case "countryid":
-                        p.Value = (object)(countryId ?? string.Empty) ?? DBNull.Value; break;
-                    case "accountid":
-                        p.Value = (object)(accountId ?? string.Empty) ?? DBNull.Value; break;
-                    case "fromdate":
-                        p.Value = fromDate.HasValue ? (object)fromDate.Value.ToOADate() : DBNull.Value; break;
-                    case "todate":
-                        p.Value = toDate.HasValue ? (object)toDate.Value.ToOADate() : DBNull.Value; break;
-                    case "userid":
-                        p.Value = (object)(userId ?? _currentUser ?? string.Empty) ?? DBNull.Value; break;
-                    default:
-                        // Unknown param -> set as DBNull
-                        p.Value = DBNull.Value; break;
-                }
-                list.Add(p);
-            }
-            return list;
-        }
-
-        /// <summary>
-        /// Execute arbitrary SQL (select) and return a DataTable. Parameters must be OleDb-compatible.
-        /// </summary>
-        public async Task<System.Data.DataTable> ExecuteExportAsync(string sql, IEnumerable<DbParameter> parameters, CancellationToken cancellationToken = default)
-        {
-            if (string.IsNullOrWhiteSpace(sql)) throw new ArgumentNullException(nameof(sql));
-
-            using (var connection = new OleDbConnection(_connectionString))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                await connection.OpenAsync();
-                using (var cmd = new OleDbCommand(sql, connection))
-                {
-                    if (parameters != null)
-                    {
-                        foreach (var p in parameters)
-                        {
-                            // OleDb uses positional parameters; however we still attach names for clarity
-                            var clone = new OleDbParameter
-                            {
-                                ParameterName = p.ParameterName,
-                                Value = p.Value ?? DBNull.Value
-                            };
-                            cmd.Parameters.Add(clone);
-                        }
-                    }
-
-                    using (var adapter = new OleDbDataAdapter(cmd))
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        var table = new System.Data.DataTable();
-                        adapter.Fill(table);
-                        return table;
-                    }
-                }
-            }
-        }
-
-        #endregion
-
-        #region Connection helpers
-
-        /// <summary>
-        /// Returns the referential database connection string from OfflineFirstService.
-        /// Throws if unavailable.
-        /// </summary>
-        private string GetReferentialConnectionString()
-        {
-            var refCs = _offlineFirstService?.ReferentialDatabasePath;
-            if (string.IsNullOrWhiteSpace(refCs))
-                throw new InvalidOperationException("Referential connection string is required for saved views (inject OfflineFirstService).");
-            return refCs;
-        }
-
-        #endregion
+        
 
         #region Automatic Rules and Actions
 
@@ -1333,11 +529,11 @@ namespace RecoTool.Services
 
                     if (isPivot)
                     {
-                        ApplyPivotRules(reconciliation, data);
+                        ReconciliationRules.ApplyPivotRules(reconciliation, data);
                     }
                     else if (isReceivable)
                     {
-                        ApplyReceivableRules(reconciliation, data);
+                        ReconciliationRules.ApplyReceivableRules(reconciliation, data);
                     }
 
                     updates.Add(reconciliation);
@@ -1351,127 +547,6 @@ namespace RecoTool.Services
             {
                 throw new Exception($"Erreur lors de l'application des règles automatiques: {ex.Message}", ex);
             }
-        }
-
-        /// <summary>
-        /// Applique les règles pour le compte Pivot
-        /// </summary>
-        private void ApplyPivotRules(Reconciliation reconciliation, DataAmbre data)
-        {
-            var transactionType = data.Pivot_TransactionCodesFromLabel?.ToUpper();
-            bool isCredit = data.SignedAmount > 0;
-
-            switch (transactionType)
-            {
-                case "COLLECTION":
-                    reconciliation.Action = isCredit ? (int)ActionType.Match : (int)ActionType.NA;
-                    reconciliation.KPI = isCredit ? (int)KPIType.PaidButNotReconciled : (int)KPIType.ITIssues;
-                    break;
-
-                case "PAYMENT":
-                case "AUTOMATIC REFUND":
-                    reconciliation.Action = !isCredit ? (int)ActionType.DoPricing : (int)ActionType.NA;
-                    reconciliation.KPI = !isCredit ? (int)KPIType.CorrespondentChargesToBeInvoiced : (int)KPIType.ITIssues;
-                    break;
-
-                case "ADJUSTMENT":
-                    reconciliation.Action = (int)ActionType.Adjust;
-                    reconciliation.KPI = (int)KPIType.PaidButNotReconciled;
-                    break;
-
-                case "XCL LOADER":
-                    reconciliation.Action = isCredit ? (int)ActionType.Match : (int)ActionType.Investigate;
-                    reconciliation.KPI = isCredit ? (int)KPIType.PaidButNotReconciled : (int)KPIType.UnderInvestigation;
-                    break;
-
-                case "TRIGGER":
-                    if (isCredit)
-                    {
-                        reconciliation.Action = (int)ActionType.Investigate;
-                        reconciliation.KPI = (int)KPIType.UnderInvestigation;
-                    }
-                    else
-                    {
-                        reconciliation.Action = (int)ActionType.DoPricing;
-                        reconciliation.KPI = (int)KPIType.CorrespondentChargesToBeInvoiced;
-                    }
-                    break;
-
-                default:
-                    reconciliation.Action = (int)ActionType.Investigate;
-                    reconciliation.KPI = (int)KPIType.UnderInvestigation;
-                    break;
-            }
-        }
-
-        /// <summary>
-        /// Applique les règles pour le compte Receivable
-        /// </summary>
-        private void ApplyReceivableRules(Reconciliation reconciliation, DataAmbre data)
-        {
-            var transactionType = data.Pivot_TransactionCodesFromLabel?.ToUpper();
-            var guaranteeType = ExtractGuaranteeTypeFromLabel(data.RawLabel);
-
-            switch (transactionType)
-            {
-                case "INCOMING PAYMENT":
-                    switch (guaranteeType?.ToUpper())
-                    {
-                        case "REISSUANCE":
-                            reconciliation.Action = (int)ActionType.Request;
-                            reconciliation.KPI = (int)KPIType.NotClaimed;
-                            break;
-                        case "ISSUANCE":
-                            reconciliation.Action = (int)ActionType.NA;
-                            reconciliation.KPI = (int)KPIType.ClaimedButNotPaid;
-                            break;
-                        case "ADVISING":
-                            reconciliation.Action = (int)ActionType.Trigger;
-                            reconciliation.KPI = (int)KPIType.PaidButNotReconciled;
-                            break;
-                        default:
-                            reconciliation.Action = (int)ActionType.Investigate;
-                            reconciliation.KPI = (int)KPIType.ITIssues;
-                            break;
-                    }
-                    break;
-
-                case "DIRECT DEBIT":
-                    reconciliation.Action = (int)ActionType.Investigate;
-                    reconciliation.KPI = (int)KPIType.ITIssues;
-                    break;
-
-                case "MANUAL OUTGOING":
-                case "OUTGOING PAYMENT":
-                    reconciliation.Action = (int)ActionType.Trigger;
-                    reconciliation.KPI = (int)KPIType.CorrespondentChargesPendingTrigger;
-                    break;
-
-                case "EXTERNAL DEBIT PAYMENT":
-                    reconciliation.Action = (int)ActionType.Execute;
-                    reconciliation.KPI = (int)KPIType.NotClaimed;
-                    break;
-
-                default:
-                    reconciliation.Action = (int)ActionType.Investigate;
-                    reconciliation.KPI = (int)KPIType.ITIssues;
-                    break;
-            }
-        }
-
-        /// <summary>
-        /// Extrait le type de garantie depuis le libellé
-        /// </summary>
-        private string ExtractGuaranteeTypeFromLabel(string rawLabel)
-        {
-            if (string.IsNullOrEmpty(rawLabel)) return null;
-
-            var upperLabel = rawLabel.ToUpper();
-            if (upperLabel.Contains("REISSUANCE")) return "REISSUANCE";
-            if (upperLabel.Contains("ISSUANCE")) return "ISSUANCE";
-            if (upperLabel.Contains("ADVISING")) return "ADVISING";
-
-            return null;
         }
 
         #endregion
@@ -1620,7 +695,7 @@ namespace RecoTool.Services
                                     }
                                 }
                             }
-                            catch
+                            catch (Exception ex)
                             {
                                 // Swallow change-log errors to not block user saves
                                 // Diagnostic only: log once here to help track missing pushes (background sync reads ChangeLog)
@@ -2031,545 +1106,6 @@ namespace RecoTool.Services
                 cmd.Parameters.AddWithValue("@ID", reconciliation.ID);
         }
 
-        /// <summary>
-        /// Récupère la liste des utilisateurs (référentiel T_User)
-        /// </summary>
-        public async Task<List<(string Id, string Name)>> GetUsersAsync()
-        {
-            var list = new List<(string, string)>();
-            using (var connection = new OleDbConnection(GetReferentialConnectionString()))
-            {
-                await connection.OpenAsync();
-
-                // Ensure current user exists in T_User (USR_ID, USR_Name)
-                try
-                {
-                    if (!string.IsNullOrWhiteSpace(_currentUser))
-                    {
-                        var checkCmd = new OleDbCommand("SELECT COUNT(*) FROM T_User WHERE USR_ID = ?", connection);
-                        checkCmd.Parameters.AddWithValue("@p1", _currentUser);
-                        var obj = await checkCmd.ExecuteScalarAsync().ConfigureAwait(false);
-                        var exists = obj != null && int.TryParse(obj.ToString(), out var n) && n > 0;
-                        if (!exists)
-                        {
-                            var insertCmd = new OleDbCommand("INSERT INTO T_User (USR_ID, USR_Name) VALUES (?, ?)", connection);
-                            insertCmd.Parameters.AddWithValue("@p1", _currentUser);
-                            insertCmd.Parameters.AddWithValue("@p2", _currentUser);
-                            await insertCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
-                        }
-                    }
-                }
-                catch { /* best effort; not critical */ }
-
-                var cmd = new OleDbCommand("SELECT USR_ID, USR_Name FROM T_User ORDER BY USR_Name", connection);
-                using (var rdr = await cmd.ExecuteReaderAsync())
-                {
-                    while (await rdr.ReadAsync())
-                    {
-                        var id = rdr.IsDBNull(0) ? null : rdr.GetValue(0)?.ToString();
-                        var name = rdr.IsDBNull(1) ? null : rdr.GetValue(1)?.ToString();
-                        if (!string.IsNullOrWhiteSpace(id))
-                            list.Add((id, name ?? id));
-                    }
-                }
-            }
-            return list;
-        }
-
-        #endregion
-
-        #region KPI Daily Snapshots
-
-        private class KpiDailySnapshotDto
-        {
-            public DateTime SnapshotDate { get; set; }
-            public string CountryId { get; set; }
-
-            public long MissingInvoices { get; set; }
-            public long PaidNotReconciled { get; set; }
-            public long UnderInvestigation { get; set; }
-
-            public long ReceivableCount { get; set; }
-            public decimal ReceivableAmount { get; set; }
-            public long PivotCount { get; set; }
-            public decimal PivotAmount { get; set; }
-
-            public long NewCount { get; set; }
-            public long DeletedCount { get; set; }
-
-            public string DeletionDelayBucketsJson { get; set; }
-            public string ReceivablePivotByActionJson { get; set; }
-            public string KpiDistributionJson { get; set; }
-            public string KpiRiskMatrixJson { get; set; }
-            public string CurrencyDistributionJson { get; set; }
-            public string ActionDistributionJson { get; set; }
-
-            public DateTime CreatedAtUtc { get; set; }
-            public string SourceVersion { get; set; }
-        }
-
-        /// <summary>
-        /// Compute and save a daily snapshot of HomePage KPIs for the given country and date (insert-only).
-        /// </summary>
-        public async Task<bool> SaveDailyKpiSnapshotAsync(DateTime date, string countryId, string sourceVersion = null, CancellationToken cancellationToken = default)
-        {
-            var dto = await BuildKpiDailySnapshotAsync(date.Date, countryId, sourceVersion, cancellationToken);
-            return await InsertDailyKpiSnapshotAsync(dto, cancellationToken);
-        }
-
-        private async Task<KpiDailySnapshotDto> BuildKpiDailySnapshotAsync(DateTime date, string countryId, string sourceVersion, CancellationToken ct)
-        {
-            // Load the same data used by HomePage (minimal fields)
-            var list = await GetReconciliationViewAsync(countryId, null, true);
-
-            var currentCountry = _offlineFirstService?.CurrentCountry;
-            string receivableId = currentCountry?.CNT_AmbreReceivable;
-            string pivotId = currentCountry?.CNT_AmbrePivot;
-
-            var dto = new KpiDailySnapshotDto
-            {
-                SnapshotDate = date.Date,
-                CountryId = countryId,
-                CreatedAtUtc = DateTime.UtcNow,
-                SourceVersion = sourceVersion
-            };
-
-            // KPI counts
-            dto.PaidNotReconciled = list.LongCount(r => r.KPI == (int)KPIType.PaidButNotReconciled);
-            dto.UnderInvestigation = list.LongCount(r => r.KPI == (int)KPIType.UnderInvestigation);
-            dto.MissingInvoices = list.LongCount(r => r.KPI == (int)KPIType.NotClaimed);
-
-            // Receivable vs Pivot totals
-            var receivableData = string.IsNullOrEmpty(receivableId) ? new List<ReconciliationViewData>() : list.Where(r => r.Account_ID == receivableId).ToList();
-            var pivotData = string.IsNullOrEmpty(pivotId) ? new List<ReconciliationViewData>() : list.Where(r => r.Account_ID == pivotId).ToList();
-            dto.ReceivableAmount = receivableData.Sum(r => r.SignedAmount);
-            dto.ReceivableCount = receivableData.LongCount();
-            dto.PivotAmount = pivotData.Sum(r => r.SignedAmount);
-            dto.PivotCount = pivotData.LongCount();
-
-            // New vs Deleted for that day
-            dto.NewCount = list.LongCount(r => r.CreationDate.HasValue && r.CreationDate.Value.Date == date.Date);
-            dto.DeletedCount = list.LongCount(r => r.DeleteDate.HasValue && r.DeleteDate.Value.Date == date.Date);
-
-            // Deletion delay buckets (average days)
-            var durations = list
-                .Where(r => r.CreationDate.HasValue && r.DeleteDate.HasValue)
-                .Select(r => (int)(r.DeleteDate.Value.Date - r.CreationDate.Value.Date).TotalDays)
-                .Where(d => d >= 0)
-                .ToList();
-
-            var buckets = new[]
-            {
-                new { Key = "0-14d", Min = 0,  Max = 14 },
-                new { Key = "15-30d", Min = 15, Max = 30 },
-                new { Key = "1-3m",  Min = 31, Max = 92 },
-                new { Key = ">3m",   Min = 93, Max = int.MaxValue }
-            };
-            var delayBucketObjs = buckets.Select(b =>
-            {
-                var inB = durations.Where(d => d >= b.Min && d <= b.Max).ToList();
-                return new { bucket = b.Key, avgDays = inB.Any() ? inB.Average() : 0.0, count = inB.Count };
-            }).ToList();
-            dto.DeletionDelayBucketsJson = JsonSerializer.Serialize(delayBucketObjs);
-
-            // Receivable vs Pivot by Action
-            var actionGroups = list.Where(r => r.Action.HasValue).GroupBy(r => r.Action.Value).OrderBy(g => g.Key).ToList();
-            var labels = actionGroups.Select(g => EnumHelper.GetActionName(g.Key, _offlineFirstService?.UserFields)).ToList();
-            var recvVals = actionGroups.Select(g => g.Count(x => x.Account_ID == receivableId)).ToList();
-            var pivVals = actionGroups.Select(g => g.Count(x => x.Account_ID == pivotId)).ToList();
-            dto.ReceivablePivotByActionJson = JsonSerializer.Serialize(new { labels, receivable = recvVals, pivot = pivVals });
-
-            // KPI Distribution
-            var kpiDist = list.Where(r => r.KPI.HasValue)
-                              .GroupBy(r => r.KPI.Value)
-                              .Select(g => new { kpi = EnumHelper.GetKPIName(g.Key, _offlineFirstService?.UserFields), count = g.Count() })
-                              .OrderByDescending(x => x.count)
-                              .ToList();
-            dto.KpiDistributionJson = JsonSerializer.Serialize(kpiDist);
-
-            // KPI × RiskyItem (Risky vs Non-Risky counts per KPI)
-            var kpiRisk = list.Where(r => r.KPI.HasValue)
-                              .GroupBy(r => r.KPI.Value)
-                              .OrderBy(g => g.Key)
-                              .ToList();
-            var kpiLabels = kpiRisk.Select(g => EnumHelper.GetKPIName(g.Key, _offlineFirstService?.UserFields)).ToList();
-            var risky = kpiRisk.Select(g => g.Count(x => x.RiskyItem == true)).ToList();
-            var nonRisky = kpiRisk.Select(g => g.Count(x => x.RiskyItem != true)).ToList();
-            dto.KpiRiskMatrixJson = JsonSerializer.Serialize(new { kpiLabels, series = new[] { "Risky", "Non-Risky" }, values = new[] { risky, nonRisky } });
-
-            // Currency Distribution (top 10 by amount)
-            var ccy = list.Where(r => !string.IsNullOrEmpty(r.CCY) && r.SignedAmount != 0)
-                          .GroupBy(r => r.CCY)
-                          .Select(g => new { currency = g.Key, amount = Math.Abs(g.Sum(x => x.SignedAmount)), count = g.Count() })
-                          .OrderByDescending(x => x.amount)
-                          .Take(10)
-                          .ToList();
-            dto.CurrencyDistributionJson = JsonSerializer.Serialize(ccy);
-
-            // Action Distribution (counts per action)
-            var act = list.Where(r => r.Action.HasValue)
-                          .GroupBy(r => r.Action.Value)
-                          .Select(g => new { action = EnumHelper.GetActionName(g.Key, _offlineFirstService?.UserFields), count = g.Count() })
-                          .OrderByDescending(x => x.count)
-                          .ToList();
-            dto.ActionDistributionJson = JsonSerializer.Serialize(act);
-
-            return dto;
-        }
-
-        private async Task<bool> InsertDailyKpiSnapshotAsync(KpiDailySnapshotDto dto, CancellationToken cancellationToken)
-        {
-            using (var connection = new OleDbConnection(GetControlConnectionString()))
-            {
-                await connection.OpenAsync(cancellationToken);
-
-                await EnsureKpiDailySnapshotTableAsync(connection, cancellationToken);
-
-                // Discover existing columns and their data types in KpiDailySnapshot to avoid mismatches and type errors
-                var schema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Columns, new object[] { null, null, "KpiDailySnapshot", null });
-                var existing = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                foreach (System.Data.DataRow row in schema.Rows)
-                {
-                    var name = Convert.ToString(row["COLUMN_NAME"]);
-                    if (string.IsNullOrEmpty(name)) continue;
-                    var dataTypeCode = Convert.ToInt32(row["DATA_TYPE"]); // OLE DB data type code
-                    existing[name] = dataTypeCode;
-                }
-
-                // Helper factories to map values to column type
-                (OleDbType Type, object Value) MapValue(string col, object val)
-                {
-                    if (!existing.TryGetValue(col, out var code))
-                    {
-                        // Fallback guesses
-                        switch (col)
-                        {
-                            case "SnapshotDate":
-                            case "CreatedAtUtc":
-                                return (OleDbType.Date, (object)val ?? DBNull.Value);
-                            case "CountryId":
-                                return (OleDbType.VarWChar, (object)(val ?? string.Empty));
-                            default:
-                                return (OleDbType.VarWChar, (object)(val ?? DBNull.Value));
-                        }
-                    }
-
-                    // OLE DB type codes of interest for Access:
-                    // 3=Integer, 4=Single, 5=Double, 6=Currency, 7=Date, 130=VarWChar, 202=VarWChar, 203=LongVarWChar, 131=Decimal, 20=BigInt
-                    switch (code)
-                    {
-                        case 7: // Date/Time
-                            return (OleDbType.Date, (object)val ?? DBNull.Value);
-                        case 5: // Double
-                            if (val is DateTime dtD) return (OleDbType.Double, dtD.ToOADate());
-                            return (OleDbType.Double, val ?? DBNull.Value);
-                        case 6: // Currency
-                            return (OleDbType.Currency, val ?? DBNull.Value);
-                        case 3: // Integer (Long Integer)
-                            // Convert to int32 where needed
-                            return (OleDbType.Integer, val == null ? DBNull.Value : (object)Convert.ToInt32(val));
-                        case 20: // BigInt
-                            return (OleDbType.BigInt, val ?? DBNull.Value);
-                        case 131: // Decimal
-                            return (OleDbType.Decimal, val ?? DBNull.Value);
-                        case 203: // Long Text (Memo)
-                            return (OleDbType.LongVarWChar, val ?? DBNull.Value);
-                        case 202: // Text (VarWChar)
-                        case 130: // WChar
-                            return (OleDbType.VarWChar, (object)(val ?? string.Empty));
-                        default:
-                            // Safe default to VarWChar as text
-                            return (OleDbType.VarWChar, (object)(val ?? string.Empty));
-                    }
-                }
-
-                // Prepare the set of potential values
-                var raw = new List<(string Name, object Val)>
-                {
-                    ("SnapshotDate", dto.SnapshotDate),
-                    ("CountryId", dto.CountryId ?? string.Empty),
-                    ("MissingInvoices", dto.MissingInvoices),
-                    ("PaidNotReconciled", dto.PaidNotReconciled),
-                    ("UnderInvestigation", dto.UnderInvestigation),
-                    ("ReceivableCount", dto.ReceivableCount),
-                    ("ReceivableAmount", dto.ReceivableAmount),
-                    ("PivotCount", dto.PivotCount),
-                    ("PivotAmount", dto.PivotAmount),
-                    ("NewCount", dto.NewCount),
-                    ("DeletedCount", dto.DeletedCount),
-                    ("DeletionDelayBucketsJson", (object)dto.DeletionDelayBucketsJson ?? DBNull.Value),
-                    ("ReceivablePivotByActionJson", (object)dto.ReceivablePivotByActionJson ?? DBNull.Value),
-                    ("KpiDistributionJson", (object)dto.KpiDistributionJson ?? DBNull.Value),
-                    ("KpiRiskMatrixJson", (object)dto.KpiRiskMatrixJson ?? DBNull.Value),
-                    ("CurrencyDistributionJson", (object)dto.CurrencyDistributionJson ?? DBNull.Value),
-                    ("ActionDistributionJson", (object)dto.ActionDistributionJson ?? DBNull.Value),
-                    ("CreatedAtUtc", dto.CreatedAtUtc),
-                    ("SourceVersion", (object)dto.SourceVersion ?? DBNull.Value)
-                };
-
-                var used = new List<(string Name, OleDbType Type, object Value)>();
-                foreach (var r in raw)
-                {
-                    if (!existing.ContainsKey(r.Name)) continue;
-                    var mapped = MapValue(r.Name, r.Val);
-                    used.Add((r.Name, mapped.Type, mapped.Value));
-                }
-                if (used.Count == 0)
-                    throw new InvalidOperationException("La table KpiDailySnapshot ne contient aucune des colonnes attendues.");
-
-                var colList = string.Join(", ", used.Select(u => $"[{u.Name}]"));
-                var placeholders = string.Join(", ", used.Select(_ => "?"));
-                var sql = $"INSERT INTO KpiDailySnapshot ({colList}) VALUES ({placeholders})";
-                using (var insert = new OleDbCommand(sql, connection))
-                {
-                    foreach (var u in used)
-                    {
-                        insert.Parameters.Add(new OleDbParameter { OleDbType = u.Type, Value = u.Value ?? DBNull.Value });
-                    }
-                    await insert.ExecuteNonQueryAsync(cancellationToken);
-                }
-                return true;
-            }
-        }
-
-        /// <summary>
-        /// Mark the latest non-frozen snapshot for a country as frozen by setting FrozenAt.
-        /// </summary>
-        public async Task<bool> FreezeLatestSnapshotAsync(string countryId, CancellationToken cancellationToken = default)
-        {
-            if (string.IsNullOrWhiteSpace(countryId)) return false;
-            using (var connection = new OleDbConnection(GetControlConnectionString()))
-            {
-                await connection.OpenAsync(cancellationToken);
-                await EnsureKpiDailySnapshotTableAsync(connection, cancellationToken);
-                // Find latest non-frozen snapshot (CreatedAtUtc DESC)
-                var findCmd = new OleDbCommand(
-                    "SELECT TOP 1 Id FROM KpiDailySnapshot WHERE CountryId = ? AND FrozenAt IS NULL ORDER BY CreatedAtUtc DESC", connection);
-                findCmd.Parameters.AddWithValue("@p1", countryId);
-                var obj = await findCmd.ExecuteScalarAsync(cancellationToken);
-                if (obj == null || obj == DBNull.Value) return false;
-                int id;
-                if (!int.TryParse(Convert.ToString(obj), out id)) return false;
-
-                var upd = new OleDbCommand("UPDATE KpiDailySnapshot SET FrozenAt = ? WHERE Id = ?", connection);
-                upd.Parameters.AddWithValue("@p1", DateTime.UtcNow.ToOADate());
-                upd.Parameters.AddWithValue("@p2", id);
-                var n = await upd.ExecuteNonQueryAsync(cancellationToken);
-                return n > 0;
-            }
-        }
-
-        /// <summary>
-        /// Get one snapshot by date and country. Returns JSON strings as stored.
-        /// </summary>
-        public async Task<System.Data.DataTable> GetKpiSnapshotAsync(DateTime date, string countryId, CancellationToken cancellationToken = default)
-        {
-            using (var connection = new OleDbConnection(GetControlConnectionString()))
-            {
-                await connection.OpenAsync(cancellationToken);
-                await EnsureKpiDailySnapshotTableAsync(connection, cancellationToken);
-                var cmd = new OleDbCommand("SELECT TOP 1 * FROM KpiDailySnapshot WHERE SnapshotDate = ? AND CountryId = ? ORDER BY CreatedAtUtc DESC", connection);
-                cmd.Parameters.AddWithValue("@p1", date.Date);
-                cmd.Parameters.AddWithValue("@p2", countryId ?? string.Empty);
-                using (var adapter = new OleDbDataAdapter(cmd))
-                {
-                    var table = new System.Data.DataTable();
-                    adapter.Fill(table);
-                    return table;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Get snapshots in a date range for a country (inclusive).
-        /// </summary>
-        public async Task<System.Data.DataTable> GetKpiSnapshotsAsync(DateTime from, DateTime to, string countryId, CancellationToken cancellationToken = default)
-        {
-            using (var connection = new OleDbConnection(GetControlConnectionString()))
-            {
-                await connection.OpenAsync(cancellationToken);
-                await EnsureKpiDailySnapshotTableAsync(connection, cancellationToken);
-                var cmd = new OleDbCommand("SELECT * FROM KpiDailySnapshot WHERE CountryId = ? AND SnapshotDate BETWEEN ? AND ? ORDER BY SnapshotDate", connection);
-                cmd.Parameters.AddWithValue("@p1", countryId ?? string.Empty);
-                cmd.Parameters.AddWithValue("@p2", from.Date);
-                cmd.Parameters.AddWithValue("@p3", to.Date);
-                using (var adapter = new OleDbDataAdapter(cmd))
-                {
-                    var table = new System.Data.DataTable();
-                    adapter.Fill(table);
-                    return table;
-                }
-            }
-        }
-
-        #endregion
-
-        #region User Fields Preferences (Saved Views)
-
-        /// <summary>
-        /// Returns all saved views from T_Ref_User_Fields_Preference (globally visible)
-        /// </summary>
-        public async Task<List<UserFieldsPreference>> GetUserFieldsPreferencesAsync()
-        {
-            var query = @"SELECT UPF_id, UPF_Name, UPF_user, UPF_SQL, UPF_ColumnWidths FROM T_Ref_User_Fields_Preference ORDER BY UPF_Name";
-            return await ExecuteQueryAsync<UserFieldsPreference>(query, GetReferentialConnectionString());
-        }
-
-        /// <summary>
-        /// Inserts a new preference row
-        /// </summary>
-        public async Task<int> InsertUserFieldsPreferenceAsync(string name, string sql, string columnsJson)
-        {
-            using (var connection = new OleDbConnection(GetReferentialConnectionString()))
-            {
-                await connection.OpenAsync();
-                var cmd = new OleDbCommand(@"INSERT INTO T_Ref_User_Fields_Preference (UPF_Name, UPF_user, UPF_SQL, UPF_ColumnWidths) VALUES (?, ?, ?, ?)", connection);
-                cmd.Parameters.AddWithValue("@p1", name ?? (object)DBNull.Value);
-                cmd.Parameters.AddWithValue("@p2", _currentUser ?? (object)DBNull.Value);
-                // Do not persist backend filters in Saved Views
-                cmd.Parameters.AddWithValue("@p3", DBNull.Value);
-                cmd.Parameters.AddWithValue("@p4", columnsJson ?? (object)DBNull.Value);
-                            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
-                // Retrieve autonumber (Access specific)
-                var idCmd = new OleDbCommand("SELECT @@IDENTITY", connection);
-                var obj = await idCmd.ExecuteScalarAsync();
-                return obj != null && int.TryParse(obj.ToString(), out var id) ? id : 0;
-            }
-        }
-
-        /// <summary>
-        /// Updates an existing preference row
-        /// </summary>
-        public async Task<bool> UpdateUserFieldsPreferenceAsync(int id, string name, string sql, string columnsJson)
-        {
-            using (var connection = new OleDbConnection(GetReferentialConnectionString()))
-            {
-                await connection.OpenAsync();
-                var cmd = new OleDbCommand(@"UPDATE T_Ref_User_Fields_Preference SET UPF_Name = ?, UPF_user = ?, UPF_SQL = ?, UPF_ColumnWidths = ? WHERE UPF_id = ?", connection);
-                cmd.Parameters.AddWithValue("@p1", name ?? (object)DBNull.Value);
-                cmd.Parameters.AddWithValue("@p2", _currentUser ?? (object)DBNull.Value);
-                // Do not persist backend filters in Saved Views
-                cmd.Parameters.AddWithValue("@p3", DBNull.Value);
-                cmd.Parameters.AddWithValue("@p4", columnsJson ?? (object)DBNull.Value);
-                cmd.Parameters.AddWithValue("@p5", id);
-                var n = await cmd.ExecuteNonQueryAsync();
-                return n > 0;
-            }
-        }
-
-        /// <summary>
-        /// Upsert by (name, user). If a row exists for current user and name, update it; else insert new.
-        /// Returns the UPF_id.
-        /// </summary>
-        public async Task<int> UpsertUserFieldsPreferenceAsync(string name, string sql, string columnsJson)
-        {
-            using (var connection = new OleDbConnection(GetReferentialConnectionString()))
-            {
-                await connection.OpenAsync();
-                int? existingId = null;
-                var check = new OleDbCommand(@"SELECT TOP 1 UPF_id FROM T_Ref_User_Fields_Preference WHERE UPF_Name = ? AND UPF_user = ?", connection);
-                check.Parameters.AddWithValue("@p1", name ?? (object)DBNull.Value);
-                check.Parameters.AddWithValue("@p2", _currentUser ?? (object)DBNull.Value);
-                var obj = await check.ExecuteScalarAsync();
-                if (obj != null && int.TryParse(obj.ToString(), out var idFound)) existingId = idFound;
-
-                if (existingId.HasValue)
-                {
-                    await UpdateUserFieldsPreferenceAsync(existingId.Value, name, sql, columnsJson);
-                    return existingId.Value;
-                }
-                else
-                {
-                    return await InsertUserFieldsPreferenceAsync(name, sql, columnsJson);
-                }
-            }
-        }
-
-        /// <summary>
-        /// Get a single saved view for current user by name, or null if not found.
-        /// </summary>
-        public async Task<UserFieldsPreference> GetUserFieldsPreferenceByNameAsync(string name)
-        {
-            var query = @"SELECT TOP 1 UPF_id, UPF_Name, UPF_user, UPF_SQL, UPF_ColumnWidths
-                           FROM T_Ref_User_Fields_Preference
-                           WHERE UPF_Name = ?";
-            var list = await ExecuteQueryAsync<UserFieldsPreference>(query, GetReferentialConnectionString(), name);
-            return list.FirstOrDefault();
-        }
-
-        /// <summary>
-        /// List saved view names for current user, optionally filtered by a substring (case-insensitive).
-        /// </summary>
-        public async Task<List<string>> ListUserFieldsPreferenceNamesAsync(string contains = null)
-        {
-            string baseQuery = @"SELECT DISTINCT UPF_Name FROM T_Ref_User_Fields_Preference WHERE UPF_user = ?";
-            List<string> result;
-            if (string.IsNullOrWhiteSpace(contains))
-            {
-                var rows = await ExecuteScalarListAsync<string>(baseQuery + " ORDER BY UPF_Name ASC", GetReferentialConnectionString(), _currentUser);
-                result = rows?.ToList() ?? new List<string>();
-            }
-            else
-            {
-                // Use LIKE for filtering in DB
-                var rows = await ExecuteScalarListAsync<string>(baseQuery + " AND UPF_Name LIKE ? ORDER BY UPF_Name ASC", GetReferentialConnectionString(), _currentUser, "%" + contains + "%");
-                result = rows?.ToList() ?? new List<string>();
-            }
-            return result;
-        }
-
-        /// <summary>
-        /// List saved views (Name, Creator) for current user, optionally filtered by a substring.
-        /// </summary>
-        public async Task<List<(string Name, string Creator)>> ListUserFieldsPreferenceDetailedAsync(string contains = null)
-        {
-            var list = new List<(string, string)>();
-            using (var connection = new OleDbConnection(GetReferentialConnectionString()))
-            {
-                await connection.OpenAsync();
-                OleDbCommand cmd;
-                if (string.IsNullOrWhiteSpace(contains))
-                {
-                    cmd = new OleDbCommand(@"SELECT DISTINCT UPF_Name, UPF_user FROM T_Ref_User_Fields_Preference WHERE UPF_user = ? ORDER BY UPF_Name ASC", connection);
-                    cmd.Parameters.AddWithValue("@p1", _currentUser ?? (object)DBNull.Value);
-                }
-                else
-                {
-                    cmd = new OleDbCommand(@"SELECT DISTINCT UPF_Name, UPF_user FROM T_Ref_User_Fields_Preference WHERE UPF_user = ? AND UPF_Name LIKE ? ORDER BY UPF_Name ASC", connection);
-                    cmd.Parameters.AddWithValue("@p1", _currentUser ?? (object)DBNull.Value);
-                    cmd.Parameters.AddWithValue("@p2", "%" + contains + "%");
-                }
-
-                using (var rdr = await cmd.ExecuteReaderAsync())
-                {
-                    while (await rdr.ReadAsync())
-                    {
-                        var name = rdr.IsDBNull(0) ? string.Empty : rdr.GetString(0);
-                        var creator = rdr.IsDBNull(1) ? string.Empty : rdr.GetString(1);
-                        list.Add((name, creator));
-                    }
-                }
-            }
-            return list;
-        }
-
-        /// <summary>
-        /// Deletes saved view(s) for current user by name.
-        /// Returns true if at least one row deleted.
-        /// </summary>
-        public async Task<bool> DeleteUserFieldsPreferenceByNameAsync(string name)
-        {
-            using (var connection = new OleDbConnection(GetReferentialConnectionString()))
-            {
-                await connection.OpenAsync();
-                var cmd = new OleDbCommand(@"DELETE FROM T_Ref_User_Fields_Preference WHERE UPF_Name = ? AND UPF_user = ?", connection);
-                cmd.Parameters.AddWithValue("@p1", name ?? (object)DBNull.Value);
-                cmd.Parameters.AddWithValue("@p2", _currentUser ?? (object)DBNull.Value);
-                var n = await cmd.ExecuteNonQueryAsync();
-                return n > 0;
-            }
-        }
-
         #endregion
 
         #region Helper Methods
@@ -2595,7 +1131,7 @@ namespace RecoTool.Services
             using (var connection = new OleDbConnection(connectionString))
             {
                 var swOpen = Stopwatch.StartNew();
-                await connection.OpenAsync();
+                await connection.OpenAsync().ConfigureAwait(false);
                 swOpen.Stop();
                 msOpen = swOpen.ElapsedMilliseconds;
                 using (var command = new OleDbCommand(query, connection))
@@ -2609,7 +1145,7 @@ namespace RecoTool.Services
                     }
 
                     var swExec = Stopwatch.StartNew();
-                    using (var reader = await command.ExecuteReaderAsync())
+                    using (var reader = await command.ExecuteReaderAsync().ConfigureAwait(false))
                     {
                         swExec.Stop();
                         msExecute = swExec.ElapsedMilliseconds;
@@ -2650,7 +1186,7 @@ namespace RecoTool.Services
                         msMapPrep = swPrep.ElapsedMilliseconds;
 
                         var swMap = Stopwatch.StartNew();
-                        while (await reader.ReadAsync())
+                        while (await reader.ReadAsync().ConfigureAwait(false))
                         {
                             var item = new T();
 
@@ -2674,45 +1210,35 @@ namespace RecoTool.Services
                                         {
                                             converted = dt;
                                         }
-                                        else if (value is double d)
+                                        else if (value is DateTimeOffset dto)
                                         {
-                                            converted = DateTime.FromOADate(d);
-                                        }
-                                        else if (value is float f)
-                                        {
-                                            converted = DateTime.FromOADate(f);
-                                        }
-                                        else if (value is decimal m)
-                                        {
-                                            converted = DateTime.FromOADate((double)m);
+                                            converted = dto.UtcDateTime;
                                         }
                                         else
                                         {
                                             var sVal = Convert.ToString(value);
                                             if (!string.IsNullOrWhiteSpace(sVal))
                                             {
-                                                // Try OADate numeric string first
-                                                if (double.TryParse(sVal, NumberStyles.Any, CultureInfo.InvariantCulture, out var d2))
-                                                {
-                                                    try { converted = DateTime.FromOADate(d2); }
-                                                    catch { converted = null; }
-                                                }
-
-                                                // Try DWINGS textual date formats like 30-APR-22
-                                                if (converted == null && TryParseDwingsDate(sVal, out var parsed))
+                                                // Prefer DWINGS textual date formats like 30-APR-22
+                                                if (DwingsDateHelper.TryParseDwingsDate(sVal, out var parsed))
                                                 {
                                                     converted = parsed;
                                                 }
-
-                                                // Fallback to broad parsing
-                                                if (converted == null)
+                                                else if (DateTime.TryParse(sVal, CultureInfo.InvariantCulture, DateTimeStyles.None, out var gen))
                                                 {
-                                                    if (DateTime.TryParse(sVal, CultureInfo.InvariantCulture, DateTimeStyles.None, out var gen))
-                                                        converted = gen;
-                                                    else if (DateTime.TryParse(sVal, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out gen))
-                                                        converted = gen;
-                                                    else if (DateTime.TryParse(sVal, CultureInfo.GetCultureInfo("it-IT"), DateTimeStyles.None, out gen))
-                                                        converted = gen;
+                                                    converted = gen;
+                                                }
+                                                else if (DateTime.TryParse(sVal, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out gen))
+                                                {
+                                                    converted = gen;
+                                                }
+                                                else if (DateTime.TryParse(sVal, CultureInfo.GetCultureInfo("it-IT"), DateTimeStyles.None, out gen))
+                                                {
+                                                    converted = gen;
+                                                }
+                                                else
+                                                {
+                                                    try { converted = Convert.ToDateTime(value, CultureInfo.InvariantCulture); } catch { converted = null; }
                                                 }
                                             }
                                         }
@@ -2758,7 +1284,7 @@ namespace RecoTool.Services
                             // Normalize date-like strings for specific DTOs
                             if (typeof(T) == typeof(ReconciliationViewData))
                             {
-                                try { NormalizeDwingsDateStrings(item as ReconciliationViewData); } catch { }
+                                try { DwingsDateHelper.NormalizeDwingsDateStrings(item as ReconciliationViewData); } catch { }
                             }
 
                             results.Add(item);
@@ -2777,80 +1303,6 @@ namespace RecoTool.Services
             catch { }
 
             return results;
-        }
-
-        /// <summary>
-        /// Normalize DWINGS string date fields on ReconciliationViewData to yyyy-MM-dd if parseable.
-        /// </summary>
-        private static void NormalizeDwingsDateStrings(ReconciliationViewData dto)
-        {
-            if (dto == null) return;
-
-            string Norm(string s)
-            {
-                if (string.IsNullOrWhiteSpace(s)) return s;
-                if (TryParseDwingsDate(s, out var dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("it-IT"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                return s;
-            }
-
-            // DWINGS Invoice date-like strings
-            dto.I_START_DATE = Norm(dto.I_START_DATE);
-            dto.I_END_DATE = Norm(dto.I_END_DATE);
-            dto.I_REQUESTED_EXECUTION_DATE = Norm(dto.I_REQUESTED_EXECUTION_DATE);
-
-            // DWINGS Guarantee date-like strings
-            dto.G_EVENT_EFFECTIVEDATE = Norm(dto.G_EVENT_EFFECTIVEDATE);
-            dto.G_ISSUEDATE = Norm(dto.G_ISSUEDATE);
-            dto.G_EXPIRYDATE = Norm(dto.G_EXPIRYDATE);
-            dto.G_CANCELLATIONDATE = Norm(dto.G_CANCELLATIONDATE);
-        }
-
-        /// <summary>
-        /// Parse DWINGS textual date formats such as "30-APR-22" or "30-APR-2022" and other common variants.
-        /// </summary>
-        private static bool TryParseDwingsDate(string input, out DateTime dt)
-        {
-            dt = default;
-            if (string.IsNullOrWhiteSpace(input)) return false;
-
-            var s = input.Trim();
-            // Replace multiple spaces and normalize dashes
-            s = Regex.Replace(s, "[\u2013\u2014\\-]", "-");
-            s = Regex.Replace(s, "\\s+", " ").Trim();
-
-            // Try exact formats with English month abbreviations
-            var formats = new[]
-            {
-                "dd-MMM-yy",
-                "dd-MMM-yyyy",
-                "d-MMM-yy",
-                "d-MMM-yyyy",
-                "dd/MM/yy",
-                "dd/MM/yyyy",
-                "d/M/yy",
-                "d/M/yyyy",
-                "yyyy-MM-dd",
-                "dd.MM.yyyy",
-                "d.MM.yyyy",
-            };
-
-            if (DateTime.TryParseExact(s, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
-                return true;
-
-            // Fallback generic parses
-            if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt)) return true;
-            if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out dt)) return true;
-            if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("it-IT"), DateTimeStyles.None, out dt)) return true;
-
-            // Try uppercasing month abbreviations to help parsing
-            var up = s.ToUpperInvariant();
-            if (!ReferenceEquals(up, s) && DateTime.TryParseExact(up, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
-                return true;
-
-            return false;
         }
     }
     #endregion

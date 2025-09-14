@@ -8,7 +8,7 @@
         xmlns:lvc="clr-namespace:LiveCharts.Wpf;assembly=LiveCharts.Wpf"
         mc:Ignorable="d"
         Title="RecoTool" Height="900" Width="1600" WindowStartupLocation="CenterScreen" WindowStyle="None" 
-        AllowsTransparency="True" ResizeMode="CanResizeWithGrip" Background="Transparent">
+        AllowsTransparency="True" ResizeMode="CanResizeWithGrip" Background="Transparent" WindowState="Maximized">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
         <!-- Shadows -->

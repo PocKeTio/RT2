@@ -10,7 +10,7 @@
         </Grid.RowDefinitions>
 
         <DockPanel Grid.Row="0" Margin="10">
-            <TextBlock Text="Reconciliations with Action = TRIGGER (IsDeleted = false)" FontWeight="Bold" FontSize="14"/>
+            <TextBlock Text="Receivable with Action = TRIGGER and Status = PENDING" FontWeight="Bold" FontSize="14"/>
         </DockPanel>
 
         <DataGrid x:Name="GridReconciliations" Grid.Row="1" Margin="10" AutoGenerateColumns="False"
@@ -28,7 +28,7 @@
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="10" HorizontalAlignment="Right">
             <ProgressBar x:Name="Progress" Width="250" Height="18" Margin="0,0,10,0"/>
-            <Button x:Name="BulkButton" Content="Bulk Red Buttons" Width="160" Height="28" Click="BulkButton_Click"/>
+            <Button x:Name="BulkButton" Content="Bulk Blue Buttons" Width="160" Height="28" Click="BulkButton_Click"/>
         </StackPanel>
     </Grid>
 </Window>

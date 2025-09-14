@@ -93,36 +93,11 @@ namespace RecoTool.Models
         /// </summary>
         /// <param name="invoiceId">ID de l'invoice à rechercher</param>
         /// <returns>True si correspondance trouvée</returns>
-        public bool MatchesInvoiceId(string invoiceId)
+        public bool SearchGuaranteeId(string guaranteeID)
         {
-            return INVOICE_ID == invoiceId ||
-                   SENDER_REFERENCE == invoiceId ||
-                   RECEIVER_REFERENCE == invoiceId ||
-                   BUSINESS_CASE_REFERENCE == invoiceId;
-        }
-    }
-
-    /// <summary>
-    /// Classe utilitaire pour extraire l'ID d'invoice depuis les données Ambre
-    /// Format attendu: BGIYYYYMMXXXXXXX
-    /// </summary>
-    public static class InvoiceIdExtractor
-    {
-        /// <summary>
-        /// Extrait l'ID d'invoice depuis un libellé ou référence
-        /// </summary>
-        /// <param name="text">Texte contenant potentiellement un ID d'invoice</param>
-        /// <returns>ID d'invoice si trouvé, null sinon</returns>
-        public static string ExtractInvoiceId(string text)
-        {
-            if (string.IsNullOrEmpty(text))
-                return null;
-
-            // Pattern pour BGI + année (4 chiffres) + mois (2 chiffres) + numéro (7 chiffres)
-            var regex = new System.Text.RegularExpressions.Regex(@"BGI\d{13}");
-            var match = regex.Match(text);
-            
-            return match.Success ? match.Value : null;
+            return SENDER_REFERENCE == guaranteeID ||
+                   RECEIVER_REFERENCE == guaranteeID ||
+                   BUSINESS_CASE_REFERENCE == guaranteeID;
         }
     }
 }

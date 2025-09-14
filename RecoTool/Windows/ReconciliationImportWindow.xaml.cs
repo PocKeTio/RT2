@@ -717,7 +717,7 @@ namespace RecoTool.Windows
                 var ambrePath = _offlineFirstService.GetLocalAmbreDatabasePath();
                 if (string.IsNullOrWhiteSpace(ambrePath) || !File.Exists(ambrePath))
                     throw new InvalidOperationException("Local AMBRE database not found. Please refresh AMBRE for the current country.");
-                var ambreConnStr = $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={ambrePath};";
+                var ambreConnStr = RecoTool.Services.DbConn.AceConn(ambrePath);
                 using (var conn = new OleDbConnection(ambreConnStr))
                 {
                     await conn.OpenAsync();

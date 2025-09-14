@@ -90,12 +90,17 @@ namespace RecoTool.Windows
                             }
                             catch { /* best effort UI */ }
 
+                            // Temporarily enable background pushes for explicit app-close push
+                            bool prevAllow = false;
+                            try { prevAllow = _offlineFirstService.AllowBackgroundPushes; _offlineFirstService.AllowBackgroundPushes = true; } catch { }
                             var pushTask = _offlineFirstService?.PushReconciliationIfPendingAsync(cid);
                             if (pushTask != null)
                             {
                                 // Always sync fully if there are pending operations before closing
                                 await pushTask;
                             }
+                            // Restore policy
+                            try { _offlineFirstService.AllowBackgroundPushes = prevAllow; } catch { }
                         }
                         catch { /* ignore on shutdown */ }
                         finally
@@ -519,7 +524,7 @@ namespace RecoTool.Windows
                 monitor.NetworkAvailabilityChanged += (online) =>
                 {
                     Dispatcher.Invoke(() =>
-                    {
+               {
                         IsOffline = !online;
                         if (online)
                         {
@@ -545,7 +550,11 @@ namespace RecoTool.Windows
                 var cid = _currentCountryId;
                 if (string.IsNullOrWhiteSpace(cid)) return;
                 if (_isCountryInitializing) return;
-                _ = _offlineFirstService.PushReconciliationIfPendingAsync(cid);
+                // Honor global policy: do not push if background pushes are disabled
+                if (_offlineFirstService != null && _offlineFirstService.AllowBackgroundPushes)
+                {
+                    _ = _offlineFirstService.PushReconciliationIfPendingAsync(cid);
+                }
             }
             catch { }
         }
@@ -695,8 +704,19 @@ namespace RecoTool.Windows
                         NetworkStatusBrush = online ? Brushes.MediumSeaGreen : Brushes.OrangeRed;
                     }
                     catch { }
-                    // Kick a quick background push check so the Sync status indicator updates if there are pending changes
-                    try { TryBackgroundPush(); } catch { }
+                    // If policy allows, perform a one-shot push right after country change (without enabling background pushes)
+                    try
+                    {
+                        var policy = RecoTool.App.ServiceProvider?.GetService(typeof(RecoTool.Services.Policies.ISyncPolicy)) as RecoTool.Services.Policies.ISyncPolicy;
+                        if (policy != null && policy.ShouldSyncOnCountryChange)
+                        {
+                            bool prev = false;
+                            try { prev = _offlineFirstService.AllowBackgroundPushes; _offlineFirstService.AllowBackgroundPushes = true; } catch { }
+                            try { await _offlineFirstService.PushReconciliationIfPendingAsync(_currentCountryId); } catch { }
+                            try { _offlineFirstService.AllowBackgroundPushes = prev; } catch { }
+                        }
+                    }
+                    catch { }
                 }
                 finally
                 {
@@ -909,6 +929,20 @@ namespace RecoTool.Windows
                 // Recréer les services avec la nouvelle chaîne
                 _ambreImportService = new AmbreImportService(_offlineFirstService);
                 _reconciliationService = new ReconciliationService(connectionString, user, _countries, _offlineFirstService);
+
+                // Pré-charger DWINGS et la vue de réconciliation par défaut pour le pays sélectionné
+                try
+                {
+                    onProgress?.Invoke(97, "Preloading DWINGS data...");
+                    var dwSvc = new RecoTool.Services.DwingsService(_offlineFirstService);
+                    await dwSvc.PrimeCachesAsync().ConfigureAwait(false);
+
+                    onProgress?.Invoke(98, "Preloading reconciliation view...");
+                    // Warm the default view cache (no filter, dashboardOnly=false). Subsequent UI opens are instant.
+                    await _reconciliationService.GetReconciliationViewAsync(countryId, null, false).ConfigureAwait(false);
+                }
+                catch { /* best-effort warm-up */ }
+
                 IsOffline = false; // services prêts -> ONLINE
                 OperationalDataStatus = "ONLINE";
                 SetReferentialState("OK", Brushes.DarkGreen, true);

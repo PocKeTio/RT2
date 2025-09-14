@@ -17,6 +17,7 @@ using System.Threading;
 using Excel = Microsoft.Office.Interop.Excel;
 using System.Runtime.InteropServices;
 using System.Globalization;
+using RecoTool.Services.DTOs;
 
 namespace RecoTool.Windows
 {
@@ -30,6 +31,7 @@ namespace RecoTool.Windows
 
         private readonly ReconciliationService _reconciliationService;
         private readonly OfflineFirstService _offlineFirstService;
+        private readonly KpiSnapshotService _kpiSnapshotService;
         private ExportService _exportService;
         private DateTime _startDate;
         private DateTime _endDate;
@@ -103,7 +105,11 @@ namespace RecoTool.Windows
             _offlineFirstService = offlineFirstService ?? App.ServiceProvider?.GetRequiredService<OfflineFirstService>();
             if (_reconciliationService != null)
             {
-                _exportService = new ExportService(_reconciliationService);
+                _exportService = new ExportService(_reconciliationService, new ReferentialService(_offlineFirstService, _reconciliationService?.CurrentUser));
+            }
+            if (_offlineFirstService != null && _reconciliationService != null)
+            {
+                _kpiSnapshotService = new KpiSnapshotService(_offlineFirstService, _reconciliationService);
             }
 
             // Mettre à jour les bindings dépendants du pays courant
@@ -699,7 +705,7 @@ namespace RecoTool.Windows
                 var fullPath = Path.Combine(OutputPath, fileName);
 
                 // Fetch snapshots in range
-                var table = await _reconciliationService.GetKpiSnapshotsAsync(StartDate.Date, EndDate.Date, CurrentCountry.CNT_Id);
+                var table = await _kpiSnapshotService.GetKpiSnapshotsAsync(StartDate.Date, EndDate.Date, CurrentCountry.CNT_Id);
 
                 // Write Excel (.xlsx)
                 await WriteDataTableToExcelAsync(table, fullPath);

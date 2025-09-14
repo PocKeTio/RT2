@@ -12,6 +12,7 @@ using RecoTool.Models;
 using RecoTool.Services;
 using RecoTool.Helpers;
 using System.Text;
+using RecoTool.Services.DTOs;
 
 namespace RecoTool.UI.Views.Windows
 {
@@ -643,7 +644,7 @@ namespace RecoTool.UI.Views.Windows
                 var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
                 var g = guarantees.FirstOrDefault(x => string.Equals(x.GUARANTEE_ID, key, StringComparison.OrdinalIgnoreCase));
 
-                IEnumerable<RecoTool.Services.ReconciliationService.DwingsInvoiceDto> related = Enumerable.Empty<RecoTool.Services.ReconciliationService.DwingsInvoiceDto>();
+                IEnumerable<DwingsInvoiceDto> related = Enumerable.Empty<DwingsInvoiceDto>();
 
                 if (g != null)
                 {
@@ -690,7 +691,7 @@ namespace RecoTool.UI.Views.Windows
 
             // Invoices by BGPMT/BGI/Business Case
             var list = await _reconciliationService.GetDwingsInvoicesAsync();
-            IEnumerable<RecoTool.Services.ReconciliationService.DwingsInvoiceDto> filtered = list;
+            IEnumerable<DwingsInvoiceDto> filtered = list;
             if (typeItem.StartsWith("BGPMT", StringComparison.OrdinalIgnoreCase))
             {
                 filtered = filtered.Where(i => string.Equals(i.BGPMT, key, StringComparison.OrdinalIgnoreCase));

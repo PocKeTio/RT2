@@ -79,20 +79,50 @@
     <Compile Include="App.xaml.cs">
       <DependentUpon>App.xaml</DependentUpon>
     </Compile>
-    <Compile Include="Converters\BoolToPendingDoneConverter.cs" />
+    <Compile Include="Services\Ambre\AmbreConfigurationLoader.cs" />
+    <Compile Include="Services\Ambre\AmbreDatabaseSynchronizer.cs" />
+    <Compile Include="Services\Ambre\AmbreDataProcessor.cs" />
+    <Compile Include="Services\Ambre\AmbreImportService.cs" />
+    <Compile Include="Services\Ambre\AmbreImportValidator.cs" />
+    <Compile Include="Services\Ambre\AmbreReconciliationUpdater.cs" />
+    <Compile Include="Services\Ambre\DwingsReferenceResolver.cs" />
+    <Compile Include="Infrastructure\DataAccess\DbConn.cs" />
+    <Compile Include="UI\Converters\BoolToPendingDoneConverter.cs" />
+    <Compile Include="Domain\Filters\FilterPreset.cs" />
     <Compile Include="Helpers\DwingsLinkingHelper.cs" />
+    <Compile Include="Infrastructure\Logging\LogHelper.cs" />
     <Compile Include="Services\DatabaseRecreationService.cs" />
     <Compile Include="Services\Enums\IncidentType.cs" />
     <Compile Include="Services\Enums\RiskReason.cs" />
+    <Compile Include="Services\Helpers\DwingsDateHelper.cs" />
     <Compile Include="Services\Helpers\EnumHelper.cs" />
+    <Compile Include="Services\Helpers\ReconciliationViewEnricher.cs" />
+    <Compile Include="Infrastructure\DataAccess\OleDbSchemaHelper.cs" />
+    <Compile Include="Infrastructure\DataAccess\OleDbUtils.cs" />
+    <Compile Include="Infrastructure\Logging\DiagLog.cs" />
     <Compile Include="Services\ExportService.cs" />
-    <Compile Include="Helpers\ExcelHelper.cs" />
-    <Compile Include="Helpers\ValidationHelper.cs" />
+    <Compile Include="Infrastructure\IO\ExcelHelper.cs" />
+    <Compile Include="Services\Helpers\ValidationHelper.cs" />
     <Compile Include="Models\ImportChanges.cs" />
     <Compile Include="Models\UserFieldsPreference.cs" />
     <Compile Include="Services\DTOs\ImportResult.cs" />
+    <Compile Include="Services\DTOs\DwingsInvoiceDto.cs" />
+    <Compile Include="Services\DTOs\DwingsGuaranteeDto.cs" />
+    <Compile Include="Services\DTOs\KpiDailySnapshotDto.cs" />
+    <Compile Include="Services\DwingsService.cs" />
+    <Compile Include="Services\KpiSnapshotService.cs" />
+    <Compile Include="Services\LookupService.cs" />
+    <Compile Include="Services\Rules\ReconciliationRules.cs" />
+    <Compile Include="Services\ReferentialService.cs" />
+    <Compile Include="Services\Queries\ReconciliationViewQueryBuilder.cs" />
+    <Compile Include="Services\UserViewPreferenceService.cs" />
+    <Compile Include="Services\OptionsService.cs" />
     <Compile Include="Services\SyncMonitorService.cs" />
     <Compile Include="Services\Enums\TransactionType.cs" />
+    <Compile Include="Services\UserFieldUpdateService.cs" />
+    <Compile Include="UI\Models\OptionItem.cs" />
+    <Compile Include="UI\Models\UserOption.cs" />
+    <Compile Include="UI\Helpers\VisualTreeHelpers.cs" />
     <Compile Include="Windows\DwingsButtonsWindow.xaml.cs">
       <DependentUpon>DwingsButtonsWindow.xaml</DependentUpon>
     </Compile>
@@ -105,21 +135,42 @@
     <Compile Include="Models\Reconciliation.cs" />
     <Compile Include="Models\ReferentialModels.cs" />
     <Compile Include="Services\Enums\ActionType.cs" />
-    <Compile Include="Services\AmbreImportService.cs" />
     <Compile Include="Services\Enums\KPIType.cs" />
-    <Compile Include="Services\OfflineFirstService.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.Paths.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.Diagnostics.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.CountryContext.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.Events.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.Schema.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.Maintenance.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.Locks.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.IO.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.Snapshots.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.SyncGates.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.Push.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.SyncOperations.cs" />
+    <Compile Include="Services\OfflineFirst\OfflineFirstService.ChangeLog.cs" />
     <Compile Include="Services\ReconciliationService.cs" />
     <Compile Include="Services\BackgroundTaskQueue.cs" />
     <Compile Include="Services\UserFilterService.cs" />
     <Compile Include="Services\DTOs\ReconciliationViewData.cs" />
     <Compile Include="Services\TransformationService.cs" />
+    <Compile Include="Services\Policies\ISyncPolicy.cs" />
+    <Compile Include="Services\Policies\SyncPolicy.cs" />
+    <Compile Include="UI\ViewModels\ReconciliationPageViewModel.cs" />
+    <Compile Include="UI\ViewModels\ReconciliationViewViewModel.cs" />
+    <Compile Include="Domain\Repositories\IReconciliationRepository.cs" />
+    <Compile Include="Infrastructure\Repositories\ReconciliationRepository.cs" />
+    <Compile Include="Domain\Filters\FilterSqlHelper.cs" />
+    <Compile Include="Domain\Filters\FilterState.cs" />
+    <Compile Include="Domain\Filters\FilterBuilder.cs" />
     <Compile Include="Windows\HomePage.xaml.cs">
       <DependentUpon>HomePage.xaml</DependentUpon>
     </Compile>
     <Compile Include="Windows\ImportAmbreWindow.xaml.cs">
       <DependentUpon>ImportAmbreWindow.xaml</DependentUpon>
     </Compile>
-    <Compile Include="Windows\Interface\IRefreshable.cs" />
+    <Compile Include="UI\Interfaces\IRefreshable.cs" />
     <Compile Include="Windows\ProgressWindow.xaml.cs">
       <DependentUpon>ProgressWindow.xaml</DependentUpon>
     </Compile>
@@ -129,6 +180,25 @@
     <Compile Include="Windows\ReconciliationPage.xaml.cs">
       <DependentUpon>ReconciliationPage.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Windows\ReconciliationView\Export.cs" />
+    <Compile Include="Windows\ReconciliationView\KpiStatus.cs" />
+    <Compile Include="Windows\ReconciliationView\Layout.cs" />
+    <Compile Include="Windows\ReconciliationView\Selection.cs" />
+    <Compile Include="Windows\ReconciliationView\Paging.cs" />
+    <Compile Include="Windows\ReconciliationView\Filters.cs" />
+    <Compile Include="Windows\ReconciliationView\RowActions.cs" />
+    <Compile Include="Windows\ReconciliationView\Options.cs" />
+    <Compile Include="Windows\ReconciliationView\MatchedPopup.cs" />
+    <Compile Include="Windows\ReconciliationView\SavedFilters.cs" />
+    <Compile Include="Windows\ReconciliationView\Converters.cs" />
+    <Compile Include="Windows\ReconciliationView\Logging.cs" />
+    <Compile Include="Windows\ReconciliationView\Title.cs" />
+    <Compile Include="Windows\ReconciliationView\Events.cs" />
+    <Compile Include="Windows\ReconciliationView\Filtering.cs" />
+    <Compile Include="Windows\ReconciliationView\DataLoading.cs" />
+    <Compile Include="Windows\ReconciliationView\Editing.cs" />
+    <Compile Include="Windows\ReconciliationView\SyncAndTimers.cs" />
+    <Compile Include="Windows\ReconciliationView\FilterSqlBridge.cs" />
     <Compile Include="Windows\ReconciliationView.xaml.cs">
       <DependentUpon>ReconciliationView.xaml</DependentUpon>
     </Compile>

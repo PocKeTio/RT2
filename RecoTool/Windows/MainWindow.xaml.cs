@@ -1172,6 +1172,8 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
 
                 Mouse.OverrideCursor = Cursors.Wait;
                 var reconciliationPage = App.ServiceProvider.GetRequiredService<ReconciliationPage>();
+                // Ensure the page's loading indicator is visible immediately while data loads
+                try { reconciliationPage.IsLoading = true; } catch { }
                 NavigateToPage(reconciliationPage);
                 UpdateNavigationButtons("Reconciliation");
                 // Wait a bit for the page to finish its initial refresh if it exposes it

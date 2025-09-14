@@ -775,6 +775,9 @@ namespace RecoTool.Windows
                 }
                 // Démarrer le polling d'état du verrou
                 StartLockPolling();
+                // IMPORTANT: peupler immédiatement la liste Account (Pivot/Receivable) à partir du référentiel pays
+                // avant les chargements asynchrones potentiellement lourds (filtres/vues, warm-up service)
+                try { UpdateTopFiltersFromData(); } catch { }
                 // Charger les listes (filtres/vues) et initialiser les combos de haut de page
                 _pageCts?.Dispose();
                 _pageCts = new CancellationTokenSource();
@@ -1293,23 +1296,11 @@ namespace RecoTool.Windows
 
         private async Task AddReconciliationView(bool asPopup = false)
         {
-            // Defensive: if DI did not inject the service (timing), try resolving now
             if (_reconciliationService == null)
             {
-                try
-                {
-                    _reconciliationService = RecoTool.App.ServiceProvider?.GetService(typeof(RecoTool.Services.ReconciliationService)) as RecoTool.Services.ReconciliationService;
-                }
-                catch { }
-                if (_reconciliationService == null)
-                {
-                    ShowWarning("Reconciliation service is not available.");
-                    return;
-                }
+                ShowWarning("Reconciliation service is not available.");
+                return;
             }
-
-            // Ensure top filters (Accounts/Status) reflect the current country just before opening
-            try { UpdateTopFiltersFromData(); } catch { }
 
             // Créer la vue et l'attacher aux services existants
             var view = new ReconciliationView(_reconciliationService, _offlineFirstService)

@@ -224,6 +224,31 @@ namespace RecoTool.Windows
         {
             InitializeComponent();
             DataContext = this;
+            // Safety net: if this control is constructed outside DI, resolve services now
+            try
+            {
+                if (_offlineFirstService == null)
+                {
+                    _offlineFirstService = RecoTool.App.ServiceProvider?.GetService(typeof(RecoTool.Services.OfflineFirstService)) as RecoTool.Services.OfflineFirstService;
+                }
+            }
+            catch { }
+            try
+            {
+                if (_reconciliationService == null)
+                {
+                    _reconciliationService = RecoTool.App.ServiceProvider?.GetService(typeof(RecoTool.Services.ReconciliationService)) as RecoTool.Services.ReconciliationService;
+                }
+            }
+            catch { }
+            try
+            {
+                if (_recoRepository == null)
+                {
+                    _recoRepository = RecoTool.App.ServiceProvider?.GetService(typeof(RecoTool.Domain.Repositories.IReconciliationRepository)) as RecoTool.Domain.Repositories.IReconciliationRepository;
+                }
+            }
+            catch { }
             InitializeData();
             Loaded += ReconciliationPage_Loaded;
             Unloaded += ReconciliationPage_Unloaded;
@@ -1443,13 +1468,16 @@ namespace RecoTool.Windows
             // No synchronization when opening a view: preload from service, then initialize and refresh
             var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
             var backendSql = _currentFilter;
+            // Freeze local references for lambda capture (resolve from DI as fallback)
+            var localRepo = _recoRepository ?? (RecoTool.App.ServiceProvider?.GetService(typeof(RecoTool.Domain.Repositories.IReconciliationRepository)) as RecoTool.Domain.Repositories.IReconciliationRepository);
+            var localSvc = _reconciliationService ?? (RecoTool.App.ServiceProvider?.GetService(typeof(RecoTool.Services.ReconciliationService)) as RecoTool.Services.ReconciliationService);
             _ = System.Threading.Tasks.Task.Run(async () =>
             {
                 try
                 {
-                    var list = repo != null
-                        ? await repo.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false)
-                        : await (recoSvc ?? _reconciliationService).GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
+                    var list = localRepo != null
+                        ? await localRepo.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false)
+                        : await localSvc.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
                     await view.Dispatcher.InvokeAsync(() =>
                     {
                         try { view.InitializeWithPreloadedData(list, backendSql); } catch { }

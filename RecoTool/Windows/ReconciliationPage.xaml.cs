@@ -1296,14 +1296,18 @@ namespace RecoTool.Windows
 
         private async Task AddReconciliationView(bool asPopup = false)
         {
-            if (_reconciliationService == null)
+            // Try late resolution if the field was not injected (e.g., instantiated via default ctor)
+            var recoSvc = _reconciliationService ?? (RecoTool.App.ServiceProvider?.GetService(typeof(RecoTool.Services.ReconciliationService)) as RecoTool.Services.ReconciliationService);
+            var repo = _recoRepository; // may be null
+
+            if (recoSvc == null && repo == null)
             {
                 ShowWarning("Reconciliation service is not available.");
                 return;
             }
 
             // Créer la vue et l'attacher aux services existants
-            var view = new ReconciliationView(_reconciliationService, _offlineFirstService)
+            var view = new ReconciliationView(recoSvc, _offlineFirstService)
             {
                 Margin = new Thickness(0)
             };
@@ -1443,9 +1447,9 @@ namespace RecoTool.Windows
             {
                 try
                 {
-                    var list = _recoRepository != null
-                        ? await _recoRepository.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false)
-                        : await _reconciliationService.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
+                    var list = repo != null
+                        ? await repo.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false)
+                        : await (recoSvc ?? _reconciliationService).GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
                     await view.Dispatcher.InvokeAsync(() =>
                     {
                         try { view.InitializeWithPreloadedData(list, backendSql); } catch { }

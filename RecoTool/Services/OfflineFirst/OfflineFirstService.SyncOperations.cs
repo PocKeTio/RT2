@@ -327,10 +327,17 @@ namespace RecoTool.Services
                             if (hasLM && nLm.HasValue)
                             {
                                 var lLm = loc.lm;
-                                // Fallback to the table-wide max local LM if this row's LM is null to avoid false positives across sessions
+                                // Fallback to the table-wide max local LM if this row's LM is null
                                 var lLmEff = lLm.HasValue ? lLm : lastLocalLm;
-                                if (!lLmEff.HasValue || nLm.Value > lLmEff.Value)
-                                    shouldApply = true;
+                                if (lLmEff.HasValue)
+                                {
+                                    // Tolerance to absorb timezone/precision differences between local and network DBs
+                                    var tolerance = TimeSpan.FromSeconds(2);
+                                    var delta = nLm.Value - lLmEff.Value;
+                                    if (delta > tolerance)
+                                        shouldApply = true;
+                                }
+                                // If no effective local LM, skip LM path and rely on Version comparison below
                             }
                             // If not newer by LM, compare by Version
                             if (!shouldApply && hasVer)

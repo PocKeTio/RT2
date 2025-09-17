@@ -3446,7 +3446,9 @@ namespace RecoTool.Services
                                 // Vérifier les changements en attente dans la base de lock
                                 var tracker = new OfflineFirstAccess.ChangeTracking.ChangeTracker(GetChangeLogConnectionString(_currentCountryId));
                                 var unsynced = await tracker.GetUnsyncedChangesAsync();
-                                if ((unsynced == null || !unsynced.Any()) && !remoteHasChanges)
+                                // If files are identical and there are no local pending changes, we can safely skip sync regardless of remoteHasChanges
+                                // This avoids redundant row-level reapplication after a fresh local copy or after restart
+                                if (unsynced == null || !unsynced.Any())
                                 {
                                     onProgress?.Invoke(100, "Bases identiques (RECON) - aucune synchronisation nécessaire.");
                                     return new SyncResult { Success = true, Message = "No-op (identique)" };

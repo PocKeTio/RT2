@@ -1024,6 +1024,27 @@ namespace RecoTool.Windows
 
                 await provider.ApplyChangesAsync("T_Reconciliation", toApply);
 
+                // Publish local reconciliation DB to network and mark changes as synced (one-time import flow)
+                try
+                {
+                    var countryId = _offlineFirstService?.CurrentCountryId;
+                    if (!string.IsNullOrWhiteSpace(countryId))
+                    {
+                        UpdateProgress(97, "Publishing reconciliation changes to network...");
+                        LogMessage("Publishing local reconciliation DB to network (one-time import)...");
+                        await _offlineFirstService.CopyLocalToNetworkAsync(countryId);
+                        await _offlineFirstService.MarkAllLocalChangesAsSyncedAsync(countryId);
+                        LogMessage("Publication completed; local ChangeLog entries marked as synced.");
+
+                        // Invalidate view cache so next loads show updated values
+                        try { ReconciliationService.InvalidateReconciliationViewCache(countryId); } catch { }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Warning: failed to publish to network after import: {ex.Message}", isError: true);
+                }
+
                 UpdateProgress(100, "Completed");
                 LogMessage($"Import completed. Updated rows: {toApply.Count:N0}");
 

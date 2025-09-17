@@ -39,7 +39,7 @@
         </Grid.RowDefinitions>
 
         <!-- Header - Optimisé pour un seul ruban -->
-        <Border Grid.Row="0" Background="{DynamicResource BNPMainGreenBrush}" Padding="12,8" CornerRadius="8,8,0,0" Effect="{StaticResource StandardShadow}">
+        <Border x:Name="HeaderBorder" Grid.Row="0" Background="{DynamicResource BNPMainGreenBrush}" Padding="12,8" CornerRadius="8,8,0,0" Effect="{StaticResource StandardShadow}">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -982,8 +982,6 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Internal Invoice Ref" Binding="{Binding InternalInvoiceReference}" Width="140"/>
-                            <!-- DWINGS Invoice Payment Method -->
-                            <DataGridTextColumn Header="Payment Method" Binding="{Binding I_PAYMENT_METHOD}" Width="120" SortMemberPath="I_PAYMENT_METHOD"/>
 
                             <!-- First Claim Date with DatePicker -->
                             <DataGridTemplateColumn Header="First Claim Date" Width="130" SortMemberPath="FirstClaimDate">
@@ -1165,6 +1163,7 @@
                             <DataGridTextColumn Header="StartDate" Binding="{Binding I_START_DATE}" Width="110" IsReadOnly="True"/>
                             <DataGridTextColumn Header="EndDate" Binding="{Binding I_END_DATE}" Width="110" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Invoice Status" Binding="{Binding I_T_INVOICE_STATUS}" Width="120" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Payment Method" Binding="{Binding I_PAYMENT_METHOD}" Width="140" IsReadOnly="True" SortMemberPath="I_PAYMENT_METHOD"/>
 
                         </DataGrid.Columns>
                     </DataGrid>

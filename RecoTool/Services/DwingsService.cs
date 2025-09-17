@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data.OleDb;
+using System.Data.Common;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -102,105 +103,79 @@ namespace RecoTool.Services
             using (var connection = new OleDbConnection(dwCs))
             {
                 await connection.OpenAsync().ConfigureAwait(false);
-                using (var cmd = new OleDbCommand(@"SELECT INVOICE_ID, T_INVOICE_STATUS, BILLING_AMOUNT, REQUESTED_AMOUNT, FINAL_AMOUNT, BILLING_CURRENCY, BGPMT, PAYMENT_METHOD, SENDER_REFERENCE, RECEIVER_REFERENCE, BUSINESS_CASE_REFERENCE, BUSINESS_CASE_ID, START_DATE, END_DATE, DEBTOR_PARTY_NAME, CREDITOR_PARTY_NAME FROM T_DW_Data", connection))
+                using (var cmd = new OleDbCommand(@"SELECT * FROM T_DW_Data", connection))
                 using (var rd = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
                 {
                     while (await rd.ReadAsync().ConfigureAwait(false))
                     {
                         invoices.Add(new DwingsInvoiceDto
                         {
-                            INVOICE_ID = rd["INVOICE_ID"]?.ToString(),
-                            T_INVOICE_STATUS = rd["T_INVOICE_STATUS"]?.ToString(),
-                            BILLING_AMOUNT = TryToDecimal(rd["BILLING_AMOUNT"]),
-                            REQUESTED_AMOUNT = TryToDecimal(rd["REQUESTED_AMOUNT"]),
-                            FINAL_AMOUNT = TryToDecimal(rd["FINAL_AMOUNT"]),
-                            BILLING_CURRENCY = rd["BILLING_CURRENCY"]?.ToString(),
-                            BGPMT = rd["BGPMT"]?.ToString(),
-                            PAYMENT_METHOD = rd["PAYMENT_METHOD"]?.ToString(),
-                            SENDER_REFERENCE = rd["SENDER_REFERENCE"]?.ToString(),
-                            RECEIVER_REFERENCE = rd["RECEIVER_REFERENCE"]?.ToString(),
-                            BUSINESS_CASE_REFERENCE = rd["BUSINESS_CASE_REFERENCE"]?.ToString(),
-                            BUSINESS_CASE_ID = rd["BUSINESS_CASE_ID"]?.ToString(),
-                            START_DATE = TryToDate(rd["START_DATE"]),
-                            END_DATE = TryToDate(rd["END_DATE"]),
-                            DEBTOR_PARTY_NAME = rd["DEBTOR_PARTY_NAME"]?.ToString(),
-                            CREDITOR_PARTY_NAME = rd["CREDITOR_PARTY_NAME"]?.ToString(),
+                            INVOICE_ID = TryToStringSafe(rd, "INVOICE_ID"),
+                            T_INVOICE_STATUS = TryToStringSafe(rd, "T_INVOICE_STATUS"),
+                            BILLING_AMOUNT = TryToDecimal(TryGet(rd, "BILLING_AMOUNT")),
+                            REQUESTED_AMOUNT = TryToDecimal(TryGet(rd, "REQUESTED_AMOUNT")),
+                            FINAL_AMOUNT = TryToDecimal(TryGet(rd, "FINAL_AMOUNT")),
+                            BILLING_CURRENCY = TryToStringSafe(rd, "BILLING_CURRENCY"),
+                            BGPMT = TryToStringSafe(rd, "BGPMT"),
+                            PAYMENT_METHOD = TryToStringSafe(rd, "PAYMENT_METHOD"),
+                            T_PAYMENT_REQUEST_STATUS = TryToStringSafe(rd, "T_PAYMENT_REQUEST_STATUS"),
+                            SENDER_REFERENCE = TryToStringSafe(rd, "SENDER_REFERENCE"),
+                            RECEIVER_REFERENCE = TryToStringSafe(rd, "RECEIVER_REFERENCE"),
+                            SENDER_NAME = TryToStringSafe(rd, "SENDER_NAME"),
+                            RECEIVER_NAME = TryToStringSafe(rd, "RECEIVER_NAME"),
+                            BUSINESS_CASE_REFERENCE = TryToStringSafe(rd, "BUSINESS_CASE_REFERENCE"),
+                            BUSINESS_CASE_ID = TryToStringSafe(rd, "BUSINESS_CASE_ID"),
+                            SENDER_ACCOUNT_NUMBER = TryToStringSafe(rd, "SENDER_ACCOUNT_NUMBER"),
+                            SENDER_ACCOUNT_BIC = TryToStringSafe(rd, "SENDER_ACCOUNT_BIC"),
+                            REQUESTED_EXECUTION_DATE = TryToDate(TryGet(rd, "REQUESTED_EXECUTION_DATE")),
+                            START_DATE = TryToDate(TryGet(rd, "START_DATE")),
+                            END_DATE = TryToDate(TryGet(rd, "END_DATE")),
+                            DEBTOR_PARTY_NAME = TryToStringSafe(rd, "DEBTOR_PARTY_NAME"),
+                            CREDITOR_PARTY_NAME = TryToStringSafe(rd, "CREDITOR_PARTY_NAME"),
                         });
                     }
                 }
 
-                using (var cmdG = new OleDbCommand(@"SELECT 
-                            GUARANTEE_ID,
-                            GUARANTEE_STATUS,
-                            OUTSTANDING_AMOUNT,
-                            CURRENCYNAME,
-                            NAME1,
-                            NAME2,
-                            GUARANTEE_TYPE,
-                            NATURE,
-                            EVENT_STATUS,
-                            EVENT_EFFECTIVEDATE,
-                            ISSUEDATE,
-                            OFFICIALREF,
-                            UNDERTAKINGEVENT,
-                            PROCESS,
-                            EXPIRYDATETYPE,
-                            EXPIRYDATE,
-                            PARTY_ID,
-                            PARTY_REF,
-                            SECONDARY_OBLIGOR,
-                            SECONDARY_OBLIGOR_NATURE,
-                            ROLE,
-                            COUNTRY,
-                            CENTRAL_PARTY_CODE,
-                            GROUPE,
-                            PREMIUM,
-                            BRANCH_CODE,
-                            BRANCH_NAME,
-                            OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY,
-                            CANCELLATIONDATE,
-                            CONTROLER,
-                            AUTOMATICBOOKOFF,
-                            NATUREOFDEAL
-                        FROM T_DW_Guarantee", connection))
+                using (var cmdG = new OleDbCommand(@"SELECT * FROM T_DW_Guarantee", connection))
                 using (var rdG = await cmdG.ExecuteReaderAsync().ConfigureAwait(false))
                 {
                     while (await rdG.ReadAsync().ConfigureAwait(false))
                     {
                         guarantees.Add(new DwingsGuaranteeDto
                         {
-                            GUARANTEE_ID = rdG["GUARANTEE_ID"]?.ToString(),
-                            GUARANTEE_STATUS = rdG["GUARANTEE_STATUS"]?.ToString(),
-                            OUTSTANDING_AMOUNT = TryToDecimal(rdG["OUTSTANDING_AMOUNT"]),
-                            CURRENCYNAME = rdG["CURRENCYNAME"]?.ToString(),
-                            NAME1 = rdG["NAME1"]?.ToString(),
-                            NAME2 = rdG["NAME2"]?.ToString(),
-                            GUARANTEE_TYPE = rdG["GUARANTEE_TYPE"]?.ToString(),
-                            NATURE = rdG["NATURE"]?.ToString(),
-                            EVENT_STATUS = rdG["EVENT_STATUS"]?.ToString(),
-                            EVENT_EFFECTIVEDATE = TryToDate(rdG["EVENT_EFFECTIVEDATE"]),
-                            ISSUEDATE = TryToDate(rdG["ISSUEDATE"]),
-                            OFFICIALREF = rdG["OFFICIALREF"]?.ToString(),
-                            UNDERTAKINGEVENT = rdG["UNDERTAKINGEVENT"]?.ToString(),
-                            PROCESS = rdG["PROCESS"]?.ToString(),
-                            EXPIRYDATETYPE = rdG["EXPIRYDATETYPE"]?.ToString(),
-                            EXPIRYDATE = TryToDate(rdG["EXPIRYDATE"]),
-                            PARTY_ID = rdG["PARTY_ID"]?.ToString(),
-                            PARTY_REF = rdG["PARTY_REF"]?.ToString(),
-                            SECONDARY_OBLIGOR = rdG["SECONDARY_OBLIGOR"]?.ToString(),
-                            SECONDARY_OBLIGOR_NATURE = rdG["SECONDARY_OBLIGOR_NATURE"]?.ToString(),
-                            ROLE = rdG["ROLE"]?.ToString(),
-                            COUNTRY = rdG["COUNTRY"]?.ToString(),
-                            CENTRAL_PARTY_CODE = rdG["CENTRAL_PARTY_CODE"]?.ToString(),
-                            GROUPE = rdG["GROUPE"]?.ToString(),
-                            PREMIUM = rdG["PREMIUM"]?.ToString(),
-                            BRANCH_CODE = rdG["BRANCH_CODE"]?.ToString(),
-                            BRANCH_NAME = rdG["BRANCH_NAME"]?.ToString(),
-                            OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY = rdG["OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY"]?.ToString(),
-                            CANCELLATIONDATE = TryToDate(rdG["CANCELLATIONDATE"]),
-                            CONTROLER = rdG["CONTROLER"]?.ToString(),
-                            AUTOMATICBOOKOFF = rdG["AUTOMATICBOOKOFF"]?.ToString(),
-                            NATUREOFDEAL = rdG["NATUREOFDEAL"]?.ToString(),
+                            GUARANTEE_ID = TryToStringSafe(rdG, "GUARANTEE_ID"),
+                            GUARANTEE_STATUS = TryToStringSafe(rdG, "GUARANTEE_STATUS"),
+                            OUTSTANDING_AMOUNT = TryToDecimal(TryGet(rdG, "OUTSTANDING_AMOUNT")),
+                            CURRENCYNAME = TryToStringSafe(rdG, "CURRENCYNAME"),
+                            NAME1 = TryToStringSafe(rdG, "NAME1"),
+                            NAME2 = TryToStringSafe(rdG, "NAME2"),
+                            GUARANTEE_TYPE = TryToStringSafe(rdG, "GUARANTEE_TYPE"),
+                            NATURE = TryToStringSafe(rdG, "NATURE"),
+                            EVENT_STATUS = TryToStringSafe(rdG, "EVENT_STATUS"),
+                            EVENT_EFFECTIVEDATE = TryToDate(TryGet(rdG, "EVENT_EFFECTIVEDATE")),
+                            ISSUEDATE = TryToDate(TryGet(rdG, "ISSUEDATE")),
+                            OFFICIALREF = TryToStringSafe(rdG, "OFFICIALREF"),
+                            LEGACYREF = TryToStringSafe(rdG, "LEGACYREF"),
+                            UNDERTAKINGEVENT = TryToStringSafe(rdG, "UNDERTAKINGEVENT"),
+                            PROCESS = TryToStringSafe(rdG, "PROCESS"),
+                            EXPIRYDATETYPE = TryToStringSafe(rdG, "EXPIRYDATETYPE"),
+                            EXPIRYDATE = TryToDate(TryGet(rdG, "EXPIRYDATE")),
+                            PARTY_ID = TryToStringSafe(rdG, "PARTY_ID"),
+                            PARTY_REF = TryToStringSafe(rdG, "PARTY_REF"),
+                            SECONDARY_OBLIGOR = TryToStringSafe(rdG, "SECONDARY_OBLIGOR"),
+                            SECONDARY_OBLIGOR_NATURE = TryToStringSafe(rdG, "SECONDARY_OBLIGOR_NATURE"),
+                            ROLE = TryToStringSafe(rdG, "ROLE"),
+                            COUNTRY = TryToStringSafe(rdG, "COUNTRY"),
+                            CENTRAL_PARTY_CODE = TryToStringSafe(rdG, "CENTRAL_PARTY_CODE"),
+                            GROUPE = TryToStringSafe(rdG, "GROUPE"),
+                            PREMIUM = TryToStringSafe(rdG, "PREMIUM"),
+                            BRANCH_CODE = TryToStringSafe(rdG, "BRANCH_CODE"),
+                            BRANCH_NAME = TryToStringSafe(rdG, "BRANCH_NAME"),
+                            OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY = TryToStringSafe(rdG, "OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY"),
+                            CANCELLATIONDATE = TryToDate(TryGet(rdG, "CANCELLATIONDATE")),
+                            CONTROLER = TryToStringSafe(rdG, "CONTROLER"),
+                            AUTOMATICBOOKOFF = TryToStringSafe(rdG, "AUTOMATICBOOKOFF"),
+                            NATUREOFDEAL = TryToStringSafe(rdG, "NATUREOFDEAL"),
                         });
                     }
                 }
@@ -219,6 +194,28 @@ namespace RecoTool.Services
         {
             if (o == null || o == DBNull.Value) return null;
             try { return Convert.ToDateTime(o, CultureInfo.InvariantCulture); } catch { return null; }
+        }
+
+        private static string TryToStringSafe(DbDataReader rd, string column)
+        {
+            try
+            {
+                int ord = rd.GetOrdinal(column);
+                if (ord < 0) return null;
+                return rd.IsDBNull(ord) ? null : rd.GetValue(ord)?.ToString();
+            }
+            catch { return null; }
+        }
+
+        private static object TryGet(DbDataReader rd, string column)
+        {
+            try
+            {
+                int ord = rd.GetOrdinal(column);
+                if (ord < 0) return null;
+                return rd.IsDBNull(ord) ? null : rd.GetValue(ord);
+            }
+            catch { return null; }
         }
     }
 }

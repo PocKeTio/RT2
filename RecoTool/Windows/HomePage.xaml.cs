@@ -12,6 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 using RecoTool.Models;
 using RecoTool.Services;
 using System.Reflection;
+using System.Diagnostics;
 using System.Windows.Media;
 using System.Text.Json;
 using System.Text;
@@ -691,6 +692,80 @@ namespace RecoTool.Windows
                 OnPropertyChanged();
             }
         }
+
+        private async void OpenHelp_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // Retrieve HelperFile path or URL from referential DB
+                if (_offlineFirstService == null)
+                {
+                    return;
+                }
+                var refService = new ReferentialService(_offlineFirstService);
+                string value = await refService.GetParamValueAsync("HelperFile");
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    // Try a few common variants if schema differs
+                    value = await refService.GetParamValueAsync("HELPERFILE")
+                         ?? await refService.GetParamValueAsync("HELP_FILE")
+                         ?? await refService.GetParamValueAsync("UserGuide")
+                         ?? await refService.GetParamValueAsync("GuideUtilisateur");
+                }
+
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    return;
+                }
+
+                // If it looks like a web URL, open in default browser
+                if (value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || value.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        Process.Start(new ProcessStartInfo(value) { UseShellExecute = true });
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        ShowError($"Cannot open help URL: {ex.Message}");
+                        return;
+                    }
+                }
+
+                // Otherwise treat as local/UNC file path. Expand environment variables just in case.
+                var path = Environment.ExpandEnvironmentVariables(value.Trim());
+                if (!System.IO.Path.IsPathRooted(path))
+                {
+                    try
+                    {
+                        // If not rooted, try relative to application base directory
+                        var baseDir = System.IO.Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                        path = System.IO.Path.GetFullPath(System.IO.Path.Combine(baseDir, path));
+                    }
+                    catch { }
+                }
+
+                if (!System.IO.File.Exists(path))
+                {
+                    return;
+                }
+
+                try
+                {
+                    Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    ShowError($"Cannot open help file: {ex.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Error opening help: {ex.Message}");
+            }
+        }
+        
 
         public List<string> ActionLabels
         {

@@ -1,0 +1,152 @@
+<Window x:Class="RecoTool.Windows.InvoiceFinderWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Invoice Finder" Height="720" Width="1200"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResizeWithGrip">
+    <DockPanel>
+        <!-- Filters Panel -->
+        <Border DockPanel.Dock="Top" Background="{DynamicResource BNPSectionBackground}" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10" Margin="8" CornerRadius="6">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <UniformGrid Rows="3" Columns="6" Margin="0" >
+                    <!-- Row 1: Invoice fields -->
+                    <StackPanel Margin="4">
+                        <TextBlock Text="INVOICE_ID" FontWeight="SemiBold"/>
+                        <TextBox x:Name="InvoiceIdText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="SENDER_NAME" FontWeight="SemiBold"/>
+                        <TextBox x:Name="SenderNameText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="RECEIVER_NAME" FontWeight="SemiBold"/>
+                        <TextBox x:Name="ReceiverNameText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="SENDER_REFERENCE" FontWeight="SemiBold"/>
+                        <TextBox x:Name="SenderRefText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="RECEIVER_REFERENCE" FontWeight="SemiBold"/>
+                        <TextBox x:Name="ReceiverRefText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="T_INVOICE_STATUS" FontWeight="SemiBold"/>
+                        <ComboBox x:Name="InvoiceStatusCombo" SelectionChanged="OnFilterChanged">
+                            <ComboBoxItem Content=""/>
+                            <ComboBoxItem Content="PAID"/>
+                            <ComboBoxItem Content="GENERATED"/>
+                        </ComboBox>
+                    </StackPanel>
+
+                    <!-- Row 2: Business Case / Methods -->
+                    <StackPanel Margin="4">
+                        <TextBlock Text="BUSINESS_CASE_REFERENCE / BUSINESS_CASE_ID" FontWeight="SemiBold"/>
+                        <TextBox x:Name="BusinessCaseText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="PAYMENT_METHOD" FontWeight="SemiBold"/>
+                        <TextBox x:Name="PaymentMethodText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="T_PAYMENT_REQUEST_STATUS" FontWeight="SemiBold"/>
+                        <TextBox x:Name="PaymentRequestStatusText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="BGPMT" FontWeight="SemiBold"/>
+                        <TextBox x:Name="BgpmtText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="REQUESTED_EXECUTION_DATE" FontWeight="SemiBold"/>
+                        <DatePicker x:Name="RequestedExecDatePicker" SelectedDateChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="REQUESTED_AMOUNT (>=)" FontWeight="SemiBold"/>
+                        <TextBox x:Name="RequestedAmountMinText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+
+                    <!-- Row 3: Accounts and Dates -->
+                    <StackPanel Margin="4">
+                        <TextBlock Text="SENDER_ACCOUNT_NUMBER" FontWeight="SemiBold"/>
+                        <TextBox x:Name="SenderAccountNumberText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="SENDER_ACCOUNT_BIC" FontWeight="SemiBold"/>
+                        <TextBox x:Name="SenderAccountBicText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="START_DATE" FontWeight="SemiBold"/>
+                        <DatePicker x:Name="StartDateFromPicker" SelectedDateChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="END_DATE" FontWeight="SemiBold"/>
+                        <DatePicker x:Name="EndDateToPicker" SelectedDateChanged="OnFilterChanged"/>
+                    </StackPanel>
+
+                    <!-- Guarantee Filters -->
+                    <StackPanel Margin="4">
+                        <TextBlock Text="GUARANTEE_ID / LEGACYREF" FontWeight="SemiBold"/>
+                        <TextBox x:Name="GuaranteeIdOrLegacyText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="GUARANTEE_TYPE" FontWeight="SemiBold"/>
+                        <TextBox x:Name="GuaranteeTypeText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="GUARANTEE_STATUS" FontWeight="SemiBold"/>
+                        <TextBox x:Name="GuaranteeStatusText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="NAME1" FontWeight="SemiBold"/>
+                        <TextBox x:Name="GuaranteeName1Text" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                    <StackPanel Margin="4">
+                        <TextBlock Text="NATUREOFDEAL" FontWeight="SemiBold"/>
+                        <TextBox x:Name="NatureOfDealText" TextChanged="OnFilterChanged"/>
+                    </StackPanel>
+                </UniformGrid>
+            </ScrollViewer>
+        </Border>
+
+        <!-- DataGrid -->
+        <DataGrid x:Name="ResultsGrid" Margin="8" AutoGenerateColumns="False" IsReadOnly="True"
+                  ScrollViewer.CanContentScroll="True"
+                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                  ContextMenuOpening="ResultsGrid_ContextMenuOpening">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="INVOICE_ID" Binding="{Binding INVOICE_ID}" Width="140"/>
+                <DataGridTextColumn Header="BUSINESS_CASE_ID" Binding="{Binding BUSINESS_CASE_ID}" Width="160"/>
+                <DataGridTextColumn Header="BUSINESS_CASE_REFERENCE" Binding="{Binding BUSINESS_CASE_REFERENCE}" Width="180"/>
+                <DataGridTextColumn Header="T_INVOICE_STATUS" Binding="{Binding T_INVOICE_STATUS}" Width="140"/>
+                <DataGridTextColumn Header="PAYMENT_METHOD" Binding="{Binding PAYMENT_METHOD}" Width="140"/>
+                <DataGridTextColumn Header="T_PAYMENT_REQUEST_STATUS" Binding="{Binding T_PAYMENT_REQUEST_STATUS}" Width="160"/>
+                <DataGridTextColumn Header="BGPMT" Binding="{Binding BGPMT}" Width="140"/>
+                <DataGridTextColumn Header="REQUESTED_EXECUTION_DATE" Binding="{Binding REQUESTED_EXECUTION_DATE, StringFormat=\{0:yyyy-MM-dd\}}" Width="180"/>
+                <DataGridTextColumn Header="REQUESTED_AMOUNT" Binding="{Binding REQUESTED_AMOUNT}" Width="140"/>
+                <DataGridTextColumn Header="BILLING_AMOUNT" Binding="{Binding BILLING_AMOUNT}" Width="140"/>
+                <DataGridTextColumn Header="BILLING_CURRENCY" Binding="{Binding BILLING_CURRENCY}" Width="120"/>
+                <DataGridTextColumn Header="START_DATE" Binding="{Binding START_DATE, StringFormat=\{0:yyyy-MM-dd\}}" Width="140"/>
+                <DataGridTextColumn Header="END_DATE" Binding="{Binding END_DATE, StringFormat=\{0:yyyy-MM-dd\}}" Width="140"/>
+                <DataGridTextColumn Header="SENDER_NAME" Binding="{Binding SENDER_NAME}" Width="160"/>
+                <DataGridTextColumn Header="RECEIVER_NAME" Binding="{Binding RECEIVER_NAME}" Width="160"/>
+                <DataGridTextColumn Header="SENDER_REFERENCE" Binding="{Binding SENDER_REFERENCE}" Width="200"/>
+                <DataGridTextColumn Header="RECEIVER_REFERENCE" Binding="{Binding RECEIVER_REFERENCE}" Width="200"/>
+                <DataGridTextColumn Header="SENDER_ACCOUNT_NUMBER" Binding="{Binding SENDER_ACCOUNT_NUMBER}" Width="180"/>
+                <DataGridTextColumn Header="SENDER_ACCOUNT_BIC" Binding="{Binding SENDER_ACCOUNT_BIC}" Width="160"/>
+                <!-- Guarantee join display -->
+                <DataGridTextColumn Header="GUARANTEE_ID" Binding="{Binding GUARANTEE_ID}" Width="160"/>
+                <DataGridTextColumn Header="LEGACYREF" Binding="{Binding LEGACYREF}" Width="140"/>
+                <DataGridTextColumn Header="GUARANTEE_TYPE" Binding="{Binding GUARANTEE_TYPE}" Width="160"/>
+                <DataGridTextColumn Header="GUARANTEE_STATUS" Binding="{Binding GUARANTEE_STATUS}" Width="160"/>
+                <DataGridTextColumn Header="NAME1" Binding="{Binding NAME1}" Width="200"/>
+                <DataGridTextColumn Header="NATUREOFDEAL" Binding="{Binding NATUREOFDEAL}" Width="160"/>
+            </DataGrid.Columns>
+            <DataGrid.ContextMenu>
+                <ContextMenu x:Name="RowContextMenu">
+                    <MenuItem x:Name="LinkMenuItem" Header="Link to ..." Click="LinkMenuItem_Click"/>
+                </ContextMenu>
+            </DataGrid.ContextMenu>
+        </DataGrid>
+    </DockPanel>
+</Window>

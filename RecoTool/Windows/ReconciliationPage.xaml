@@ -133,6 +133,14 @@
                     </StackPanel>
                 </Border>
 
+                <!-- Invoice Finder Button -->
+                <Button Grid.Column="5" Style="{StaticResource StandardButtonStyle}" Margin="10,0,0,0" Height="36" Padding="12,5" Click="OpenInvoiceFinder_Click" IsEnabled="{Binding CanInteract}" ToolTip="Open Invoice Finder">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock Text="Invoice Finder" FontSize="14" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+
                 <!-- Lock Status Indicator -->
                 <Border Grid.Column="6" Background="#FFF9E6" BorderBrush="#E6C200" BorderThickness="1" CornerRadius="4" Padding="10,5" Visibility="{Binding IsGlobalLockActive, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <StackPanel Orientation="Horizontal">

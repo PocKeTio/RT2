@@ -13,6 +13,8 @@ using System.Windows.Media;
 using System.IO;
 using System.Windows.Media.Imaging;
 using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics;
+using System.Reflection;
 
 namespace RecoTool.Windows
 {
@@ -466,6 +468,44 @@ namespace RecoTool.Windows
             {
                 CountryComboBox.SelectionChanged += CountryComboBox_SelectionChanged;
             }
+        }
+
+        private async void UserGuideButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_offlineFirstService == null) return;
+                var refService = new ReferentialService(_offlineFirstService);
+                string value = await refService.GetParamValueAsync("HelperFile");
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    value = await refService.GetParamValueAsync("HELPERFILE")
+                         ?? await refService.GetParamValueAsync("HELP_FILE")
+                         ?? await refService.GetParamValueAsync("UserGuide")
+                         ?? await refService.GetParamValueAsync("GuideUtilisateur");
+                }
+                if (string.IsNullOrWhiteSpace(value)) return;
+
+                if (value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || value.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    try { Process.Start(new ProcessStartInfo(value) { UseShellExecute = true }); } catch { }
+                    return;
+                }
+
+                var path = System.Environment.ExpandEnvironmentVariables(value.Trim());
+                if (!System.IO.Path.IsPathRooted(path))
+                {
+                    try
+                    {
+                        var baseDir = System.IO.Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                        path = System.IO.Path.GetFullPath(System.IO.Path.Combine(baseDir, path));
+                    }
+                    catch { }
+                }
+                if (!System.IO.File.Exists(path)) return;
+                try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); } catch { }
+            }
+            catch { }
         }
 
         /// <summary>

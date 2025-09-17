@@ -46,7 +46,7 @@
                             <TextBlock Text="Reports &amp; Exports" FontSize="14" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Button Height="38" MinWidth="160" Style="{StaticResource StandardButtonStyle}" VerticalAlignment="Center" Click="ExportDailyKpi_Click" Margin="0,0,0,10">
+                    <Button Height="38" MinWidth="160" Style="{StaticResource StandardButtonStyle}" VerticalAlignment="Center" Click="ExportDailyKpi_Click" Margin="0,0,10,10">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,10,0"/>
                             <TextBlock Text="Export Daily KPI" FontSize="14" VerticalAlignment="Center"/>

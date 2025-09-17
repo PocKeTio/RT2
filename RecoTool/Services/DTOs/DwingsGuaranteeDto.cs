@@ -19,6 +19,7 @@ namespace RecoTool.Services.DTOs
         public DateTime? EVENT_EFFECTIVEDATE { get; set; }
         public DateTime? ISSUEDATE { get; set; }
         public string OFFICIALREF { get; set; }
+        public string LEGACYREF { get; set; }
         public string UNDERTAKINGEVENT { get; set; }
         public string PROCESS { get; set; }
         public string EXPIRYDATETYPE { get; set; }

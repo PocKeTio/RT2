@@ -53,6 +53,7 @@ namespace RecoTool.Windows
         private bool _skipReloadSavedLists; // Prevent reloading saved filters/views during data refresh
         private CancellationTokenSource _pageCts; // Cancellation for page-level long operations
         private int _syncInFlightFlag; // 0 = idle, 1 = syncing
+        private InvoiceFinderWindow _invoiceFinderWindow; // modeless invoice finder
 
         /// <summary>
         /// Effectue une réconciliation après une publication d'import (fin de verrou global):
@@ -78,6 +79,27 @@ namespace RecoTool.Windows
             finally
             {
                 IsLoading = false;
+            }
+        }
+
+        private void OpenInvoiceFinder_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_invoiceFinderWindow == null || !_invoiceFinderWindow.IsVisible)
+                {
+                    _invoiceFinderWindow = new InvoiceFinderWindow();
+                    try { _invoiceFinderWindow.Owner = Window.GetWindow(this); } catch { }
+                    _invoiceFinderWindow.Show();
+                }
+                else
+                {
+                    _invoiceFinderWindow.Activate();
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Cannot open Invoice Finder: {ex.Message}");
             }
         }
 

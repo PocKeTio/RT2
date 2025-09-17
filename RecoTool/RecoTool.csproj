@@ -126,11 +126,43 @@
     <Compile Include="Windows\CommentsDialog.xaml.cs">
       <DependentUpon>CommentsDialog.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Windows\Interface\IRefreshable.cs" />
+    <Compile Include="Windows\InvoiceFinderWindow.xaml.cs">
+      <DependentUpon>InvoiceFinderWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Windows\DwingsButtonsWindow.xaml.cs">
       <DependentUpon>DwingsButtonsWindow.xaml</DependentUpon>
     </Compile>
     <Compile Include="Windows\MainWindow.xaml.cs">
       <DependentUpon>MainWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\HomePage.xaml.cs">
+      <DependentUpon>HomePage.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\ImportAmbreWindow.xaml.cs">
+      <DependentUpon>ImportAmbreWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\ProgressWindow.xaml.cs">
+      <DependentUpon>ProgressWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\ReconciliationDetailWindow.xaml.cs">
+      <DependentUpon>ReconciliationDetailWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\ReconciliationPage.xaml.cs">
+      <DependentUpon>ReconciliationPage.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Helpers\ReconciliationViewFocusTracker.cs" />
+    <Compile Include="Windows\ReconciliationView.xaml.cs">
+      <DependentUpon>ReconciliationView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\ReconciliationImportWindow.xaml.cs">
+      <DependentUpon>ReconciliationImportWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\FilterPickerWindow.xaml.cs">
+      <DependentUpon>FilterPickerWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\ReportsWindow.xaml.cs">
+      <DependentUpon>ReportsWindow.xaml</DependentUpon>
     </Compile>
     <Compile Include="Models\BaseEntity.cs" />
     <Compile Include="Models\DataAmbre.cs" />
@@ -167,22 +199,6 @@
     <Compile Include="Domain\Filters\FilterSqlHelper.cs" />
     <Compile Include="Domain\Filters\FilterState.cs" />
     <Compile Include="Domain\Filters\FilterBuilder.cs" />
-    <Compile Include="Windows\HomePage.xaml.cs">
-      <DependentUpon>HomePage.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Windows\ImportAmbreWindow.xaml.cs">
-      <DependentUpon>ImportAmbreWindow.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="UI\Interfaces\IRefreshable.cs" />
-    <Compile Include="Windows\ProgressWindow.xaml.cs">
-      <DependentUpon>ProgressWindow.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Windows\ReconciliationDetailWindow.xaml.cs">
-      <DependentUpon>ReconciliationDetailWindow.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Windows\ReconciliationPage.xaml.cs">
-      <DependentUpon>ReconciliationPage.xaml</DependentUpon>
-    </Compile>
     <Compile Include="Windows\ReconciliationView\Export.cs" />
     <Compile Include="Windows\ReconciliationView\KpiStatus.cs" />
     <Compile Include="Windows\ReconciliationView\Layout.cs" />
@@ -202,23 +218,17 @@
     <Compile Include="Windows\ReconciliationView\Editing.cs" />
     <Compile Include="Windows\ReconciliationView\SyncAndTimers.cs" />
     <Compile Include="Windows\ReconciliationView\FilterSqlBridge.cs" />
-    <Compile Include="Windows\ReconciliationView.xaml.cs">
-      <DependentUpon>ReconciliationView.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Windows\ReconciliationImportWindow.xaml.cs">
-      <DependentUpon>ReconciliationImportWindow.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Windows\FilterPickerWindow.xaml.cs">
-      <DependentUpon>FilterPickerWindow.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Windows\ReportsWindow.xaml.cs">
-      <DependentUpon>ReportsWindow.xaml</DependentUpon>
-    </Compile>
+  </ItemGroup>
+  <ItemGroup>
     <Page Include="App.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Windows\CommentsDialog.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Windows\InvoiceFinderWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

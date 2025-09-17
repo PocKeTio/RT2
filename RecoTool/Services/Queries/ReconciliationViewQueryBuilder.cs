@@ -71,6 +71,7 @@ namespace RecoTool.Services.Queries
 
             // Full view query
             string dwGuaranteeJoin = string.IsNullOrEmpty(dwEsc) ? "T_DW_Guarantee AS g" : $"(SELECT * FROM [{dwEsc}].T_DW_Guarantee) AS g";
+            string dwInvoiceJoin = string.IsNullOrEmpty(dwEsc) ? "T_DW_Data AS i" : $"(SELECT * FROM [{dwEsc}].T_DW_Data) AS i";
 
             return $@"SELECT
                                    a.*,
@@ -135,49 +136,20 @@ namespace RecoTool.Services.Queries
                                   g.NATUREOFDEAL AS G_NATUREOFDEAL,
                                   g.GUARANTEE_TYPE AS G_GUARANTEE_TYPE,
 
-                                   NULL AS INVOICE_ID,
-                                   NULL AS I_REQUESTED_INVOICE_AMOUNT,
-                                   NULL AS I_SENDER_NAME,
-                                   NULL AS I_RECEIVER_NAME,
-                                   NULL AS I_SENDER_REFERENCE,
-                                   NULL AS I_RECEIVER_REFERENCE,
-                                   NULL AS I_T_INVOICE_STATUS,
-                                   NULL AS I_BILLING_AMOUNT,
-                                   NULL AS I_BILLING_CURRENCY,
-                                   NULL AS I_START_DATE,
-                                   NULL AS I_END_DATE,
-                                   NULL AS I_FINAL_AMOUNT,
-                                   NULL AS I_T_COMMISSION_PERIOD_STATUS,
-                                   NULL AS I_BUSINESS_CASE_REFERENCE,
-                                   NULL AS I_BUSINESS_CASE_ID,
-                                   NULL AS I_POSTING_PERIODICITY,
-                                   NULL AS I_EVENT_ID,
-                                   NULL AS I_COMMENTS,
-                                   NULL AS I_SENDER_ACCOUNT_NUMBER,
-                                   NULL AS I_SENDER_ACCOUNT_BIC,
-                                   NULL AS I_RECEIVER_ACCOUNT_NUMBER,
-                                   NULL AS I_RECEIVER_ACCOUNT_BIC,
-                                   NULL AS I_REQUESTED_AMOUNT,
-                                   NULL AS I_EXECUTED_AMOUNT,
-                                   NULL AS I_REQUESTED_EXECUTION_DATE,
-                                   NULL AS I_T_PAYMENT_REQUEST_STATUS,
-                                   NULL AS I_BGPMT,
-                                   NULL AS I_DEBTOR_ACCOUNT_ID,
-                                   NULL AS I_CREDITOR_ACCOUNT_ID,
-                                   NULL AS I_MT_STATUS,
-                                   NULL AS I_REMINDER_NUMBER,
-                                   NULL AS I_ERROR_MESSAGE,
-                                   NULL AS I_DEBTOR_PARTY_ID,
-                                   NULL AS I_PAYMENT_METHOD,
-                                   NULL AS I_PAYMENT_TYPE,
-                                   NULL AS I_DEBTOR_PARTY_NAME,
-                                   NULL AS I_DEBTOR_ACCOUNT_NUMBER,
-                                   NULL AS I_CREDITOR_PARTY_ID,
-                                   NULL AS I_CREDITOR_ACCOUNT_NUMBER
+                                   i.INVOICE_ID AS INVOICE_ID,
+                                   i.T_INVOICE_STATUS AS I_T_INVOICE_STATUS,
+                                   i.BILLING_AMOUNT AS I_BILLING_AMOUNT,
+                                   i.BILLING_CURRENCY AS I_BILLING_CURRENCY,
+                                   i.START_DATE AS I_START_DATE,
+                                   i.END_DATE AS I_END_DATE,
+                                   i.FINAL_AMOUNT AS I_FINAL_AMOUNT,
+                                   i.REQUESTED_AMOUNT AS I_REQUESTED_INVOICE_AMOUNT,
+                                   i.PAYMENT_METHOD AS I_PAYMENT_METHOD
 
-                           FROM (({ambreJoin}
+                           FROM ((({ambreJoin}
                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
                            LEFT JOIN {dwGuaranteeJoin} ON  g.GUARANTEE_ID = r.DWINGS_GuaranteeID)
+                           LEFT JOIN {dwInvoiceJoin} ON i.INVOICE_ID = r.DWINGS_InvoiceID)
                            LEFT JOIN (SELECT Event_Num, COUNT(*) AS DupCount FROM {ambreBase} GROUP BY Event_Num) AS dup ON dup.Event_Num = a.Event_Num
                            WHERE 1=1";
         }

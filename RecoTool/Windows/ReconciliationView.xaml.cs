@@ -28,6 +28,7 @@ using System.Windows.Media;
 using System.Windows.Controls.Primitives;
 using RecoTool.Services.DTOs;
 using RecoTool.UI.Helpers;
+using RecoTool.Helpers;
 
 namespace RecoTool.Windows
 {
@@ -445,6 +446,8 @@ namespace RecoTool.Windows
                     var dg = this.FindName("ResultsDataGrid") as DataGrid;
                     if (dg != null)
                     {
+                        try { dg.GotFocus -= ResultsDataGrid_GotFocus; } catch { }
+                        try { dg.GotFocus += ResultsDataGrid_GotFocus; } catch { }
                         dg.PreviewMouseRightButtonUp -= ResultsDataGrid_PreviewMouseRightButtonUp;
                         dg.PreviewMouseRightButtonUp += ResultsDataGrid_PreviewMouseRightButtonUp;
                         dg.CanUserSortColumns = true; // allow sorting on all columns (template ones have SortMemberPath in XAML)
@@ -453,6 +456,45 @@ namespace RecoTool.Windows
                 }
                 catch { }
             };
+
+            try { this.GotFocus -= ReconciliationView_GotFocus; } catch { }
+            try { this.GotFocus += ReconciliationView_GotFocus; } catch { }
+        }
+
+        private void ReconciliationView_GotFocus(object sender, RoutedEventArgs e)
+        {
+            try { ReconciliationViewFocusTracker.SetLastFocused(this); } catch { }
+        }
+
+        private void ResultsDataGrid_GotFocus(object sender, RoutedEventArgs e)
+        {
+            try { ReconciliationViewFocusTracker.SetLastFocused(this); } catch { }
+        }
+
+        public void FlashLinkProposalHighlight()
+        {
+            try
+            {
+                var b = this.FindName("HeaderBorder") as Border;
+                if (b == null) return;
+                var prevBrush = b.BorderBrush;
+                var prevThickness = b.BorderThickness;
+                b.BorderBrush = Brushes.Red;
+                b.BorderThickness = new Thickness(3);
+                var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                t.Tick += (s, e) =>
+                {
+                    try
+                    {
+                        b.BorderBrush = prevBrush;
+                        b.BorderThickness = prevThickness;
+                    }
+                    catch { }
+                    finally { (s as DispatcherTimer)?.Stop(); }
+                };
+                t.Start();
+            }
+            catch { }
         }
 
         /// <summary>

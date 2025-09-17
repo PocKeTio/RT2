@@ -31,7 +31,42 @@ namespace RecoTool.Services.DTOs
                 }
             }
         }
-        public string Comments { get; set; }
+        private string _comments;
+        public string Comments
+        {
+            get => _comments;
+            set
+            {
+                if (!string.Equals(_comments, value))
+                {
+                    _comments = value;
+                    OnPropertyChanged(nameof(Comments));
+                    OnPropertyChanged(nameof(LastComment));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Derived view property: returns the last non-empty line from Comments, used for compact display.
+        /// </summary>
+        public string LastComment
+        {
+            get
+            {
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(Comments)) return string.Empty;
+                    var lines = Comments.Replace("\r\n", "\n").Split('\n');
+                    for (int i = lines.Length - 1; i >= 0; i--)
+                    {
+                        var s = lines[i]?.Trim();
+                        if (!string.IsNullOrEmpty(s)) return s;
+                    }
+                }
+                catch { }
+                return string.Empty;
+            }
+        }
         public string InternalInvoiceReference { get; set; }
         public DateTime? FirstClaimDate { get; set; }
         public DateTime? LastClaimDate { get; set; }

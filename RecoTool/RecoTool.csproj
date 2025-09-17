@@ -123,6 +123,9 @@
     <Compile Include="UI\Models\OptionItem.cs" />
     <Compile Include="UI\Models\UserOption.cs" />
     <Compile Include="UI\Helpers\VisualTreeHelpers.cs" />
+    <Compile Include="Windows\CommentsDialog.xaml.cs">
+      <DependentUpon>CommentsDialog.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Windows\DwingsButtonsWindow.xaml.cs">
       <DependentUpon>DwingsButtonsWindow.xaml</DependentUpon>
     </Compile>
@@ -214,6 +217,10 @@
     <Page Include="App.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Windows\CommentsDialog.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
     </Page>
     <Page Include="Windows\DwingsButtonsWindow.xaml">
       <Generator>MSBuild:Compile</Generator>

@@ -327,7 +327,9 @@ namespace RecoTool.Services
                             if (hasLM && nLm.HasValue)
                             {
                                 var lLm = loc.lm;
-                                if (!lLm.HasValue || nLm.Value > lLm.Value)
+                                // Fallback to the table-wide max local LM if this row's LM is null to avoid false positives across sessions
+                                var lLmEff = lLm.HasValue ? lLm : lastLocalLm;
+                                if (!lLmEff.HasValue || nLm.Value > lLmEff.Value)
                                     shouldApply = true;
                             }
                             // If not newer by LM, compare by Version

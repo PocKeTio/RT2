@@ -44,6 +44,51 @@ namespace RecoTool.Windows
             catch { return Array.Empty<UserField>(); }
         }
 
+        // Open full conversation and allow appending a new comment line
+        private async void CommentsCell_Click(object sender, MouseButtonEventArgs e)
+        {
+            try
+            {
+                var fe = sender as FrameworkElement;
+                var row = fe?.DataContext as ReconciliationViewData;
+                if (row == null || _reconciliationService == null) return;
+
+                var dlg = new CommentsDialog
+                {
+                    Owner = Window.GetWindow(this)
+                };
+                dlg.SetConversationText(row.Comments ?? string.Empty);
+                var res = dlg.ShowDialog();
+                if (res == true)
+                {
+                    var user = _reconciliationService.CurrentUser;
+                    var newLine = dlg.GetNewCommentText()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(newLine))
+                    {
+                        string prefix = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {user}: ";
+                        string existing = row.Comments?.TrimEnd();
+                        string appended = string.IsNullOrWhiteSpace(existing)
+                            ? prefix + newLine
+                            : existing + Environment.NewLine + prefix + newLine;
+
+                        // Update view model immediately
+                        row.Comments = appended;
+
+                        // Persist to reconciliation
+                        var reco = await _reconciliationService.GetOrCreateReconciliationAsync(row.ID);
+                        reco.Comments = appended;
+                        await _reconciliationService.SaveReconciliationAsync(reco);
+
+                        // Best-effort background sync
+                        try { ScheduleBulkPushDebounced(); } catch { }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Failed to update comments: {ex.Message}");
+            }
+        }
         // Populate the context menu items at open time to ensure correct DataContext
         private void RowContextMenu_Opened(object sender, RoutedEventArgs e)
         {
@@ -194,7 +239,7 @@ namespace RecoTool.Windows
             }
         }
 
-        // Set comment on selected rows
+        // Set comment on selected rows (append as conversation line)
         private async void QuickSetCommentMenuItem_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -239,11 +284,17 @@ namespace RecoTool.Windows
                 var text = tb.Text ?? string.Empty;
 
                 var updates = new List<Reconciliation>();
+                var user = _reconciliationService?.CurrentUser ?? Environment.UserName;
+                string prefix = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {user}: ";
                 foreach (var r in selected)
                 {
                     var reco = await _reconciliationService.GetOrCreateReconciliationAsync(r.ID);
-                    r.Comments = text;
-                    reco.Comments = text;
+                    string existing = r.Comments?.TrimEnd();
+                    string appended = string.IsNullOrWhiteSpace(existing)
+                        ? prefix + text
+                        : existing + Environment.NewLine + prefix + text;
+                    r.Comments = appended;
+                    reco.Comments = appended;
                     updates.Add(reco);
                 }
 

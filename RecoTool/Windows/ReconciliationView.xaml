@@ -962,7 +962,25 @@
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
 
-                            <DataGridTextColumn Header="Comments" Binding="{Binding Comments}" Width="150"/>
+                            <DataGridTemplateColumn Header="Comments" Width="220" SortMemberPath="LastComment">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="Transparent"
+                                                Padding="0"
+                                                ToolTipService.InitialShowDelay="0"
+                                                ToolTipService.BetweenShowDelay="0"
+                                                ToolTipService.ShowDuration="300000"
+                                                PreviewMouseLeftButtonUp="CommentsCell_Click">
+                                            <Border.ToolTip>
+                                                <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="800" MaxWidth="800">
+                                                    <TextBlock Text="{Binding Comments}" TextWrapping="Wrap"/>
+                                                </ScrollViewer>
+                                            </Border.ToolTip>
+                                            <TextBlock Text="{Binding LastComment}" TextTrimming="CharacterEllipsis" />
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Internal Invoice Ref" Binding="{Binding InternalInvoiceReference}" Width="140"/>
                             <!-- DWINGS Invoice Payment Method -->
                             <DataGridTextColumn Header="Payment Method" Binding="{Binding I_PAYMENT_METHOD}" Width="120" SortMemberPath="I_PAYMENT_METHOD"/>

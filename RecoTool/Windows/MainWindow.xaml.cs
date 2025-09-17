@@ -1432,7 +1432,8 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
         #region Helper Methods
 
         /// <summary>
-        /// Applique l'icône personnalisée si la clé AppIcon est renseignée (chemin .ico)
+        /// Applique l'icône personnalisée si la clé AppIcon est renseignée (chemin .ico) et
+        /// remplace le logo texte en en-tête par l'icône si disponible.
         /// </summary>
         private void ApplyCustomIconIfAny()
         {
@@ -1451,12 +1452,35 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
                 }
                 catch { /* ignore */ }
 
-                 if (!string.IsNullOrWhiteSpace(iconPath)
-                    && File.Exists(iconPath)
-                    && string.Equals(Path.GetExtension(iconPath), ".ico", StringComparison.OrdinalIgnoreCase))
+                if (!string.IsNullOrWhiteSpace(iconPath) && File.Exists(iconPath))
                 {
-                    var uri = new Uri(iconPath, UriKind.Absolute);
-                    this.Icon = BitmapFrame.Create(uri);
+                    // Set window icon if it's a .ico
+                    try
+                    {
+                        if (string.Equals(Path.GetExtension(iconPath), ".ico", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var uri = new Uri(iconPath, UriKind.Absolute);
+                            this.Icon = BitmapFrame.Create(uri);
+                        }
+                    }
+                    catch { }
+
+                    // Also show the icon in the header bubble
+                    try
+                    {
+                        var uri = new Uri(iconPath, UriKind.Absolute);
+                        var bmp = BitmapFrame.Create(uri);
+                        if (AppLogoImage != null)
+                        {
+                            AppLogoImage.Source = bmp;
+                            AppLogoImage.Visibility = Visibility.Visible;
+                        }
+                        if (RtFallbackText != null)
+                        {
+                            RtFallbackText.Visibility = Visibility.Collapsed;
+                        }
+                    }
+                    catch { }
                 }
             }
             catch { /* ne pas bloquer l'UI si l'icône est invalide */ }

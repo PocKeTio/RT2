@@ -2354,8 +2354,26 @@ namespace RecoTool.Services
             // 0) Provisionner les bases RÉSEAU depuis des modèles si absentes
             try
             {
-                onProgress?.Invoke(5, "Vérification des modèles réseau...");
-                await ProvisionNetworkFromTemplatesAsync(countryId);
+                string remoteDir_try = null;
+                try { remoteDir_try = GetParameter("CountryDatabaseDirectory"); } catch { }
+                bool anyNetworkDbExists = false;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(remoteDir_try) && Directory.Exists(remoteDir_try))
+                    {
+                        // Heuristic: any .accdb/.zip file for this country => consider provision not needed
+                        var accdbs = Directory.EnumerateFiles(remoteDir_try, "*" + countryId + "*.accdb", SearchOption.TopDirectoryOnly);
+                        var zips = Directory.EnumerateFiles(remoteDir_try, "*" + countryId + "*.zip", SearchOption.TopDirectoryOnly);
+                        anyNetworkDbExists = accdbs.Any() || zips.Any();
+                    }
+                }
+                catch { anyNetworkDbExists = true; }
+
+                if (!anyNetworkDbExists)
+                {
+                    onProgress?.Invoke(5, "Vérification des modèles réseau...");
+                    await ProvisionNetworkFromTemplatesAsync(countryId);
+                }
             }
             catch (Exception ex)
             {

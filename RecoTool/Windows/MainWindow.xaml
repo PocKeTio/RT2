@@ -140,10 +140,17 @@
                         <ColumnDefinition Width="Auto"/> <!-- Right side with controls -->
                     </Grid.ColumnDefinitions>
 
-                    <!-- Left side - Logo only -->
+                    <!-- Left side - Logo -->
                     <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="15,0,0,0">
                         <Border Background="#E8F5EE" CornerRadius="30" Width="40" Height="40" Margin="0,0,10,0">
-                            <TextBlock Foreground="#006A4D" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"><Run Text="R"/><Run Language="en-gb" Text="T"/></TextBlock>
+                            <Grid>
+                                <!-- Fallback initials if no icon is provided -->
+                                <TextBlock x:Name="RtFallbackText" Foreground="#006A4D" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <Run Text="R"/><Run Language="en-gb" Text="T"/>
+                                </TextBlock>
+                                <!-- App icon image (set in code-behind from AppIcon setting) -->
+                                <Image x:Name="AppLogoImage" Stretch="Uniform" Visibility="Collapsed" Margin="6"/>
+                            </Grid>
                         </Border>
                     </StackPanel>
 

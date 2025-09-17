@@ -1155,8 +1155,8 @@ namespace RecoTool.Services
                         for (int i = 0; i < reader.FieldCount; i++)
                         {
                             var name = reader.GetName(i);
-                            if (!columnOrdinals.ContainsKey(name))
-                                columnOrdinals.Add(name, i);
+                            // Overwrite on duplicate names so later SELECT items (e.g., r.Comments) win over earlier ones (e.g., a.Comments)
+                            columnOrdinals[name] = i;
                         }
                         fieldCount = reader.FieldCount;
 

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 
 namespace RecoTool.Windows
 {
@@ -15,6 +16,8 @@ namespace RecoTool.Windows
         {
             try
             {
+                // Hourglass during export
+                try { Mouse.OverrideCursor = Cursors.Wait; } catch { }
                 var dlg = new Microsoft.Win32.SaveFileDialog
                 {
                     Title = "Export",
@@ -59,10 +62,17 @@ namespace RecoTool.Windows
 
                 UpdateStatusInfo($"Exported {items.Count} rows to {path}");
                 LogAction("Export", $"{items.Count} rows to {path}");
+                // English success message
+                MessageBox.Show("Export completed successfully.", "Export", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
                 ShowError($"Export error: {ex.Message}");
+            }
+            finally
+            {
+                // Restore cursor
+                try { Mouse.OverrideCursor = null; } catch { }
             }
         }
 
@@ -93,27 +103,83 @@ namespace RecoTool.Windows
             Microsoft.Office.Interop.Excel.Application app = null;
             Microsoft.Office.Interop.Excel.Workbook wb = null;
             Microsoft.Office.Interop.Excel.Worksheet ws = null;
+            var CalculationState = Microsoft.Office.Interop.Excel.XlCalculation.xlCalculationAutomatic;
+            bool prevScreenUpdating = true, prevEnableEvents = true;
             try
             {
                 app = new Microsoft.Office.Interop.Excel.Application { Visible = false, DisplayAlerts = false };
+                // Speed up: turn off screen updating and calculation during bulk write
+                try
+                {
+                    prevScreenUpdating = app.ScreenUpdating;
+                    prevEnableEvents = app.EnableEvents;
+                    CalculationState = app.Calculation;
+                    app.ScreenUpdating = false;
+                    app.EnableEvents = false;
+                    app.Calculation = Microsoft.Office.Interop.Excel.XlCalculation.xlCalculationManual;
+                }
+                catch { }
+
                 wb = app.Workbooks.Add();
                 ws = wb.ActiveSheet as Microsoft.Office.Interop.Excel.Worksheet;
 
-                // headers
-                for (int c = 0; c < headers.Count; c++)
+                int rowCount = items.Count;
+                int colCount = columns.Count;
+
+                // 1) Write headers in one block
+                var headerArr = new object[1, colCount];
+                for (int c = 0; c < colCount; c++) headerArr[0, c] = headers[c];
+                var headerRange = ws.Range[ws.Cells[1, 1], ws.Cells[1, colCount]];
+                headerRange.Value2 = headerArr;
+
+                // 2) Prepare data array (1-based for Excel interop)
+                var data = new object[rowCount, colCount];
+                // Cache binding paths and PropertyInfo to avoid repeated reflection per cell
+                var bindingPaths = new string[colCount];
+                var props = new System.Reflection.PropertyInfo[colCount];
+                var itemType = typeof(RecoTool.Services.DTOs.ReconciliationViewData);
+                for (int c = 0; c < colCount; c++)
                 {
-                    ws.Cells[1, c + 1] = headers[c];
+                    string path = null;
+                    if (columns[c] is DataGridBoundColumn dbc)
+                        path = (dbc.Binding as System.Windows.Data.Binding)?.Path?.Path;
+                    else if (columns[c] is DataGridCheckBoxColumn chbc)
+                        path = (chbc.Binding as System.Windows.Data.Binding)?.Path?.Path;
+                    // Template/unbound columns not supported: leave null -> empty string
+                    bindingPaths[c] = path;
+                    if (!string.IsNullOrWhiteSpace(path))
+                        props[c] = itemType.GetProperty(path);
                 }
 
-                // rows
-                for (int r = 0; r < items.Count; r++)
+                for (int r = 0; r < rowCount; r++)
                 {
-                    var item = items[r];
-                    for (int c = 0; c < columns.Count; c++)
+                    var it = items[r];
+                    for (int c = 0; c < colCount; c++)
                     {
-                        var val = GetColumnValue(columns[c], item);
-                        ws.Cells[r + 2, c + 1] = val;
+                        var pi = props[c];
+                        if (pi == null) { data[r, c] = string.Empty; continue; }
+                        object raw = null;
+                        try { raw = pi.GetValue(it, null); } catch { raw = null; }
+                        if (raw == null) { data[r, c] = string.Empty; continue; }
+
+                        // Minimal formatting to keep parity with previous export
+                        if (raw is DateTime dt)
+                            data[r, c] = dt.ToString("dd-MM-yyyy", CultureInfo.InvariantCulture);
+                        else if (raw is bool bval)
+                            data[r, c] = bval ? "True" : "False";
+                        else if (raw is decimal dec)
+                            data[r, c] = dec.ToString("N2");
+                        else if (raw is double dbl)
+                            data[r, c] = dbl.ToString("N2");
+                        else
+                            data[r, c] = raw.ToString();
                     }
+                }
+
+                if (rowCount > 0 && colCount > 0)
+                {
+                    var dataRange = ws.Range[ws.Cells[2, 1], ws.Cells[rowCount + 2 - 1, colCount]]; // rows start at 2
+                    dataRange.Value2 = data;
                 }
 
                 // Autofit
@@ -122,23 +188,46 @@ namespace RecoTool.Windows
             }
             finally
             {
-                if (wb != null)
+                try
                 {
-                    wb.Close(false);
-                    System.Runtime.InteropServices.Marshal.ReleaseComObject(wb);
-                    wb = null;
+                    if (ws != null)
+                    {
+                        System.Runtime.InteropServices.Marshal.ReleaseComObject(ws);
+                        ws = null;
+                    }
                 }
-                if (ws != null)
+                catch { }
+
+                try
                 {
-                    System.Runtime.InteropServices.Marshal.ReleaseComObject(ws);
-                    ws = null;
+                    if (wb != null)
+                    {
+                        wb.Close(false);
+                        System.Runtime.InteropServices.Marshal.ReleaseComObject(wb);
+                        wb = null;
+                    }
                 }
-                if (app != null)
+                catch { }
+
+                try
                 {
-                    app.Quit();
-                    System.Runtime.InteropServices.Marshal.ReleaseComObject(app);
-                    app = null;
+                    if (app != null)
+                    {
+                        // Restore calculation/events
+                        try
+                        {
+                            app.Calculation = CalculationState;
+                            app.ScreenUpdating = prevScreenUpdating;
+                            app.EnableEvents = prevEnableEvents;
+                        }
+                        catch { }
+                        app.Quit();
+                        System.Runtime.InteropServices.Marshal.ReleaseComObject(app);
+                        app = null;
+                    }
                 }
+                catch { }
+
                 System.GC.Collect();
                 System.GC.WaitForPendingFinalizers();
             }

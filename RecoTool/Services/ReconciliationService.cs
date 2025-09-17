@@ -1267,6 +1267,11 @@ namespace RecoTool.Services
                                         else
                                             converted = Convert.ChangeType(value, targetType);
                                     }
+                                    else if (targetType == typeof(string))
+                                    {
+                                        // Ensure Memo/LongText (OleDb LongVarWChar) map reliably to .NET string
+                                        try { converted = Convert.ToString(value); } catch { converted = value?.ToString(); }
+                                    }
                                     else
                                     {
                                         converted = Convert.ChangeType(value, targetType);

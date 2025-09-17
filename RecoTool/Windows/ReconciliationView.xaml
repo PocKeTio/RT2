@@ -682,7 +682,8 @@
                               ScrollViewer.IsDeferredScrollingEnabled="False"
                               RowHeight="25"
                               RowHeaderWidth="0"
-                              MouseDoubleClick="ResultsDataGrid_MouseDoubleClick">
+                              MouseDoubleClick="ResultsDataGrid_MouseDoubleClick"
+                              CellEditEnding="ResultsDataGrid_CellEditEnding">
                         <DataGrid.Resources>
                             <!-- In-grid editing: decouple ComboBox visuals from theme to avoid ancestor-binding errors -->
                             <Style TargetType="ComboBox" BasedOn="{x:Null}">

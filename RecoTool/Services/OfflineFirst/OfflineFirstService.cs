@@ -2351,6 +2351,17 @@ namespace RecoTool.Services
 
             onProgress?.Invoke(0, "Initialisation du pays...");
 
+            // 0) Provisionner les bases RÉSEAU depuis des modèles si absentes
+            try
+            {
+                onProgress?.Invoke(5, "Vérification des modèles réseau...");
+                await ProvisionNetworkFromTemplatesAsync(countryId);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Template] Provision réseau ignorée: {ex.Message}");
+            }
+
             // 1) Initialiser/assurer la base locale principale (et positionner _currentCountryId)
             onProgress?.Invoke(10, "Préparation de la base locale...");
             // Detect cold-local to avoid incremental UPDATE flood
@@ -2464,6 +2475,52 @@ namespace RecoTool.Services
 
             onProgress?.Invoke(80, "Initialisation pays terminée");
             return true;
+        }
+
+        /// <summary>
+        /// S'il existe un répertoire de modèles (paramètre 'Template' ou 'TemplateDirectory'),
+        /// copie les fichiers contenant 'XX' en remplaçant par le code pays vers le répertoire réseau
+        /// (CountryDatabaseDirectory) sans écraser les fichiers existants.
+        /// Exemple attendu: DB_XX.accdb, DB_XX_lock.accdb, AMBRE_XX.accdb, AMBRE_XX.zip, etc.
+        /// </summary>
+        private async Task ProvisionNetworkFromTemplatesAsync(string countryId)
+        {
+            if (string.IsNullOrWhiteSpace(countryId)) return;
+            string remoteDir = null;
+            string templateDir = null;
+            try
+            {
+                remoteDir = GetParameter("CountryDatabaseDirectory");
+                templateDir = GetParameter("Template");
+                if (string.IsNullOrWhiteSpace(templateDir)) templateDir = GetCentralConfig("Template");
+                if (string.IsNullOrWhiteSpace(templateDir)) templateDir = GetParameter("TemplateDirectory");
+            }
+            catch { }
+
+            if (string.IsNullOrWhiteSpace(remoteDir) || string.IsNullOrWhiteSpace(templateDir)) return;
+            if (!Directory.Exists(templateDir)) return;
+
+            try { Directory.CreateDirectory(remoteDir); } catch { }
+
+            // Copier tous les fichiers contenant 'XX' (accdb/zip), en remplaçant par le code pays
+            string[] patterns = new[] { "*XX*.accdb", "*XX*.zip" };
+            foreach (var pattern in patterns)
+            {
+                string[] files = Array.Empty<string>();
+                try { files = Directory.GetFiles(templateDir, pattern, SearchOption.TopDirectoryOnly); } catch { }
+                foreach (var src in files)
+                {
+                    try
+                    {
+                        var destName = Path.GetFileName(src).Replace("XX", countryId, StringComparison.OrdinalIgnoreCase);
+                        var destPath = Path.Combine(remoteDir, destName);
+                        if (File.Exists(destPath)) continue; // ne pas écraser
+                        // copie asynchrone best-effort
+                        await CopyFileAsync(src, destPath, overwrite: false);
+                    }
+                    catch { }
+                }
+            }
         }
         
         /// <summary>

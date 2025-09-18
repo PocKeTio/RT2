@@ -2351,25 +2351,23 @@ namespace RecoTool.Services
 
             onProgress?.Invoke(0, "Initialisation du pays...");
 
-            // 0) Provisionner les bases RÉSEAU depuis des modèles si absentes
+            // 0) Provisionner les bases RÉSEAU depuis des modèles si au moins une est absente (Reconciliation, AMBRE, Lock)
             try
             {
-                string remoteDir_try = null;
-                try { remoteDir_try = GetParameter("CountryDatabaseDirectory"); } catch { }
-                bool anyNetworkDbExists = false;
+                bool needProvision = false;
                 try
                 {
-                    if (!string.IsNullOrWhiteSpace(remoteDir_try) && Directory.Exists(remoteDir_try))
-                    {
-                        // Heuristic: any .accdb/.zip file for this country => consider provision not needed
-                        var accdbs = Directory.EnumerateFiles(remoteDir_try, "*" + countryId + "*.accdb", SearchOption.TopDirectoryOnly);
-                        var zips = Directory.EnumerateFiles(remoteDir_try, "*" + countryId + "*.zip", SearchOption.TopDirectoryOnly);
-                        anyNetworkDbExists = accdbs.Any() || zips.Any();
-                    }
+                    var reconPath = GetNetworkReconciliationDbPath(countryId);
+                    var ambreZip = GetNetworkAmbreZipPath(countryId);
+                    var lockPath = GetControlDbPath(countryId);
+                    bool hasRecon = !string.IsNullOrWhiteSpace(reconPath) && File.Exists(reconPath);
+                    bool hasAmbre = !string.IsNullOrWhiteSpace(ambreZip) && File.Exists(ambreZip);
+                    bool hasLock = !string.IsNullOrWhiteSpace(lockPath) && File.Exists(lockPath);
+                    needProvision = !(hasRecon && hasAmbre && hasLock);
                 }
-                catch { anyNetworkDbExists = true; }
+                catch { needProvision = true; }
 
-                if (!anyNetworkDbExists)
+                if (needProvision)
                 {
                     onProgress?.Invoke(5, "Vérification des modèles réseau...");
                     await ProvisionNetworkFromTemplatesAsync(countryId);

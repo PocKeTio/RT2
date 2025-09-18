@@ -518,9 +518,8 @@ namespace RecoTool.Windows
                     dataExcel.OpenFile(DataFilePath);
 
                     // Read PIVOT
-                    // Only capture cell color for Comments (not Action) unless Comments isn't mapped, then capture Action color as fallback
-                    bool pivotHasComments = pivotLetterToDest.Values.Any(v => string.Equals(v, "Comments", StringComparison.OrdinalIgnoreCase));
-                    var colorFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { pivotHasComments ? "Comments" : "Action" };
+                    // Always capture Action cell color to drive Action inference
+                    var colorFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Action" };
                     var pivotRows = dataExcel.ReadSheetByColumns("PIVOT", pivotLetterToDest, pivotStartRow, idColumnLetter: "A", colorForDestinations: colorFields);
                     // Post-read fallback: if Comments missing/empty but Action has non-numeric text, copy to Comments and color too
                     int pivotFallbacks = 0;
@@ -602,9 +601,8 @@ namespace RecoTool.Windows
                     }
                     totalRows += pivotRows.Count;
 
-                    // Read RECEIVABLE (overrides pivot on conflicts)
-                    bool recvHasComments = recvLetterToDest.Values.Any(v => string.Equals(v, "Comments", StringComparison.OrdinalIgnoreCase));
-                    colorFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { recvHasComments ? "Comments" : "Action" };
+                    // Read RECEIVABLE (overrides pivot on conflicts). Always capture Action color
+                    colorFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Action" };
                     var recvRows = dataExcel.ReadSheetByColumns("RECEIVABLE", recvLetterToDest, receivableStartRow, idColumnLetter: "A", colorForDestinations: colorFields);
                     // Post-read fallback: if Comments missing/empty but Action has non-numeric text, copy to Comments and color too
                     int recvFallbacks = 0;
@@ -840,38 +838,26 @@ namespace RecoTool.Windows
                     }
                     catch { }
 
-                    // Additional logic: infer Action from Comments text or (Comments) cell color if Action not clearly mapped
+                    // Additional logic: infer Action from Action cell color (primary). Do not base on text.
                     try
                     {
-                        int? currentAction = null;
-                        if (rec.TryGetValue("Action", out var actVal) && actVal != null && actVal != DBNull.Value)
+                        // 1) Primary: Action cell color
+                        int? actionColor = TryGetOleColor(row, "Action__Color");
+                        var colorInferred = InferActionFromColor(actionColor);
+                        if (colorInferred != null)
                         {
-                            try { currentAction = Convert.ToInt32(actVal); } catch { currentAction = null; }
+                            rec["Action"] = colorInferred.Value; // override any previous text mapping
+                            LogMessage($"Action inferred from Action cell color -> {(ActionType)colorInferred.Value}");
                         }
-
-                        // Prefer text parsing from Comments when available
-                        var commentsText = rec.TryGetValue("Comments", out var comVal) ? comVal?.ToString() : null;
-                        if (currentAction == null)
+                        else
                         {
-                            var textInferred = InferActionFromComments(commentsText);
-                            if (textInferred != null)
-                            {
-                                rec["Action"] = textInferred.Value;
-                                currentAction = textInferred;
-                                LogMessage($"Action inferred from comments: {commentsText} -> {(ActionType)textInferred.Value}");
-                            }
-                        }
-
-                        // If still not set, fallback to cell color from Comments column ONLY
-                        if (currentAction == null)
-                        {
+                            // 2) Optional fallback: Comments cell color, if captured
                             int? commentsColor = TryGetOleColor(row, "Comments__Color");
-                            var colorInferred = InferActionFromColor(commentsColor);
-                            if (colorInferred != null)
+                            var commentColorInferred = InferActionFromColor(commentsColor);
+                            if (commentColorInferred != null)
                             {
-                                rec["Action"] = colorInferred.Value;
-                                currentAction = colorInferred;
-                                LogMessage($"Action inferred from Comments cell color -> {(ActionType)colorInferred.Value}");
+                                rec["Action"] = commentColorInferred.Value;
+                                LogMessage($"Action inferred from Comments cell color -> {(ActionType)commentColorInferred.Value}");
                             }
                         }
                     }

@@ -59,7 +59,13 @@ namespace RecoTool.Windows
 
         private void DebouncedApplyFiltersStart()
         {
-            try { _debounceTimer.Stop(); _debounceTimer.Start(); } catch { }
+            try
+            {
+                _debounceTimer.Stop();
+                if (FilterSpinner != null) FilterSpinner.Visibility = Visibility.Visible;
+                _debounceTimer.Start();
+            }
+            catch { }
         }
 
         private void PopulateFilterCombos()
@@ -235,6 +241,10 @@ namespace RecoTool.Windows
                 foreach (var r in filtered.Take(1000)) _viewRows.Add(r);
             }
             catch { }
+            finally
+            {
+                try { if (FilterSpinner != null) FilterSpinner.Visibility = Visibility.Collapsed; } catch { }
+            }
         }
 
         private void OnFilterChanged(object sender, RoutedEventArgs e)

@@ -108,6 +108,11 @@
             </ScrollViewer>
         </Border>
 
+        <!-- Debounce spinner -->
+        <Grid DockPanel.Dock="Top" Margin="8,0,8,4">
+            <ProgressBar x:Name="FilterSpinner" Height="4" IsIndeterminate="True" Visibility="Collapsed"/>
+        </Grid>
+
         <!-- DataGrid -->
         <DataGrid x:Name="ResultsGrid" Margin="8" AutoGenerateColumns="False" IsReadOnly="True"
                   ScrollViewer.CanContentScroll="True"

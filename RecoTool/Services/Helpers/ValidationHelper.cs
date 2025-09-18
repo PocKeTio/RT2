@@ -283,11 +283,39 @@ namespace RecoTool.Helpers
                 return null;
 
             var stringValue = value.ToString().Trim();
-            
-            if (DateTime.TryParse(stringValue, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime result))
+            if (string.IsNullOrWhiteSpace(stringValue))
+                return null;
+
+            // 1) Essayer d'abord les formats jour/mois (français) pour éviter l'inversion MM/JJ
+            var fr = CultureInfo.GetCultureInfo("fr-FR");
+            string[] preferredFormats = new[]
+            {
+                "dd/MM/yyyy",
+                "d/M/yyyy",
+                "dd/MM/yyyy HH:mm",
+                "d/M/yyyy HH:mm",
+                "dd-MM-yyyy",
+                "d-M-yyyy",
+                "dd-MM-yyyy HH:mm",
+                "d-M-yyyy HH:mm"
+            };
+            if (DateTime.TryParseExact(stringValue, preferredFormats, fr, DateTimeStyles.None, out DateTime result))
                 return result;
 
-            // Essayer avec la culture locale
+            // 2) Retenter en tolérant les secondes
+            string[] extendedFormats = new[]
+            {
+                "dd/MM/yyyy HH:mm:ss",
+                "d/M/yyyy HH:mm:ss",
+                "dd-MM-yyyy HH:mm:ss",
+                "d-M-yyyy HH:mm:ss"
+            };
+            if (DateTime.TryParseExact(stringValue, extendedFormats, fr, DateTimeStyles.None, out result))
+                return result;
+
+            // 3) Fallback: invariant et culture courante
+            if (DateTime.TryParse(stringValue, CultureInfo.InvariantCulture, DateTimeStyles.None, out result))
+                return result;
             if (DateTime.TryParse(stringValue, CultureInfo.CurrentCulture, DateTimeStyles.None, out result))
                 return result;
 

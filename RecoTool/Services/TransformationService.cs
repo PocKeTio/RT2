@@ -169,14 +169,13 @@ namespace RecoTool.Services
             if (string.IsNullOrEmpty(label))
                 return string.Empty;
 
-            // Pattern pour TRN suivi de chiffres
-            var match = Regex.Match(label, @"TRN[:\s]*([A-Z0-9]+)", RegexOptions.IgnoreCase);
-            if (match.Success)
-                return match.Groups[1].Value.ToUpper();
+            // Start at character 43 (1-based) => index 42 (0-based), take 10 characters
+            int startIndex = 42;
+            if (label.Length <= startIndex)
+                return string.Empty;
 
-            // Pattern alternatif pour numéros de transaction
-            match = Regex.Match(label, @"\b\d{8,}\b");
-            return match.Success ? match.Value : string.Empty;
+            int len = Math.Min(10, label.Length - startIndex);
+            return label.Substring(startIndex, len);
         }
 
         /// <summary>

@@ -201,6 +201,9 @@ namespace RecoTool.Services.AmbreImport
                 CCY = GetPropertyValue<string>(entity.Properties, "CCY"),
                 Event_Num = GetPropertyValue<string>(entity.Properties, "Event_Num"),
                 Folder = GetPropertyValue<string>(entity.Properties, "Folder"),
+                Pivot_MbawIDFromLabel = GetPropertyValue<string>(entity.Properties, "Pivot_MbawIDFromLabel"),
+                Pivot_TransactionCodesFromLabel = GetPropertyValue<string>(entity.Properties, "Pivot_TransactionCodesFromLabel"),
+                Pivot_TRNFromLabel = GetPropertyValue<string>(entity.Properties, "Pivot_TRNFromLabel"),
                 RawLabel = GetPropertyValue<string>(entity.Properties, "RawLabel"),
                 SignedAmount = GetPropertyValue<decimal>(entity.Properties, "SignedAmount"),
                 LocalSignedAmount = GetPropertyValue<decimal>(entity.Properties, "LocalSignedAmount"),
@@ -342,9 +345,13 @@ namespace RecoTool.Services.AmbreImport
         private bool HasDataChanged(DataAmbre existing, DataAmbre newData)
         {
             return existing.Account_ID != newData.Account_ID ||
+                   existing.Country != newData.Country ||
                    existing.CCY != newData.CCY ||
                    existing.Event_Num != newData.Event_Num ||
                    existing.Folder != newData.Folder ||
+                   existing.Pivot_MbawIDFromLabel != newData.Pivot_MbawIDFromLabel ||
+                   existing.Pivot_TransactionCodesFromLabel != newData.Pivot_TransactionCodesFromLabel ||
+                   existing.Pivot_TRNFromLabel != newData.Pivot_TRNFromLabel ||
                    existing.RawLabel != newData.RawLabel ||
                    existing.SignedAmount != newData.SignedAmount ||
                    existing.LocalSignedAmount != newData.LocalSignedAmount ||
@@ -352,6 +359,7 @@ namespace RecoTool.Services.AmbreImport
                    existing.Value_Date != newData.Value_Date ||
                    existing.Category != newData.Category ||
                    existing.Reconciliation_Num != newData.Reconciliation_Num ||
+                   existing.ReconciliationOrigin_Num != newData.ReconciliationOrigin_Num ||
                    existing.Receivable_InvoiceFromAmbre != newData.Receivable_InvoiceFromAmbre ||
                    existing.Receivable_DWRefFromAmbre != newData.Receivable_DWRefFromAmbre;
         }
@@ -390,6 +398,9 @@ namespace RecoTool.Services.AmbreImport
                     ["CCY"] = dataAmbre.CCY,
                     ["Event_Num"] = dataAmbre.Event_Num,
                     ["Folder"] = dataAmbre.Folder,
+                    ["Pivot_MbawIDFromLabel"] = dataAmbre.Pivot_MbawIDFromLabel,
+                    ["Pivot_TransactionCodesFromLabel"] = dataAmbre.Pivot_TransactionCodesFromLabel,
+                    ["Pivot_TRNFromLabel"] = dataAmbre.Pivot_TRNFromLabel,
                     ["RawLabel"] = dataAmbre.RawLabel,
                     ["SignedAmount"] = dataAmbre.SignedAmount,
                     ["LocalSignedAmount"] = dataAmbre.LocalSignedAmount,

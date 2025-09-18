@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using OfflineFirstAccess.Helpers;
 using OfflineFirstAccess.Models;
@@ -212,6 +213,14 @@ namespace RecoTool.Services.AmbreImport
             return null;
         }
 
+        private static string NormalizeSpaces(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            var t = s.Trim();
+            t = Regex.Replace(t, "\\s+", " ");
+            return t;
+        }
+
         private void ApplyCategorization(DataAmbre dataAmbre, Country country)
         {
             SetCategoryFromTransactionCodes(dataAmbre);
@@ -240,46 +249,95 @@ namespace RecoTool.Services.AmbreImport
             var codeToCategory = _configurationLoader?.CodeToCategory;
             if (codeToCategory == null || codeToCategory.Count == 0) return;
             
-            if (string.IsNullOrWhiteSpace(dataAmbre.Pivot_TransactionCodesFromLabel)) return;
+            var labelNorm = NormalizeSpaces(dataAmbre.Pivot_TransactionCodesFromLabel);
+            if (string.IsNullOrEmpty(labelNorm)) return;
 
-            var label = dataAmbre.Pivot_TransactionCodesFromLabel.Trim();
+            // Build a normalized dictionary (collapse multiple spaces in keys)
+            var dict = new Dictionary<string, TransactionType>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in codeToCategory)
+            {
+                var k = NormalizeSpaces(kv.Key);
+                if (string.IsNullOrEmpty(k)) continue;
+                dict[k] = kv.Value; // last wins, as before
+            }
 
-            if (codeToCategory.TryGetValue(label, out var tx))
+            // 1) Exact match on normalized label
+            if (dict.TryGetValue(labelNorm, out var tx))
             {
                 dataAmbre.Category = (int)tx;
                 return;
             }
 
-            // Fallback for multiple codes separated by '|'
-            if (label.Contains("|"))
+            // 2) Split by '|' and try each part (exact)
+            if (labelNorm.Contains("|"))
             {
-                ProcessMultipleCodes(label, codeToCategory, dataAmbre);
+                ProcessMultipleCodes(labelNorm, dict, dataAmbre);
+                if (dataAmbre.Category.HasValue) return;
+            }
+
+            // 3) Substring match: label may be longer than the code
+            TransactionType? found = null;
+            foreach (var kv in dict)
+            {
+                if (!string.IsNullOrEmpty(kv.Key) && labelNorm.IndexOf(kv.Key, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    if (found == null)
+                    {
+                        found = kv.Value;
+                    }
+                    else if (found.Value != kv.Value)
+                    {
+                        LogManager.Warning($"Ambiguous ATC transaction types for label '{labelNorm}'. Using first match '{found}'.");
+                        break;
+                    }
+                }
+            }
+
+            if (found != null)
+            {
+                dataAmbre.Category = (int)found.Value;
             }
         }
 
         private void ProcessMultipleCodes(string label, Dictionary<string, TransactionType> codeToCategory, DataAmbre dataAmbre)
         {
             var parts = label.Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries)
-                              .Select(p => p.Trim())
+                              .Select(p => NormalizeSpaces(p))
                               .Where(p => !string.IsNullOrWhiteSpace(p));
-                              
+
             TransactionType? found = null;
             foreach (var p in parts)
             {
+                // Exact on normalized part
                 if (codeToCategory.TryGetValue(p, out var c))
                 {
-                    if (found == null) 
-                    {
-                        found = c;
-                    }
+                    if (found == null) { found = c; }
                     else if (found.Value != c)
                     {
                         LogManager.Warning($"Ambiguous ATC transaction types for codes '{label}'. Using first match '{found}'.");
                         break;
                     }
+                    continue;
+                }
+
+                // Substring fallback: part may be longer than the code, or vice versa
+                foreach (var kv in codeToCategory)
+                {
+                    var key = kv.Key;
+                    if (string.IsNullOrEmpty(key)) continue;
+                    if (p.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        key.IndexOf(p, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        if (found == null) { found = kv.Value; }
+                        else if (found.Value != kv.Value)
+                        {
+                            LogManager.Warning($"Ambiguous ATC transaction types for codes '{label}'. Using first match '{found}'.");
+                            break;
+                        }
+                    }
                 }
             }
-            
+
             if (found != null)
             {
                 dataAmbre.Category = (int)found.Value;

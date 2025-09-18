@@ -29,54 +29,69 @@ namespace RecoTool.Services.Helpers
             foreach (var row in rows)
             {
                 DwingsInvoiceDto inv = null;
-                // 1) Direct by DWINGS_InvoiceID
-                if (!string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID) && byInvoiceId.TryGetValue(row.DWINGS_InvoiceID, out var foundById))
+                // Receivable rule: if Receivable_InvoiceFromAmbre (BGI) is present, use ONLY this to link to DWINGS invoice.
+                // Do not fall back to other heuristics in this case.
+                if (!string.IsNullOrWhiteSpace(row.Receivable_InvoiceFromAmbre))
                 {
-                    inv = foundById;
+                    if (byInvoiceId.TryGetValue(row.Receivable_InvoiceFromAmbre, out var foundByReceivable))
+                    {
+                        inv = foundByReceivable;
+                        // Strict rule: on receivable, always bind using Receivable_InvoiceFromAmbre
+                        row.DWINGS_InvoiceID = inv.INVOICE_ID;
+                    }
                 }
-                // 2) By stored PaymentReference (BGPMT)
-                else if (!string.IsNullOrWhiteSpace(row.PaymentReference) && byBgpmt.TryGetValue(row.PaymentReference, out var foundByPm))
-                {
-                    inv = foundByPm;
-                }
-                // 3) By stored DWINGS_CommissionID (BGPMT) when PaymentReference is not set
-                else if (!string.IsNullOrWhiteSpace(row.DWINGS_CommissionID) && byBgpmt.TryGetValue(row.DWINGS_CommissionID, out var foundByCommission))
-                {
-                    inv = foundByCommission;
-                    if (string.IsNullOrWhiteSpace(row.PaymentReference)) row.PaymentReference = row.DWINGS_CommissionID;
-                }
+                // Else apply existing resolution order
                 else
                 {
-                    // 4) Heuristic: extract BGI or BGPMT from available texts
-                    string TryNonEmpty(params string[] ss)
+                    // 1) Direct by DWINGS_InvoiceID
+                    if (!string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID) && byInvoiceId.TryGetValue(row.DWINGS_InvoiceID, out var foundById))
                     {
-                        foreach (var s in ss)
-                            if (!string.IsNullOrWhiteSpace(s)) return s;
-                        return null;
+                        inv = foundById;
                     }
-
-                    // Extract tokens from potential sources
-                    var bgi = DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.Reconciliation_Num))
-                              ?? DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.Comments))
-                              ?? DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.RawLabel))
-                              ?? DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.Receivable_DWRefFromAmbre));
-
-                    var bgpmt = DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.Reconciliation_Num))
-                               ?? DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.Comments))
-                               ?? DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.RawLabel))
-                               ?? DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.PaymentReference));
-
-                    if (!string.IsNullOrWhiteSpace(bgi) && byInvoiceId.TryGetValue(bgi, out var foundByBgi))
+                    // 2) By stored PaymentReference (BGPMT)
+                    else if (!string.IsNullOrWhiteSpace(row.PaymentReference) && byBgpmt.TryGetValue(row.PaymentReference, out var foundByPm))
                     {
-                        inv = foundByBgi;
-                        // Backfill missing fields to strengthen link in UI
-                        if (string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID)) row.DWINGS_InvoiceID = inv.INVOICE_ID;
+                        inv = foundByPm;
                     }
-                    else if (!string.IsNullOrWhiteSpace(bgpmt) && byBgpmt.TryGetValue(bgpmt, out var foundByBgpmt))
+                    // 3) By stored DWINGS_CommissionID (BGPMT) when PaymentReference is not set
+                    else if (!string.IsNullOrWhiteSpace(row.DWINGS_CommissionID) && byBgpmt.TryGetValue(row.DWINGS_CommissionID, out var foundByCommission))
                     {
-                        inv = foundByBgpmt;
-                        if (string.IsNullOrWhiteSpace(row.PaymentReference)) row.PaymentReference = bgpmt;
-                        if (string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID)) row.DWINGS_InvoiceID = inv.INVOICE_ID;
+                        inv = foundByCommission;
+                        if (string.IsNullOrWhiteSpace(row.PaymentReference)) row.PaymentReference = row.DWINGS_CommissionID;
+                    }
+                    else
+                    {
+                        // 4) Heuristic: extract BGI or BGPMT from available texts (pivot or when no Receivable_InvoiceFromAmbre available)
+                        string TryNonEmpty(params string[] ss)
+                        {
+                            foreach (var s in ss)
+                                if (!string.IsNullOrWhiteSpace(s)) return s;
+                            return null;
+                        }
+
+                        // Extract tokens from potential sources
+                        var bgi = DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.Reconciliation_Num))
+                                  ?? DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.Comments))
+                                  ?? DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.RawLabel))
+                                  ?? DwingsLinkingHelper.ExtractBgiToken(TryNonEmpty(row.Receivable_DWRefFromAmbre));
+
+                        var bgpmt = DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.Reconciliation_Num))
+                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.Comments))
+                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.RawLabel))
+                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(TryNonEmpty(row.PaymentReference));
+
+                        if (!string.IsNullOrWhiteSpace(bgi) && byInvoiceId.TryGetValue(bgi, out var foundByBgi))
+                        {
+                            inv = foundByBgi;
+                            // Backfill missing fields to strengthen link in UI
+                            if (string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID)) row.DWINGS_InvoiceID = inv.INVOICE_ID;
+                        }
+                        else if (!string.IsNullOrWhiteSpace(bgpmt) && byBgpmt.TryGetValue(bgpmt, out var foundByBgpmt))
+                        {
+                            inv = foundByBgpmt;
+                            if (string.IsNullOrWhiteSpace(row.PaymentReference)) row.PaymentReference = bgpmt;
+                            if (string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID)) row.DWINGS_InvoiceID = inv.INVOICE_ID;
+                        }
                     }
                 }
 

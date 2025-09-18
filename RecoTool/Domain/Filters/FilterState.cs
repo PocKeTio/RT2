@@ -13,6 +13,9 @@ namespace RecoTool.Domain.Filters
         public decimal? MinAmount { get; set; }
         public decimal? MaxAmount { get; set; }
         public bool? PotentialDuplicates { get; set; }
+        // New flags
+        public bool? Unmatched { get; set; } // Dwings: no invoice linked
+        public bool? NewLines { get; set; } // Ambre: newly appeared lines
         public DateTime? FromDate { get; set; }
         public DateTime? ToDate { get; set; }
         public int? ActionId { get; set; }

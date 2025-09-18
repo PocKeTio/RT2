@@ -27,6 +27,8 @@ namespace RecoTool.Domain.Filters
         public string GuaranteeType { get; set; }
         public string Comments { get; set; }
         public bool? PotentialDuplicates { get; set; }
+        public bool? Unmatched { get; set; }
+        public bool? NewLines { get; set; }
         public bool? ActionDone { get; set; }
         public DateTime? ActionDateFrom { get; set; }
         public DateTime? ActionDateTo { get; set; }

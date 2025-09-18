@@ -35,6 +35,8 @@ namespace RecoTool.Windows
                 GuaranteeType = f.GuaranteeType,
                 Comments = f.Comments,
                 PotentialDuplicates = f.PotentialDuplicates,
+                Unmatched = f.Unmatched,
+                NewLines = f.NewLines,
                 // New
                 ActionDone = f.ActionDone,
                 ActionDateFrom = f.ActionDateFrom,
@@ -69,6 +71,8 @@ namespace RecoTool.Windows
                 FilterComments = p.Comments;
                 // Default to false if not present in legacy presets
                 FilterPotentialDuplicates = p.PotentialDuplicates ?? false;
+                FilterUnmatched = p.Unmatched ?? false;
+                FilterNewLines = p.NewLines ?? false;
                 // New
                 FilterActionDone = p.ActionDone;
                 FilterActionDateFrom = p.ActionDateFrom;

@@ -309,6 +309,16 @@
                                         <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding VM.FilterMaxAmount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                     </Border>
                                 </Grid>
+
+                                <!-- New lines toggle -->
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="New lines:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <CheckBox Grid.Column="1" Margin="5,0,0,0" IsChecked="{Binding VM.FilterNewLines, Mode=TwoWay}" Content="Created today"/>
+                                </Grid>
                             </StackPanel>
                         </GroupBox>
 
@@ -403,6 +413,16 @@
                                     <ComboBox x:Name="GuaranteeStatusComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
                                               ItemsSource="{Binding GuaranteeStatusOptions}"
                                               SelectedItem="{Binding VM.FilterGuaranteeStatus, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                </Grid>
+
+                                <!-- Unmatched toggle -->
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Unmatched:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <CheckBox Grid.Column="1" Margin="5,0,0,0" IsChecked="{Binding VM.FilterUnmatched, Mode=TwoWay}" Content="No invoice linked"/>
                                 </Grid>
                             </StackPanel>
                         </GroupBox>

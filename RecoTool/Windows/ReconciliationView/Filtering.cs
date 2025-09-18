@@ -57,6 +57,8 @@ namespace RecoTool.Windows
                 FilterIncidentTypeId = null;
                 FilterAssigneeId = null;
                 FilterPotentialDuplicates = false;
+                FilterUnmatched = false;
+                FilterNewLines = false;
                 FilterActionDone = null;
                 FilterActionDateFrom = null;
                 FilterActionDateTo = null;

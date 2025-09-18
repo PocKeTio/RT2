@@ -45,6 +45,8 @@ namespace RecoTool.Windows
 
                 // Toggles
                 FilterPotentialDuplicates = false;
+                FilterUnmatched = false;
+                FilterNewLines = false;
                 FilterActionDone = null; // reset to All
                 FilterActionDateFrom = null;
                 FilterActionDateTo = null;

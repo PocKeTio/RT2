@@ -163,6 +163,19 @@ namespace RecoTool.UI.ViewModels
             set { var v = (bool?)value; if (CurrentFilter.PotentialDuplicates != v) { CurrentFilter.PotentialDuplicates = v; OnPropertyChanged(); } }
         }
 
+        // New filters
+        public bool FilterUnmatched
+        {
+            get => CurrentFilter.Unmatched == true;
+            set { var v = (bool?)value; if (CurrentFilter.Unmatched != v) { CurrentFilter.Unmatched = v; OnPropertyChanged(); } }
+        }
+
+        public bool FilterNewLines
+        {
+            get => CurrentFilter.NewLines == true;
+            set { var v = (bool?)value; if (CurrentFilter.NewLines != v) { CurrentFilter.NewLines = v; OnPropertyChanged(); } }
+        }
+
         public string FilterAssigneeId
         {
             get => CurrentFilter.AssigneeId;
@@ -278,6 +291,20 @@ namespace RecoTool.UI.ViewModels
 
             // Potential Duplicates
             if (f.PotentialDuplicates == true) q = q.Where(x => x.IsPotentialDuplicate);
+
+            // Unmatched: no invoice linked (DWINGS invoice id AND InternalInvoiceReference are blank)
+            if (f.Unmatched == true)
+            {
+                q = q.Where(x => string.IsNullOrWhiteSpace(x.DWINGS_InvoiceID)
+                                 && string.IsNullOrWhiteSpace(x.InternalInvoiceReference));
+            }
+
+            // New lines: appeared in Ambre today (based on AMBRE CreationDate)
+            if (f.NewLines == true)
+            {
+                var today = DateTime.Today;
+                q = q.Where(x => x.CreationDate.HasValue && x.CreationDate.Value.Date == today);
+            }
 
             // Action Done and Action Date
             if (f.ActionDone.HasValue)

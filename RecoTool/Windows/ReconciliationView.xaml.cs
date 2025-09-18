@@ -649,6 +649,19 @@ namespace RecoTool.Windows
             set { VM.FilterPotentialDuplicates = value; OnPropertyChanged(nameof(FilterPotentialDuplicates)); ScheduleApplyFiltersDebounced(); }
         }
 
+        // New: Unmatched and NewLines toggles
+        public bool FilterUnmatched
+        {
+            get => VM.FilterUnmatched;
+            set { VM.FilterUnmatched = value; OnPropertyChanged(nameof(FilterUnmatched)); ScheduleApplyFiltersDebounced(); }
+        }
+
+        public bool FilterNewLines
+        {
+            get => VM.FilterNewLines;
+            set { VM.FilterNewLines = value; OnPropertyChanged(nameof(FilterNewLines)); ScheduleApplyFiltersDebounced(); }
+        }
+
         // New filters: Action Done and Action Date range
         public bool? FilterActionDone
         {

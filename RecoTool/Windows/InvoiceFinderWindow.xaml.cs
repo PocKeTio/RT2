@@ -6,6 +6,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using RecoTool.Services;
 using RecoTool.Services.DTOs;
 using RecoTool.Helpers;
@@ -20,12 +21,19 @@ namespace RecoTool.Windows
         private List<DwingsInvoiceDto> _invoices = new List<DwingsInvoiceDto>();
         private List<DwingsGuaranteeDto> _guarantees = new List<DwingsGuaranteeDto>();
         private ObservableCollection<dynamic> _viewRows = new ObservableCollection<dynamic>();
+        private DispatcherTimer _debounceTimer;
 
         public InvoiceFinderWindow()
         {
             InitializeComponent();
             try { _reconciliationService = (App.ServiceProvider?.GetService(typeof(ReconciliationService))) as ReconciliationService; } catch { }
             try { _offlineFirstService = (App.ServiceProvider?.GetService(typeof(OfflineFirstService))) as OfflineFirstService; } catch { }
+            // Initialize debounce timer (1.5 seconds)
+            _debounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
+            _debounceTimer.Tick += (s, e) =>
+            {
+                try { _debounceTimer.Stop(); ApplyFilters(); } catch { }
+            };
 
             Loaded += async (s, e) =>
             {
@@ -39,13 +47,53 @@ namespace RecoTool.Windows
                     _invoices = (await _reconciliationService.GetDwingsInvoicesAsync().ConfigureAwait(true))?.ToList() ?? new List<DwingsInvoiceDto>();
                     _guarantees = (await _reconciliationService.GetDwingsGuaranteesAsync().ConfigureAwait(true))?.ToList() ?? new List<DwingsGuaranteeDto>();
                     ResultsGrid.ItemsSource = _viewRows;
-                    ApplyFilters();
+                    PopulateFilterCombos();
+                    DebouncedApplyFiltersStart();
                 }
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Error loading DWINGS: {ex.Message}", "Invoice Finder", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             };
+        }
+
+        private void DebouncedApplyFiltersStart()
+        {
+            try { _debounceTimer.Stop(); _debounceTimer.Start(); } catch { }
+        }
+
+        private void PopulateFilterCombos()
+        {
+            try
+            {
+                // PAYMENT_METHOD
+                var methods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var m in _invoices.Select(i => i.PAYMENT_METHOD).Where(s => !string.IsNullOrWhiteSpace(s))) methods.Add(m.Trim());
+                // Fallbacks
+                string[] fallbackMethods = new[] { "DIRECT_DEBIT", "EXTERNAL_DEBIT_PAYMENT", "INCOMING_PAYMENT", "MANUAL_OUTGOING", "OUTGOING_PAYMENT" };
+                foreach (var m in fallbackMethods) methods.Add(m);
+                var methodList = methods.OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
+                methodList.Insert(0, string.Empty);
+                if (PaymentMethodCombo != null)
+                {
+                    PaymentMethodCombo.ItemsSource = methodList;
+                    PaymentMethodCombo.SelectedIndex = 0;
+                }
+
+                // T_PAYMENT_REQUEST_STATUS
+                var statuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var s in _invoices.Select(i => i.T_PAYMENT_REQUEST_STATUS).Where(x => !string.IsNullOrWhiteSpace(x))) statuses.Add(s.Trim());
+                string[] fallbackStatuses = new[] { "CANCELLED", "FULLY_EXECUTED", "INITIATED", "REJECTED", "REQUEST_FAILED", "REQUESTED" };
+                foreach (var s in fallbackStatuses) statuses.Add(s);
+                var statusList = statuses.OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
+                statusList.Insert(0, string.Empty);
+                if (PaymentRequestStatusCombo != null)
+                {
+                    PaymentRequestStatusCombo.ItemsSource = statusList;
+                    PaymentRequestStatusCombo.SelectedIndex = 0;
+                }
+            }
+            catch { }
         }
 
         private static bool ContainsCI(string hay, string needle)
@@ -82,8 +130,8 @@ namespace RecoTool.Windows
                 var receiverRef = ReceiverRefText?.Text?.Trim();
                 var status = (InvoiceStatusCombo?.SelectedItem as ComboBoxItem)?.Content?.ToString();
                 var businessCase = BusinessCaseText?.Text?.Trim();
-                var payMethod = PaymentMethodText?.Text?.Trim();
-                var payReqStatus = PaymentRequestStatusText?.Text?.Trim();
+                var payMethod = PaymentMethodCombo?.SelectedItem as string;
+                var payReqStatus = PaymentRequestStatusCombo?.SelectedItem as string;
                 var bgpmt = BgpmtText?.Text?.Trim();
                 var reqExecDate = RequestedExecDatePicker?.SelectedDate;
                 var reqAmtText = RequestedAmountMinText?.Text?.Trim();
@@ -102,8 +150,8 @@ namespace RecoTool.Windows
                     && ContainsCI(i.RECEIVER_REFERENCE, receiverRef)
                     && (string.IsNullOrWhiteSpace(status) || string.Equals(i.T_INVOICE_STATUS ?? string.Empty, status, StringComparison.OrdinalIgnoreCase))
                     && (string.IsNullOrWhiteSpace(businessCase) || ContainsCI(i.BUSINESS_CASE_REFERENCE, businessCase) || ContainsCI(i.BUSINESS_CASE_ID, businessCase))
-                    && ContainsCI(i.PAYMENT_METHOD, payMethod)
-                    && ContainsCI(i.T_PAYMENT_REQUEST_STATUS, payReqStatus)
+                    && (string.IsNullOrWhiteSpace(payMethod) || string.Equals(i.PAYMENT_METHOD ?? string.Empty, payMethod, StringComparison.OrdinalIgnoreCase))
+                    && (string.IsNullOrWhiteSpace(payReqStatus) || string.Equals(i.T_PAYMENT_REQUEST_STATUS ?? string.Empty, payReqStatus, StringComparison.OrdinalIgnoreCase))
                     && ContainsCI(i.BGPMT, bgpmt)
                     && (!reqExecDate.HasValue || (i.REQUESTED_EXECUTION_DATE.HasValue && i.REQUESTED_EXECUTION_DATE.Value.Date == reqExecDate.Value.Date))
                     && (string.IsNullOrWhiteSpace(reqAmtText)
@@ -191,7 +239,7 @@ namespace RecoTool.Windows
 
         private void OnFilterChanged(object sender, RoutedEventArgs e)
         {
-            ApplyFilters();
+            DebouncedApplyFiltersStart();
         }
 
         private void ResultsGrid_ContextMenuOpening(object sender, ContextMenuEventArgs e)

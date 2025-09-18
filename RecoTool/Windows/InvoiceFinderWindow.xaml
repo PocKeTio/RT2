@@ -46,11 +46,11 @@
                     </StackPanel>
                     <StackPanel Margin="4">
                         <TextBlock Text="PAYMENT_METHOD" FontWeight="SemiBold"/>
-                        <TextBox x:Name="PaymentMethodText" TextChanged="OnFilterChanged"/>
+                        <ComboBox x:Name="PaymentMethodCombo" SelectionChanged="OnFilterChanged"/>
                     </StackPanel>
                     <StackPanel Margin="4">
                         <TextBlock Text="T_PAYMENT_REQUEST_STATUS" FontWeight="SemiBold"/>
-                        <TextBox x:Name="PaymentRequestStatusText" TextChanged="OnFilterChanged"/>
+                        <ComboBox x:Name="PaymentRequestStatusCombo" SelectionChanged="OnFilterChanged"/>
                     </StackPanel>
                     <StackPanel Margin="4">
                         <TextBlock Text="BGPMT" FontWeight="SemiBold"/>

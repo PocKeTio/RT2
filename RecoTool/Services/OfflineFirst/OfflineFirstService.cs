@@ -2530,7 +2530,7 @@ namespace RecoTool.Services
                 {
                     try
                     {
-                        var destName = Path.GetFileName(src).Replace("XX", countryId, StringComparison.OrdinalIgnoreCase);
+                        var destName = Path.GetFileName(src).Replace("XX", countryId);
                         var destPath = Path.Combine(remoteDir, destName);
                         if (File.Exists(destPath)) continue; // ne pas écraser
                         // copie asynchrone best-effort

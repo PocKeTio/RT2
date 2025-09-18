@@ -69,9 +69,7 @@ namespace RecoTool.Services.Queries
                             AND (r.DeleteDate IS NULL) ";
             }
 
-            // Full view query
-            string dwGuaranteeJoin = string.IsNullOrEmpty(dwEsc) ? "T_DW_Guarantee AS g" : $"(SELECT * FROM [{dwEsc}].T_DW_Guarantee) AS g";
-            string dwInvoiceJoin = string.IsNullOrEmpty(dwEsc) ? "T_DW_Data AS i" : $"(SELECT * FROM [{dwEsc}].T_DW_Data) AS i";
+            // Full view query (DWINGS joins removed to avoid row multiplication; enrichment fills fields later)
 
             return $@"SELECT
                                    a.*,
@@ -99,57 +97,56 @@ namespace RecoTool.Services.Queries
                                    r.ReasonNonRisky,
                                    r.ModifiedBy AS Reco_ModifiedBy,
                                    IIF(dup.DupCount > 1, True, False) AS IsPotentialDuplicate,
+                                    -- DWINGS guarantee fields set to NULL here; enriched in service
                                     NULL AS SYNDICATE,
-                                    g.OUTSTANDING_AMOUNT AS GUARANTEE_AMOUNT,
-                                    g.CURRENCYNAME AS GUARANTEE_CURRENCY,
-                                    g.GUARANTEE_STATUS AS GUARANTEE_STATUS,
-                                    g.GUARANTEE_TYPE AS GUARANTEE_TYPE,
+                                    NULL AS GUARANTEE_AMOUNT,
+                                    NULL AS GUARANTEE_CURRENCY,
+                                    NULL AS GUARANTEE_STATUS,
+                                    NULL AS GUARANTEE_TYPE,
                                     NULL AS COMMISSION_ID,
-                                    g.GUARANTEE_ID,
-                                 
-                                  g.NATURE AS G_NATURE,
-                                  g.EVENT_STATUS AS G_EVENT_STATUS,
-                                  g.EVENT_EFFECTIVEDATE AS G_EVENT_EFFECTIVEDATE,
-                                  g.ISSUEDATE AS G_ISSUEDATE,
-                                  g.OFFICIALREF AS G_OFFICIALREF,
-                                  g.UNDERTAKINGEVENT AS G_UNDERTAKINGEVENT,
-                                  g.PROCESS AS G_PROCESS,
-                                  g.EXPIRYDATETYPE AS G_EXPIRYDATETYPE,
-                                  g.EXPIRYDATE AS G_EXPIRYDATE,
-                                  g.PARTY_ID AS G_PARTY_ID,
-                                  g.PARTY_REF AS G_PARTY_REF,
-                                  g.SECONDARY_OBLIGOR AS G_SECONDARY_OBLIGOR,
-                                  g.SECONDARY_OBLIGOR_NATURE AS G_SECONDARY_OBLIGOR_NATURE,
-                                  g.ROLE AS G_ROLE,
-                                  g.COUNTRY AS G_COUNTRY,
-                                  g.CENTRAL_PARTY_CODE AS G_CENTRAL_PARTY_CODE,
-                                  g.NAME1 AS G_NAME1,
-                                  g.NAME2 AS G_NAME2,
-                                  g.GROUPE AS G_GROUPE,
-                                  g.PREMIUM AS G_PREMIUM,
-                                  g.BRANCH_CODE AS G_BRANCH_CODE,
-                                  g.BRANCH_NAME AS G_BRANCH_NAME,
-                                  g.OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY AS G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY,
-                                  g.CANCELLATIONDATE AS G_CANCELLATIONDATE,
-                                  g.CONTROLER AS G_CONTROLER,
-                                  g.AUTOMATICBOOKOFF AS G_AUTOMATICBOOKOFF,
-                                  g.NATUREOFDEAL AS G_NATUREOFDEAL,
-                                  g.GUARANTEE_TYPE AS G_GUARANTEE_TYPE,
+                                    NULL AS GUARANTEE_ID,
 
-                                   i.INVOICE_ID AS INVOICE_ID,
-                                   i.T_INVOICE_STATUS AS I_T_INVOICE_STATUS,
-                                   i.BILLING_AMOUNT AS I_BILLING_AMOUNT,
-                                   i.BILLING_CURRENCY AS I_BILLING_CURRENCY,
-                                   i.START_DATE AS I_START_DATE,
-                                   i.END_DATE AS I_END_DATE,
-                                   i.FINAL_AMOUNT AS I_FINAL_AMOUNT,
-                                   i.REQUESTED_AMOUNT AS I_REQUESTED_INVOICE_AMOUNT,
-                                   i.PAYMENT_METHOD AS I_PAYMENT_METHOD
+                                  NULL AS G_NATURE,
+                                  NULL AS G_EVENT_STATUS,
+                                  NULL AS G_EVENT_EFFECTIVEDATE,
+                                  NULL AS G_ISSUEDATE,
+                                  NULL AS G_OFFICIALREF,
+                                  NULL AS G_UNDERTAKINGEVENT,
+                                  NULL AS G_PROCESS,
+                                  NULL AS G_EXPIRYDATETYPE,
+                                  NULL AS G_EXPIRYDATE,
+                                  NULL AS G_PARTY_ID,
+                                  NULL AS G_PARTY_REF,
+                                  NULL AS G_SECONDARY_OBLIGOR,
+                                  NULL AS G_SECONDARY_OBLIGOR_NATURE,
+                                  NULL AS G_ROLE,
+                                  NULL AS G_COUNTRY,
+                                  NULL AS G_CENTRAL_PARTY_CODE,
+                                  NULL AS G_NAME1,
+                                  NULL AS G_NAME2,
+                                  NULL AS G_GROUPE,
+                                  NULL AS G_PREMIUM,
+                                  NULL AS G_BRANCH_CODE,
+                                  NULL AS G_BRANCH_NAME,
+                                  NULL AS G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY,
+                                  NULL AS G_CANCELLATIONDATE,
+                                  NULL AS G_CONTROLER,
+                                  NULL AS G_AUTOMATICBOOKOFF,
+                                  NULL AS G_NATUREOFDEAL,
+                                  NULL AS G_GUARANTEE_TYPE,
+                                  -- Invoice fields resolved via enricher (avoid SQL join duplication)
+                                  NULL AS INVOICE_ID,
+                                  NULL AS I_T_INVOICE_STATUS,
+                                  NULL AS I_BILLING_AMOUNT,
+                                  NULL AS I_BILLING_CURRENCY,
+                                  NULL AS I_START_DATE,
+                                  NULL AS I_END_DATE,
+                                  NULL AS I_FINAL_AMOUNT,
+                                  NULL AS I_REQUESTED_INVOICE_AMOUNT,
+                                  NULL AS I_PAYMENT_METHOD
 
-                           FROM ((({ambreJoin}
+                           FROM ({ambreJoin}
                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
-                           LEFT JOIN {dwGuaranteeJoin} ON  g.GUARANTEE_ID = r.DWINGS_GuaranteeID)
-                           LEFT JOIN {dwInvoiceJoin} ON i.INVOICE_ID = r.DWINGS_InvoiceID)
                            LEFT JOIN (SELECT Event_Num, COUNT(*) AS DupCount FROM {ambreBase} GROUP BY Event_Num) AS dup ON dup.Event_Num = a.Event_Num
                            WHERE 1=1";
         }

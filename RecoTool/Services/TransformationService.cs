@@ -152,27 +152,11 @@ namespace RecoTool.Services
             if (string.IsNullOrEmpty(label))
                 return string.Empty;
 
-            var codes = new List<string>();
+            var trimmed = label.Trim();
+            if (trimmed.Length <= 13)
+                return trimmed;
 
-            // Recherche de patterns communs pour les codes de transaction
-            var patterns = new[]
-            {
-                @"\b(COLLECTION|PAYMENT|ADJUSTMENT|TRIGGER|XCL LOADER)\b",
-                @"\b(INCOMING|OUTGOING|DIRECT DEBIT|MANUAL|EXTERNAL)\b",
-                @"\b(AUTOMATIC REFUND|DEBIT PAYMENT)\b"
-            };
-
-            foreach (var pattern in patterns)
-            {
-                var matches = Regex.Matches(label, pattern, RegexOptions.IgnoreCase);
-                foreach (Match match in matches)
-                {
-                    if (!codes.Contains(match.Value.ToUpper()))
-                        codes.Add(match.Value.ToUpper());
-                }
-            }
-
-            return string.Join("|", codes);
+            return trimmed.Substring(trimmed.Length - 13);
         }
 
         /// <summary>

@@ -12,7 +12,7 @@ namespace RecoTool.Models
         public string ID { get; set; }
         public string DWINGS_GuaranteeID { get; set; }
         public string DWINGS_InvoiceID { get; set; }
-        public string DWINGS_CommissionID { get; set; }
+        public string DWINGS_BGPMT { get; set; }
         public int? Action { get; set; }
         // New: assignee user ID (referential T_User.USR_ID)
         public string Assignee { get; set; }
@@ -70,6 +70,6 @@ namespace RecoTool.Models
         /// </summary>
         public bool HasDWINGSData => !string.IsNullOrEmpty(DWINGS_GuaranteeID) || 
                                      !string.IsNullOrEmpty(DWINGS_InvoiceID) || 
-                                     !string.IsNullOrEmpty(DWINGS_CommissionID);
+                                     !string.IsNullOrEmpty(DWINGS_BGPMT);
     }
 }

@@ -53,11 +53,11 @@ namespace RecoTool.Services.Helpers
                     {
                         inv = foundByPm;
                     }
-                    // 3) By stored DWINGS_CommissionID (BGPMT) when PaymentReference is not set
-                    else if (!string.IsNullOrWhiteSpace(row.DWINGS_CommissionID) && byBgpmt.TryGetValue(row.DWINGS_CommissionID, out var foundByCommission))
+                    // 3) By stored DWINGS_BGPMT (BGPMT) when PaymentReference is not set
+                    else if (!string.IsNullOrWhiteSpace(row.DWINGS_BGPMT) && byBgpmt.TryGetValue(row.DWINGS_BGPMT, out var foundByCommission))
                     {
                         inv = foundByCommission;
-                        if (string.IsNullOrWhiteSpace(row.PaymentReference)) row.PaymentReference = row.DWINGS_CommissionID;
+                        if (string.IsNullOrWhiteSpace(row.PaymentReference)) row.PaymentReference = row.DWINGS_BGPMT;
                     }
                     else
                     {

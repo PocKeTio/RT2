@@ -186,15 +186,7 @@ namespace RecoTool.Helpers
             var key = Norm(bgpmt);
             if (string.IsNullOrWhiteSpace(key)) return null;
 
-            var candidates = invoices.Where(i => Norm(i?.BGPMT) == key).ToList();
-            if (candidates.Count == 0) return null;
-
-            var exact = candidates.FirstOrDefault(i => AmountMatches(ambreSignedAmount, i?.BILLING_AMOUNT));
-            if (exact != null) return exact;
-
-            return candidates
-                .OrderBy(i => i?.BILLING_AMOUNT.HasValue == true ? Math.Abs((ambreSignedAmount ?? 0) - i.BILLING_AMOUNT.Value) : decimal.MaxValue)
-                .FirstOrDefault();
+            return invoices.Where(i => Norm(i?.BGPMT) == key).FirstOrDefault();
         }
     }
 }

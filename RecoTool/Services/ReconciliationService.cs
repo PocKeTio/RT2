@@ -789,7 +789,7 @@ namespace RecoTool.Services
                     if (row == null) continue;
                     row.DWINGS_GuaranteeID = r.DWINGS_GuaranteeID;
                     row.DWINGS_InvoiceID = r.DWINGS_InvoiceID;
-                    row.DWINGS_CommissionID = r.DWINGS_CommissionID;
+                    row.DWINGS_BGPMT = r.DWINGS_BGPMT;
                     row.Action = r.Action;
                     row.ActionStatus = r.ActionStatus;
                     row.ActionDate = r.ActionDate;
@@ -831,7 +831,7 @@ namespace RecoTool.Services
                 {
                     var changed = new System.Collections.Generic.List<string>();
                     var selectCmd = new OleDbCommand(@"SELECT 
-                                [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_CommissionID],
+                                [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_BGPMT],
                                 [Action], [ActionStatus], [ActionDate], [Assignee], [Comments], [InternalInvoiceReference],
                                 [FirstClaimDate], [LastClaimDate], [ToRemind], [ToRemindDate],
                                 [ACK], [SwiftCode], [PaymentReference], [KPI],
@@ -863,7 +863,7 @@ namespace RecoTool.Services
                             // Build the list of changed business fields
                             if (!Equal(DbVal(0), (object)reconciliation.DWINGS_GuaranteeID)) changed.Add("DWINGS_GuaranteeID");
                             if (!Equal(DbVal(1), (object)reconciliation.DWINGS_InvoiceID)) changed.Add("DWINGS_InvoiceID");
-                            if (!Equal(DbVal(2), (object)reconciliation.DWINGS_CommissionID)) changed.Add("DWINGS_CommissionID");
+                            if (!Equal(DbVal(2), (object)reconciliation.DWINGS_BGPMT)) changed.Add("DWINGS_BGPMT");
                             if (!Equal(DbVal(3), (object)reconciliation.Action)) changed.Add("Action");
                             if (!Equal(DbVal(4), (object)reconciliation.ActionStatus)) changed.Add("ActionStatus");
                             if (!Equal(DbVal(5), reconciliation.ActionDate.HasValue ? (object)reconciliation.ActionDate.Value : null)) changed.Add("ActionDate");
@@ -923,8 +923,8 @@ namespace RecoTool.Services
                                 case "DWINGS_InvoiceID":
                                     cmd.Parameters.AddWithValue("@DWINGS_InvoiceID", reconciliation.DWINGS_InvoiceID ?? (object)DBNull.Value);
                                     break;
-                                case "DWINGS_CommissionID":
-                                    cmd.Parameters.AddWithValue("@DWINGS_CommissionID", reconciliation.DWINGS_CommissionID ?? (object)DBNull.Value);
+                                case "DWINGS_BGPMT":
+                                    cmd.Parameters.AddWithValue("@DWINGS_BGPMT", reconciliation.DWINGS_BGPMT ?? (object)DBNull.Value);
                                     break;
                                 case "Action":
                                     cmd.Parameters.AddWithValue("@Action", reconciliation.Action ?? (object)DBNull.Value);
@@ -1073,7 +1073,7 @@ namespace RecoTool.Services
                     reconciliation.LastModified = DateTime.UtcNow;
 
                     var insertQuery = @"INSERT INTO T_Reconciliation 
-                             ([ID], [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_CommissionID],
+                             ([ID], [DWINGS_GuaranteeID], [DWINGS_InvoiceID], [DWINGS_BGPMT],
                               [Action], [ActionStatus], [ActionDate], [Assignee], [Comments], [InternalInvoiceReference], [FirstClaimDate], [LastClaimDate],
                               [ToRemind], [ToRemindDate], [ACK], [SwiftCode], [PaymentReference], [MbawData], [SpiritData], [KPI],
                               [IncidentType], [RiskyItem], [ReasonNonRisky], [TriggerDate], [CreationDate], [ModifiedBy], [LastModified])
@@ -1103,7 +1103,7 @@ namespace RecoTool.Services
 
             cmd.Parameters.AddWithValue("@DWINGS_GuaranteeID", reconciliation.DWINGS_GuaranteeID ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@DWINGS_InvoiceID", reconciliation.DWINGS_InvoiceID ?? (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("@DWINGS_CommissionID", reconciliation.DWINGS_CommissionID ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("@DWINGS_BGPMT", reconciliation.DWINGS_BGPMT ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("@Action", reconciliation.Action ?? (object)DBNull.Value);
             var pActionStatus = cmd.Parameters.Add("@ActionStatus", OleDbType.Boolean);
             pActionStatus.Value = reconciliation.ActionStatus.HasValue ? (object)reconciliation.ActionStatus.Value : DBNull.Value;

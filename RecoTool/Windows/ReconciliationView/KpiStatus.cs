@@ -16,13 +16,13 @@ namespace RecoTool.Windows
                 int total = list.Count;
                 int matched = list.Count(a => !string.IsNullOrWhiteSpace(a.DWINGS_GuaranteeID)
                                            || !string.IsNullOrWhiteSpace(a.DWINGS_InvoiceID)
-                                           || !string.IsNullOrWhiteSpace(a.DWINGS_CommissionID));
+                                           || !string.IsNullOrWhiteSpace(a.DWINGS_BGPMT));
                 int unmatched = total - matched;
 
                 decimal totalAmt = list.Sum(a => a.SignedAmount);
                 decimal matchedAmt = list.Where(a => !string.IsNullOrWhiteSpace(a.DWINGS_GuaranteeID)
                                                    || !string.IsNullOrWhiteSpace(a.DWINGS_InvoiceID)
-                                                   || !string.IsNullOrWhiteSpace(a.DWINGS_CommissionID))
+                                                   || !string.IsNullOrWhiteSpace(a.DWINGS_BGPMT))
                                          .Sum(a => a.SignedAmount);
                 decimal unmatchedAmt = totalAmt - matchedAmt;
 

@@ -75,7 +75,7 @@ namespace RecoTool.Services.Queries
                                    a.*,
                                    r.DWINGS_GuaranteeID,
                                    r.DWINGS_InvoiceID,
-                                   r.DWINGS_CommissionID,
+                                   r.DWINGS_BGPMT,
                                    r.CreationDate AS Reco_CreationDate,
                                    r.LastModified AS Reco_LastModified,
                                    r.Action,

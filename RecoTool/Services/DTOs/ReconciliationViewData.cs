@@ -17,7 +17,7 @@ namespace RecoTool.Services.DTOs
         // Propriétés de Reconciliation
         public string DWINGS_GuaranteeID { get; set; }
         public string DWINGS_InvoiceID { get; set; }
-        public string DWINGS_CommissionID { get; set; }
+        public string DWINGS_BGPMT { get; set; }
         private int? _action;
         public int? Action
         {

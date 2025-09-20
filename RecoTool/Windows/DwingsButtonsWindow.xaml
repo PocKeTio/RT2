@@ -19,7 +19,7 @@
                 <DataGridTextColumn Header="ID" Binding="{Binding ID}" Width="*" MinWidth="120"/>
                 <DataGridTextColumn Header="DWINGS_GuaranteeID" Binding="{Binding DWINGS_GuaranteeID}" Width="*" MinWidth="120"/>
                 <DataGridTextColumn Header="DWINGS_InvoiceID" Binding="{Binding DWINGS_InvoiceID}" Width="*" MinWidth="120"/>
-                <DataGridTextColumn Header="DWINGS_CommissionID" Binding="{Binding DWINGS_CommissionID}" Width="*" MinWidth="120"/>
+                <DataGridTextColumn Header="DWINGS_BGPMT" Binding="{Binding DWINGS_BGPMT}" Width="*" MinWidth="120"/>
                 <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="100"/>
                 <DataGridTextColumn Header="Assignee" Binding="{Binding Assignee}" Width="120"/>
                 <DataGridTextColumn Header="Comments" Binding="{Binding Comments}" Width="200"/>

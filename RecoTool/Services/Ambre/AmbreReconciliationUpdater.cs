@@ -55,6 +55,16 @@ namespace RecoTool.Services.AmbreImport
                     changes.ToArchive,
                     countryId);
 
+                // Remplir les références DWINGS manquantes pour les enregistrements mis à jour (sans écraser les liens manuels)
+                try
+                {
+                    await UpdateDwingsReferencesForUpdatesAsync(changes.ToUpdate, country, countryId);
+                }
+                catch (Exception fillEx)
+                {
+                    LogManager.Warning($"Non-blocking: failed to backfill DWINGS refs for updates: {fillEx.Message}");
+                }
+
                 LogManager.Info($"T_Reconciliation update completed for {countryId}");
             }
             catch (Exception ex)
@@ -117,7 +127,7 @@ namespace RecoTool.Services.AmbreImport
                 dataAmbre, isPivot, dwInvoices);
                 
             reconciliation.DWINGS_InvoiceID = dwingsRefs.InvoiceId;
-            reconciliation.DWINGS_CommissionID = dwingsRefs.CommissionId;
+            reconciliation.DWINGS_BGPMT = dwingsRefs.CommissionId;
             reconciliation.DWINGS_GuaranteeID = dwingsRefs.GuaranteeId;
 
             // Calculate KPI
@@ -256,6 +266,97 @@ namespace RecoTool.Services.AmbreImport
                 {
                     await InsertReconciliationsAsync(conn, toInsert);
                 }
+            }
+        }
+
+        private async Task UpdateDwingsReferencesForUpdatesAsync(
+            List<DataAmbre> updatedRecords,
+            Country country,
+            string countryId)
+        {
+            try
+            {
+                if (updatedRecords == null || updatedRecords.Count == 0) return;
+                var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
+                if (invoices == null || invoices.Count == 0) return;
+                var dwList = invoices.ToList();
+
+                var connectionString = _offlineFirstService.GetCountryConnectionString(countryId);
+                using (var conn = new OleDbConnection(connectionString))
+                {
+                    await conn.OpenAsync();
+                    using (var tx = conn.BeginTransaction())
+                    {
+                        try
+                        {
+                            var nowUtc = DateTime.UtcNow;
+                            foreach (var amb in updatedRecords)
+                            {
+                                if (amb == null || string.IsNullOrWhiteSpace(amb.ID)) continue;
+                                bool isPivot = amb.IsPivotAccount(country.CNT_AmbrePivot);
+                                var refs = await _dwingsResolver.ResolveReferencesAsync(amb, isPivot, dwList);
+                                if (refs != null)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(refs.InvoiceId))
+                                    {
+                                        using (var cmd = new OleDbCommand(
+                                            "UPDATE [T_Reconciliation] SET [DWINGS_InvoiceID]=?, [LastModified]=?, [ModifiedBy]=? " +
+                                            "WHERE [ID]=? AND ([DWINGS_InvoiceID] IS NULL OR [DWINGS_InvoiceID] = '')",
+                                            conn, tx))
+                                        {
+                                            cmd.Parameters.AddWithValue("@DWINGS_InvoiceID", refs.InvoiceId);
+                                            cmd.Parameters.Add("@LastModified", OleDbType.Date).Value = nowUtc;
+                                            cmd.Parameters.AddWithValue("@ModifiedBy", _currentUser);
+                                            cmd.Parameters.AddWithValue("@ID", amb.ID);
+                                            await cmd.ExecuteNonQueryAsync();
+                                        }
+                                    }
+
+                                    if (!string.IsNullOrWhiteSpace(refs.CommissionId))
+                                    {
+                                        using (var cmd = new OleDbCommand(
+                                            "UPDATE [T_Reconciliation] SET [DWINGS_BGPMT]=?, [LastModified]=?, [ModifiedBy]=? " +
+                                            "WHERE [ID]=? AND ([DWINGS_BGPMT] IS NULL OR [DWINGS_BGPMT] = '')",
+                                            conn, tx))
+                                        {
+                                            cmd.Parameters.AddWithValue("@DWINGS_BGPMT", refs.CommissionId);
+                                            cmd.Parameters.Add("@LastModified", OleDbType.Date).Value = nowUtc;
+                                            cmd.Parameters.AddWithValue("@ModifiedBy", _currentUser);
+                                            cmd.Parameters.AddWithValue("@ID", amb.ID);
+                                            await cmd.ExecuteNonQueryAsync();
+                                        }
+                                    }
+
+                                    if (!string.IsNullOrWhiteSpace(refs.GuaranteeId))
+                                    {
+                                        using (var cmd = new OleDbCommand(
+                                            "UPDATE [T_Reconciliation] SET [DWINGS_GuaranteeID]=?, [LastModified]=?, [ModifiedBy]=? " +
+                                            "WHERE [ID]=? AND ([DWINGS_GuaranteeID] IS NULL OR [DWINGS_GuaranteeID] = '')",
+                                            conn, tx))
+                                        {
+                                            cmd.Parameters.AddWithValue("@DWINGS_GuaranteeID", refs.GuaranteeId);
+                                            cmd.Parameters.Add("@LastModified", OleDbType.Date).Value = nowUtc;
+                                            cmd.Parameters.AddWithValue("@ModifiedBy", _currentUser);
+                                            cmd.Parameters.AddWithValue("@ID", amb.ID);
+                                            await cmd.ExecuteNonQueryAsync();
+                                        }
+                                    }
+                                }
+                            }
+
+                            tx.Commit();
+                        }
+                        catch
+                        {
+                            tx.Rollback();
+                            throw;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogManager.Warning($"Backfill DWINGS refs failed: {ex.Message}");
             }
         }
 
@@ -408,7 +509,7 @@ namespace RecoTool.Services.AmbreImport
         private OleDbCommand CreateInsertCommand(OleDbConnection conn, OleDbTransaction tx, Reconciliation rec)
         {
             var cmd = new OleDbCommand(@"INSERT INTO [T_Reconciliation] (
-                [ID],[DWINGS_GuaranteeID],[DWINGS_InvoiceID],[DWINGS_CommissionID],
+                [ID],[DWINGS_GuaranteeID],[DWINGS_InvoiceID],[DWINGS_BGPMT],
                 [Action],[Comments],[InternalInvoiceReference],[FirstClaimDate],[LastClaimDate],
                 [ToRemind],[ToRemindDate],[ACK],[SwiftCode],[PaymentReference],[KPI],
                 [IncidentType],[RiskyItem],[ReasonNonRisky],[CreationDate],[ModifiedBy],[LastModified]
@@ -418,7 +519,7 @@ namespace RecoTool.Services.AmbreImport
             cmd.Parameters.AddWithValue("@ID", (object)rec.ID ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@DWINGS_GuaranteeID", (object)rec.DWINGS_GuaranteeID ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@DWINGS_InvoiceID", (object)rec.DWINGS_InvoiceID ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@DWINGS_CommissionID", (object)rec.DWINGS_CommissionID ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@DWINGS_BGPMT", (object)rec.DWINGS_BGPMT ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@Action", (object)rec.Action ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@Comments", (object)rec.Comments ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@InternalInvoiceReference", (object)rec.InternalInvoiceReference ?? DBNull.Value);

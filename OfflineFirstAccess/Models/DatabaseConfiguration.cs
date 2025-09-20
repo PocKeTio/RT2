@@ -288,7 +288,7 @@ namespace OfflineFirstAccess.Models
                             ID                     TEXT(255)  PRIMARY KEY,
                             DWINGS_GuaranteeID     TEXT(255),
                             DWINGS_InvoiceID       TEXT(255),
-                            DWINGS_CommissionID    TEXT(255),
+                            DWINGS_BGPMT    TEXT(255),
                             Action                 LONG,               
                             Comments               TEXT(255),
                             InternalInvoiceReference TEXT(255),
@@ -320,7 +320,7 @@ namespace OfflineFirstAccess.Models
             reconciliationTable.Columns.Add(new ColumnDefinition("ID", typeof(string), "TEXT(255)", false, true));
             reconciliationTable.Columns.Add(new ColumnDefinition("DWINGS_GuaranteeID", typeof(string), "TEXT(255)", true));
             reconciliationTable.Columns.Add(new ColumnDefinition("DWINGS_InvoiceID", typeof(string), "TEXT(255)", true));
-            reconciliationTable.Columns.Add(new ColumnDefinition("DWINGS_CommissionID", typeof(string), "TEXT(255)", true));
+            reconciliationTable.Columns.Add(new ColumnDefinition("DWINGS_BGPMT", typeof(string), "TEXT(255)", true));
 
             reconciliationTable.Columns.Add(new ColumnDefinition("Action", typeof(int), "LONG", false));
             reconciliationTable.Columns.Add(new ColumnDefinition("Comments", typeof(string), "TEXT(255)", true));

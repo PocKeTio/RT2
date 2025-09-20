@@ -36,7 +36,7 @@ namespace RecoTool.Windows
                     if (item == null) return false;
                     return !string.IsNullOrWhiteSpace(item.DWINGS_GuaranteeID)
                            || !string.IsNullOrWhiteSpace(item.DWINGS_InvoiceID)
-                           || !string.IsNullOrWhiteSpace(item.DWINGS_CommissionID)
+                           || !string.IsNullOrWhiteSpace(item.DWINGS_BGPMT)
                            || !string.IsNullOrWhiteSpace(item.GUARANTEE_ID)
                            || !string.IsNullOrWhiteSpace(item.INVOICE_ID)
                            || !string.IsNullOrWhiteSpace(item.COMMISSION_ID);

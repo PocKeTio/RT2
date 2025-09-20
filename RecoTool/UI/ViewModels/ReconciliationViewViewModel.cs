@@ -255,7 +255,7 @@ namespace RecoTool.UI.ViewModels
             if (!string.IsNullOrWhiteSpace(f.DwCommissionId))
             {
                 var id = f.DwCommissionId;
-                q = q.Where(x => (x.DWINGS_CommissionID ?? string.Empty).IndexOf(id, System.StringComparison.OrdinalIgnoreCase) >= 0
+                q = q.Where(x => (x.DWINGS_BGPMT ?? string.Empty).IndexOf(id, System.StringComparison.OrdinalIgnoreCase) >= 0
                                  || (x.COMMISSION_ID ?? string.Empty).IndexOf(id, System.StringComparison.OrdinalIgnoreCase) >= 0);
             }
 

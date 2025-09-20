@@ -202,11 +202,11 @@ namespace RecoTool.Windows
             }
             var gt = GetString(@"GUARANTEE_TYPE\s*=\s*'([^']*)'");
             if (!string.IsNullOrWhiteSpace(gt)) FilterGuaranteeType = MapDbToUi(gt);
-            var hasMatched = Regex.IsMatch(s, @"\(\(DWINGS_GuaranteeID\s+Is\s+Not\s+Null\s+AND\s+DWINGS_GuaranteeID\s+<>\s+''\)\s+OR\s+\(DWINGS_CommissionID\s+Is\s+Not\s+Null\s+AND\s+DWINGS_CommissionID\s+<>\s+''\)\)", RegexOptions.IgnoreCase);
-            var hasUnmatched = Regex.IsMatch(s, @"\(\(DWINGS_GuaranteeID\s+Is\s+Null\s+OR\s+DWINGS_GuaranteeID\s+=\s+''\)\s+AND\s+\(DWINGS_CommissionID\s+Is\s+Null\s+OR\s+DWINGS_CommissionID\s+=\s+''\)\)", RegexOptions.IgnoreCase);
+            var hasMatched = Regex.IsMatch(s, @"\(\(DWINGS_GuaranteeID\s+Is\s+Not\s+Null\s+AND\s+DWINGS_GuaranteeID\s+<>\s+''\)\s+OR\s+\(DWINGS_BGPMT\s+Is\s+Not\s+Null\s+AND\s+DWINGS_BGPMT\s+<>\s+''\)\)", RegexOptions.IgnoreCase);
+            var hasUnmatched = Regex.IsMatch(s, @"\(\(DWINGS_GuaranteeID\s+Is\s+Null\s+OR\s+DWINGS_GuaranteeID\s+=\s+''\)\s+AND\s+\(DWINGS_BGPMT\s+Is\s+Null\s+OR\s+DWINGS_BGPMT\s+=\s+''\)\)", RegexOptions.IgnoreCase);
             FilterStatus = hasMatched ? "Matched" : hasUnmatched ? "Unmatched" : FilterStatus;
             FilterDwGuaranteeId = GetString(@"DWINGS_GuaranteeID.*LIKE\s+'%([^']*)%'");
-            FilterDwCommissionId = GetString(@"DWINGS_CommissionID.*LIKE\s+'%([^']*)%'");
+            FilterDwCommissionId = GetString(@"DWINGS_BGPMT.*LIKE\s+'%([^']*)%'");
 
             // Restore DeletedDate single-day filter if present (expects pattern a.DeleteDate >= #YYYY-MM-DD# AND a.DeleteDate < #YYYY-MM-DD#)
             try

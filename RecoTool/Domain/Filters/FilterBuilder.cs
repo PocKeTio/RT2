@@ -68,15 +68,15 @@ namespace RecoTool.Domain.Filters
             }
 
             if (!string.IsNullOrWhiteSpace(f.DwGuaranteeId)) parts.Add($"DWINGS_GuaranteeID LIKE '%{Esc(f.DwGuaranteeId)}%'");
-            if (!string.IsNullOrWhiteSpace(f.DwCommissionId)) parts.Add($"DWINGS_CommissionID LIKE '%{Esc(f.DwCommissionId)}%'");
+            if (!string.IsNullOrWhiteSpace(f.DwCommissionId)) parts.Add($"DWINGS_BGPMT LIKE '%{Esc(f.DwCommissionId)}%'");
 
             if (!string.IsNullOrWhiteSpace(f.Status))
             {
                 var status = f.Status.Trim();
                 if (string.Equals(status, "Matched", StringComparison.OrdinalIgnoreCase))
-                    parts.Add("((DWINGS_GuaranteeID Is Not Null AND DWINGS_GuaranteeID <> '') OR (DWINGS_CommissionID Is Not Null AND DWINGS_CommissionID <> ''))");
+                    parts.Add("((DWINGS_GuaranteeID Is Not Null AND DWINGS_GuaranteeID <> '') OR (DWINGS_BGPMT Is Not Null AND DWINGS_BGPMT <> ''))");
                 else if (string.Equals(status, "Unmatched", StringComparison.OrdinalIgnoreCase))
-                    parts.Add("((DWINGS_GuaranteeID Is Null OR DWINGS_GuaranteeID = '') AND (DWINGS_CommissionID Is Null OR DWINGS_CommissionID = ''))");
+                    parts.Add("((DWINGS_GuaranteeID Is Null OR DWINGS_GuaranteeID = '') AND (DWINGS_BGPMT Is Null OR DWINGS_BGPMT = ''))");
                 else if (string.Equals(status, "Live", StringComparison.OrdinalIgnoreCase))
                     parts.Add("a.DeleteDate IS NULL");
                 else if (string.Equals(status, "Archived", StringComparison.OrdinalIgnoreCase))

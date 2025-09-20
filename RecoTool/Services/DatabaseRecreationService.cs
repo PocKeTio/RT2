@@ -71,7 +71,7 @@ namespace RecoTool.Services
                    .WithPrimaryKey("ID", typeof(string))
                    .WithColumn("DWINGS_GuaranteeID", typeof(string), "TEXT(255)")
                    .WithColumn("DWINGS_InvoiceID", typeof(string), "TEXT(255)")
-                   .WithColumn("DWINGS_CommissionID", typeof(string), "TEXT(255)")
+                   .WithColumn("DWINGS_BGPMT", typeof(string), "TEXT(255)")
                    .WithColumn("Action", typeof(int), "LONG")
                    .WithColumn("Assignee", typeof(string), "TEXT(255)")
                    .WithColumn("Comments", typeof(string), "LONGTEXT")

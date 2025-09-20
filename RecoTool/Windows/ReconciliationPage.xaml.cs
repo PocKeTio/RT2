@@ -86,6 +86,18 @@ namespace RecoTool.Windows
         {
             try
             {
+                // Bring this window (the one the user clicked) to front first
+                try
+                {
+                    var owner = Window.GetWindow(this);
+                    if (owner != null)
+                    {
+                        owner.Activate();
+                        owner.Topmost = true; owner.Topmost = false;
+                    }
+                }
+                catch { }
+
                 if (_invoiceFinderWindow == null || !_invoiceFinderWindow.IsVisible)
                 {
                     _invoiceFinderWindow = new InvoiceFinderWindow();

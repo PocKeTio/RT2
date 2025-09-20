@@ -252,7 +252,7 @@ namespace RecoTool.UI.Views.Windows
                 {
                     _item.DWINGS_GuaranteeID,
                     _item.DWINGS_InvoiceID,
-                    _item.DWINGS_CommissionID,
+                    _item.DWINGS_BGPMT,
                     _item.GUARANTEE_ID,
                     _item.INVOICE_ID,
                     _item.COMMISSION_ID
@@ -575,7 +575,7 @@ namespace RecoTool.UI.Views.Windows
         {
             return !string.IsNullOrWhiteSpace(x?.DWINGS_GuaranteeID)
                    || !string.IsNullOrWhiteSpace(x?.DWINGS_InvoiceID)
-                   || !string.IsNullOrWhiteSpace(x?.DWINGS_CommissionID);
+                   || !string.IsNullOrWhiteSpace(x?.DWINGS_BGPMT);
         }
 
 

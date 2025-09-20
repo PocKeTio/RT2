@@ -148,6 +148,18 @@ namespace RecoTool.Windows
         {
             try
             {
+                // Bring the window where the click occurred to front to ensure correct z-order
+                try
+                {
+                    var owner = Window.GetWindow(this);
+                    if (owner != null)
+                    {
+                        owner.Activate();
+                        owner.Topmost = true; owner.Topmost = false; // bring-to-front trick without staying topmost
+                    }
+                }
+                catch { }
+
                 var tb = sender as TextBlock;
                 var rowData = tb?.DataContext as ReconciliationViewData;
                 OpenMatchedPopup(rowData);

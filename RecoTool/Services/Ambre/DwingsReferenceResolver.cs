@@ -105,8 +105,16 @@ namespace RecoTool.Services.AmbreImport
             DwingsTokens tokens,
             List<DwingsInvoiceDto> dwInvoices)
         {
-            // Prefer explicit field, then extracted BGI
-            var bgi = dataAmbre.Receivable_InvoiceFromAmbre?.Trim() ?? tokens.Bgi;
+            // Prefer explicit field, then extracted BGI with priority:
+            // Reconciliation_Num -> ReconciliationOrigin_Num -> RawLabel (last)
+            string ExtractBgiReceivableOrdered()
+            {
+                return DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Reconciliation_Num)
+                       ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.ReconciliationOrigin_Num)
+                       ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.RawLabel);
+            }
+
+            var bgi = dataAmbre.Receivable_InvoiceFromAmbre?.Trim() ?? ExtractBgiReceivableOrdered();
             
             if (string.IsNullOrWhiteSpace(bgi))
                 return ResolveByOfficialRef(dataAmbre, dwInvoices); // try OfficialRef exact match if no BGI
@@ -220,12 +228,17 @@ namespace RecoTool.Services.AmbreImport
             DwingsTokens tokens,
             List<DwingsInvoiceDto> dwInvoices)
         {
+            // For suggestions, prefer explicit Receivable_InvoiceFromAmbre, else BGI with same receivable order
+            string bgiOrdered = DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Reconciliation_Num)
+                                ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.ReconciliationOrigin_Num)
+                                ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.RawLabel);
+
             var suggestions = DwingsLinkingHelper.SuggestInvoicesForAmbre(
                 dwInvoices,
                 rawLabel: dataAmbre.RawLabel,
                 reconciliationNum: dataAmbre.Reconciliation_Num,
                 reconciliationOriginNum: dataAmbre.ReconciliationOrigin_Num,
-                explicitBgi: tokens.Bgi ?? dataAmbre.Receivable_InvoiceFromAmbre,
+                explicitBgi: dataAmbre.Receivable_InvoiceFromAmbre?.Trim() ?? bgiOrdered,
                 guaranteeId: tokens.GuaranteeId,
                 ambreDate: dataAmbre.Operation_Date ?? dataAmbre.Value_Date,
                 ambreAmount: dataAmbre.SignedAmount,

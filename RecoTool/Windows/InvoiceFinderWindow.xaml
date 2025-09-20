@@ -41,7 +41,7 @@
 
                     <!-- Row 2: Business Case / Methods -->
                     <StackPanel Margin="4">
-                        <TextBlock Text="BUSINESS_CASE_REFERENCE / BUSINESS_CASE_ID" FontWeight="SemiBold"/>
+                        <TextBlock Text="GUARANTEE_ID" FontWeight="SemiBold"/>
                         <TextBox x:Name="BusinessCaseText" TextChanged="OnFilterChanged"/>
                     </StackPanel>
                     <StackPanel Margin="4">

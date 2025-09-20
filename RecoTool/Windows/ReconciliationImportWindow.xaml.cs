@@ -43,35 +43,6 @@ namespace RecoTool.Windows
             }
         }
 
-        private static int? InferActionFromComments(string comments)
-        {
-            if (string.IsNullOrWhiteSpace(comments)) return null;
-            var s = comments.Trim();
-            var u = s.ToUpperInvariant();
-
-            // Keyword-based mapping (extendable)
-            // Direct matches for explicit actions
-            if (u.Contains("REFUND")) return (int)ActionType.Refund;
-            if (u.Contains("REMIND")) return (int)ActionType.Remind;
-            if (u.Contains("TRIGGERED")) return (int)ActionType.Triggered;
-            if (u.Contains("TRIGGER")) return (int)ActionType.Trigger;
-            if (u.Contains("EXECUTE")) return (int)ActionType.Execute;
-            if (u.Contains("MATCH")) return (int)ActionType.Match;
-            if (u.Contains("ADJUST")) return (int)ActionType.Adjust;
-            if (u.Contains("REQUEST")) return (int)ActionType.Request;
-            if (u.Contains("INVESTIGATE") || u.Contains("CHECK")) return (int)ActionType.Investigate;
-            if (u.Contains("PRICING")) return (int)ActionType.DoPricing;
-            if (u.Contains("CLAIM")) return (int)ActionType.ToClaim;
-            if (u.Contains("SDD")) return (int)ActionType.ToDoSDD;
-
-            // Status-like keywords
-            if (u.Contains("DONE")) return (int)ActionType.Match; // treat as resolved/matched
-            if (u.Contains("TO DO") || u.Contains("TODO")) return (int)ActionType.Investigate; // pending work
-            if (u.Contains("TO BE CLEANED") || u.Contains("CLEAN")) return (int)ActionType.Adjust;
-
-            return null;
-        }
-
         private static int? InferActionFromColor(int? oleColor)
         {
             if (oleColor == null || oleColor.Value == 0) return null;

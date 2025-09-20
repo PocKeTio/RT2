@@ -97,7 +97,7 @@ namespace RecoTool.Services.Queries
                                    r.ReasonNonRisky,
                                    r.ModifiedBy AS Reco_ModifiedBy,
                                    IIF(dup.DupCount > 1, True, False) AS IsPotentialDuplicate,
-                                    -- DWINGS guarantee fields set to NULL here; enriched in service
+
                                     NULL AS SYNDICATE,
                                     NULL AS GUARANTEE_AMOUNT,
                                     NULL AS GUARANTEE_CURRENCY,
@@ -134,7 +134,7 @@ namespace RecoTool.Services.Queries
                                   NULL AS G_AUTOMATICBOOKOFF,
                                   NULL AS G_NATUREOFDEAL,
                                   NULL AS G_GUARANTEE_TYPE,
-                                  -- Invoice fields resolved via enricher (avoid SQL join duplication)
+
                                   NULL AS INVOICE_ID,
                                   NULL AS I_T_INVOICE_STATUS,
                                   NULL AS I_BILLING_AMOUNT,

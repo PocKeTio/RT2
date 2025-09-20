@@ -545,6 +545,7 @@
                                     <TextBlock Grid.Column="0" Text="Potential Duplicates:" VerticalAlignment="Center"/>
                                     <CheckBox x:Name="PotentialDuplicatesCheckBox" Grid.Column="1" Margin="5,0,0,0"
                                               Content="Show only potential duplicates"
+                                              ToolTip="Show only rows where the same Event_Num occurs more than once in Ambre (DupCount > 1)."
                                               IsChecked="{Binding VM.FilterPotentialDuplicates, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                 </Grid>
 
@@ -836,12 +837,52 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <!-- Matched indicator (clickable) -->
-                            <DataGridTemplateColumn Header="" Width="36" IsReadOnly="True" CanUserResize="False" CanUserReorder="False">
+                            <!-- Group indicator (clickable) -->
+                            <DataGridTemplateColumn Header="Group" Width="50" IsReadOnly="True" CanUserResize="False" CanUserReorder="False">
+                                <!-- Override cell style to avoid global PreviewMouseLeftButtonDown edit interception -->
+                                <DataGridTemplateColumn.CellStyle>
+                                    <Style TargetType="DataGridCell">
+                                        <Setter Property="Padding" Value="6,2"/>
+                                        <Setter Property="Background" Value="Transparent"/>
+                                        <Setter Property="BorderBrush" Value="#DDDDDD"/>
+                                        <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="DataGridCell">
+                                                    <Grid>
+                                                        <Border x:Name="CellBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                                                            <ContentPresenter VerticalAlignment="Center" Margin="2,0,18,0"/>
+                                                        </Border>
+                                                        <TextBlock x:Name="EditGlyph" Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#9AA1B2"
+                                                                   HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,4,0" Opacity="0"/>
+                                                    </Grid>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsReadOnly" Value="False">
+                                                            <Setter TargetName="EditGlyph" Property="Opacity" Value="0.35"/>
+                                                            <Setter Property="ToolTip" Value="Editable"/>
+                                                        </Trigger>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter TargetName="CellBorder" Property="Background" Value="#F7FAFF"/>
+                                                            <Setter TargetName="EditGlyph" Property="Opacity" Value="0.65"/>
+                                                        </Trigger>
+                                                        <Trigger Property="IsSelected" Value="True">
+                                                            <Setter TargetName="CellBorder" Property="Background" Value="#DCEBFF"/>
+                                                            <Setter Property="BorderBrush" Value="#A7C5FF"/>
+                                                        </Trigger>
+                                                        <Trigger Property="IsReadOnly" Value="True">
+                                                            <Setter TargetName="EditGlyph" Property="Opacity" Value="0"/>
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </DataGridTemplateColumn.CellStyle>
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="M" Foreground="#2E7D32" FontWeight="Bold" HorizontalAlignment="Center" Cursor="Hand"
-                                                   ToolTip="Show matched entries across accounts"
+                                        <TextBlock Text="G" Foreground="#2E7D32" FontWeight="Bold" HorizontalAlignment="Center" Cursor="Hand"
+                                                   ToolTip="Open related entries across accounts (appears only when a cross-account pair exists: same BGI or Internal Reference)"
+                                                   Visibility="{Binding IsMatchedAcrossAccounts, Converter={StaticResource BoolToVisibilityConverter}}"
                                                    MouseLeftButtonUp="MatchedIndicator_MouseLeftButtonUp"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
@@ -869,7 +910,7 @@
                             <DataGridTextColumn Header="Pivot TRN" Binding="{Binding Pivot_TRNFromLabel}" Width="100" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Category" Binding="{Binding CategoryLabel}" Width="140" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Raw Label" Binding="{Binding RawLabel}" Width="200" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Receivable DW Ref" Binding="{Binding Receivable_DWRefFromAmbre}" Width="120" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="BGI Ref" Binding="{Binding Receivable_DWRefFromAmbre}" Width="120" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Local Signed Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="130" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Operation Date" Binding="{Binding Operation_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Reconciliation Num" Binding="{Binding Reconciliation_Num}" Width="130" IsReadOnly="True"/>

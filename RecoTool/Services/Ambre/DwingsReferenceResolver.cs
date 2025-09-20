@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 using OfflineFirstAccess.Helpers;
 using RecoTool.Helpers;
 using RecoTool.Models;
@@ -108,12 +109,14 @@ namespace RecoTool.Services.AmbreImport
             var bgi = dataAmbre.Receivable_InvoiceFromAmbre?.Trim() ?? tokens.Bgi;
             
             if (string.IsNullOrWhiteSpace(bgi))
-                return null;
+                return ResolveByOfficialRef(dataAmbre, dwInvoices); // try OfficialRef exact match if no BGI
 
             var hit = DwingsLinkingHelper.ResolveInvoiceByBgiWithAmount(
                 dwInvoices, bgi, dataAmbre.SignedAmount);
-                
-            return hit?.INVOICE_ID;
+            if (hit != null) return hit.INVOICE_ID;
+
+            // Fallback: OfficialRef exact match
+            return ResolveByOfficialRef(dataAmbre, dwInvoices);
         }
 
         private string ResolvePivotInvoice(
@@ -139,6 +142,11 @@ namespace RecoTool.Services.AmbreImport
                     return hit.INVOICE_ID;
             }
 
+            // Try OfficialRef (exact match on BUSINESS_CASE_REFERENCE/ID) from Reconciliation fields/label
+            var byOfficial = ResolveByOfficialRef(dataAmbre, dwInvoices);
+            if (!string.IsNullOrWhiteSpace(byOfficial))
+                return byOfficial;
+
             // Try guarantee
             if (!string.IsNullOrWhiteSpace(tokens.GuaranteeId))
             {
@@ -151,6 +159,52 @@ namespace RecoTool.Services.AmbreImport
             }
 
             return null;
+        }
+
+        // OfficialRef exact match (SenderReference): extract alphanumeric tokens from Reconciliation_Num
+        // and match equality (case-insensitive) against invoice SENDER_REFERENCE.
+        private string ResolveByOfficialRef(DataAmbre dataAmbre, List<DwingsInvoiceDto> dwInvoices)
+        {
+            if (dwInvoices == null || dwInvoices.Count == 0 || dataAmbre == null) return null;
+
+            // Build token set from Reconciliation_Num and fallback ReconciliationOrigin_Num
+            var tokenSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            void AddTokens(string s)
+            {
+                if (string.IsNullOrWhiteSpace(s)) return;
+                foreach (var t in Regex.Split(s, @"[^A-Za-z0-9]+").Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p.Trim()))
+                    tokenSet.Add(t);
+            }
+            AddTokens(dataAmbre.Reconciliation_Num);
+            AddTokens(dataAmbre.ReconciliationOrigin_Num);
+            if (tokenSet.Count == 0) return null;
+
+            var hits = dwInvoices.Where(i =>
+                !string.IsNullOrWhiteSpace(i?.SENDER_REFERENCE) && tokenSet.Contains(i.SENDER_REFERENCE)
+            ).ToList();
+
+            if (hits.Count == 0) return null;
+
+            // Rank by date then amount proximity
+            var ambreDate = dataAmbre.Operation_Date ?? dataAmbre.Value_Date;
+            var ambreAmt = dataAmbre.SignedAmount;
+
+            double DateScore(DwingsInvoiceDto i)
+            {
+                if (!ambreDate.HasValue) return double.MaxValue;
+                var best = i?.START_DATE ?? i?.END_DATE;
+                if (!best.HasValue) return double.MaxValue;
+                return Math.Abs((best.Value.Date - ambreDate.Value.Date).TotalDays);
+            }
+
+            decimal AmountScore(DwingsInvoiceDto i)
+            {
+                if (!i.BILLING_AMOUNT.HasValue) return decimal.MaxValue;
+                return Math.Abs(ambreAmt - i.BILLING_AMOUNT.Value);
+            }
+
+            var chosen = hits.OrderBy(DateScore).ThenBy(AmountScore).FirstOrDefault();
+            return chosen?.INVOICE_ID;
         }
 
         private string GetGuaranteeIdFromInvoice(string invoiceId, List<DwingsInvoiceDto> dwInvoices)

@@ -171,18 +171,23 @@ namespace RecoTool.Services.AmbreImport
         {
             return new Dictionary<string, Action<DataAmbre, object>>
             {
-                { "Account_ID", (d, v) => d.Account_ID = v?.ToString() },
-                { "CCY", (d, v) => d.CCY = v?.ToString() },
-                { "Country", (d, v) => d.Country = v?.ToString() },
-                { "Event_Num", (d, v) => d.Event_Num = v?.ToString() },
-                { "Folder", (d, v) => d.Folder = v?.ToString() },
-                { "RawLabel", (d, v) => d.RawLabel = v?.ToString() },
-                { "LocalSignedAmount", (d, v) => d.LocalSignedAmount = ValidationHelper.SafeParseDecimal(v) },
-                { "Operation_Date", (d, v) => d.Operation_Date = ValidationHelper.SafeParseDateTime(v) },
-                { "Reconciliation_Num", (d, v) => d.Reconciliation_Num = v?.ToString() },
-                { "ReconciliationOrigin_Num", (d, v) => d.ReconciliationOrigin_Num = v?.ToString() },
-                { "SignedAmount", (d, v) => d.SignedAmount = ValidationHelper.SafeParseDecimal(v) },
-                { "Value_Date", (d, v) => d.Value_Date = ValidationHelper.SafeParseDateTime(v) }
+                // Strings: set only if currently empty (do not override values set by transformations)
+                { "Account_ID", (d, v) => { if (string.IsNullOrWhiteSpace(d.Account_ID)) d.Account_ID = v?.ToString(); } },
+                { "CCY", (d, v) => { if (string.IsNullOrWhiteSpace(d.CCY)) d.CCY = v?.ToString(); } },
+                { "Country", (d, v) => { if (string.IsNullOrWhiteSpace(d.Country)) d.Country = v?.ToString(); } },
+                { "Event_Num", (d, v) => { if (string.IsNullOrWhiteSpace(d.Event_Num)) d.Event_Num = v?.ToString(); } },
+                { "Folder", (d, v) => { if (string.IsNullOrWhiteSpace(d.Folder)) d.Folder = v?.ToString(); } },
+                { "RawLabel", (d, v) => { if (string.IsNullOrWhiteSpace(d.RawLabel)) d.RawLabel = v?.ToString(); } },
+                { "Reconciliation_Num", (d, v) => { if (string.IsNullOrWhiteSpace(d.Reconciliation_Num)) d.Reconciliation_Num = v?.ToString(); } },
+                { "ReconciliationOrigin_Num", (d, v) => { if (string.IsNullOrWhiteSpace(d.ReconciliationOrigin_Num)) d.ReconciliationOrigin_Num = v?.ToString(); } },
+
+                // Nullable dates: set only if currently null
+                { "Operation_Date", (d, v) => { if (!d.Operation_Date.HasValue) d.Operation_Date = ValidationHelper.SafeParseDateTime(v); } },
+                { "Value_Date", (d, v) => { if (!d.Value_Date.HasValue) d.Value_Date = ValidationHelper.SafeParseDateTime(v); } },
+
+                // Amounts (non-nullable decimals): set only if currently default (0)
+                { "LocalSignedAmount", (d, v) => { if (d.LocalSignedAmount == default(decimal)) d.LocalSignedAmount = ValidationHelper.SafeParseDecimal(v); } },
+                { "SignedAmount", (d, v) => { if (d.SignedAmount == default(decimal)) d.SignedAmount = ValidationHelper.SafeParseDecimal(v); } },
             };
         }
 

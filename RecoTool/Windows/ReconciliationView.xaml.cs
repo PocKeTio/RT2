@@ -286,6 +286,8 @@ namespace RecoTool.Windows
                     if (existingRem != null) cm.Items.Remove(existingRem);
                     var existingDone = cm.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "__MarkActionDone__");
                     if (existingDone != null) cm.Items.Remove(existingDone);
+                    var existingCopy = cm.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "__Copy__");
+                    if (existingCopy != null) cm.Items.Remove(existingCopy);
                     var sep = cm.Items.OfType<Separator>().FirstOrDefault(s => (s.Tag as string) == "__InjectedSep__");
                     if (sep != null) cm.Items.Remove(sep);
 
@@ -302,6 +304,20 @@ namespace RecoTool.Windows
                     var commentItem = new MenuItem { Header = "Set Comment…", Tag = "__SetComment__" };
                     commentItem.Click += QuickSetCommentMenuItem_Click;
                     cm.Items.Add(commentItem);
+
+                    // Copy submenu (ID / BGI Ref / All line with header)
+                    var copyRoot = new MenuItem { Header = "Copy", Tag = "__Copy__" };
+                    var copyId = new MenuItem { Header = "ID" };
+                    copyId.Click += (s2, e2) => CopySelectionIds();
+                    var copyBgi = new MenuItem { Header = "BGI Ref" };
+                    copyBgi.Click += (s2, e2) => CopySelectionBgiRef();
+                    var copyAll = new MenuItem { Header = "All line (with header)" };
+                    copyAll.Click += (s2, e2) => CopySelectionAllLines(includeHeader: true);
+                    copyRoot.Items.Add(copyId);
+                    copyRoot.Items.Add(copyBgi);
+                    copyRoot.Items.Add(new Separator());
+                    copyRoot.Items.Add(copyAll);
+                    cm.Items.Add(copyRoot);
                 }
                 catch { }
             }
@@ -331,7 +347,7 @@ namespace RecoTool.Windows
 
                 if (TryExtractPresetFromSql(sql, out var preset, out var pureWhere))
                 {
-                    // Restaurer l'UI de la vue selon le snapshot
+                    // Restaurer l'UI de la vue selon le snapshot 
                     ApplyFilterPreset(preset);
                     // Recalculer une WHERE clause propre basée sur l'état courant (sans compte du preset)
                     _backendFilterSql = GenerateWhereClause();
@@ -753,21 +769,123 @@ namespace RecoTool.Windows
             {
                 // Open detail of an Ambre line
                 MessageBox.Show($"Ambre Detail - ID: {item.ID}\nAccount: {item.Account_ID}\nAmount: {item.SignedAmount:N2}\nCurrency: {item.CCY}\nDate: {item.Operation_Date:d}",
-                               "Ambre Detail", MessageBoxButton.OK, MessageBoxImage.Information);
+                    "Ambre Detail", MessageBoxButton.OK, MessageBoxImage.Information);
             }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Error opening detail: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
+            catch { }
         }
 
-        /* moved to partial: Title.cs */
-        /* moved to partial: Title.cs */
+        // --- Copy helpers ---
+        private List<ReconciliationViewData> GetCurrentSelection()
+        {
+            try
+            {
+                var dg = this.FindName("ResultsDataGrid") as DataGrid;
+                if (dg == null) return new List<ReconciliationViewData>();
+                var items = dg.SelectedItems?.Cast<ReconciliationViewData>().ToList() ?? new List<ReconciliationViewData>();
+                if (items.Count == 0 && dg.CurrentItem is ReconciliationViewData one) items.Add(one);
+                return items;
+            }
+            catch { return new List<ReconciliationViewData>(); }
+        }
 
-        /* moved to partial: Title.cs */
-        /* moved to partial: Title.cs */
+        private void CopySelectionIds()
+        {
+            try
+            {
+                var items = GetCurrentSelection();
+                if (items.Count == 0) return;
+                var sb = new StringBuilder();
+                foreach (var it in items)
+                {
+                    sb.AppendLine(it?.ID ?? string.Empty);
+                }
+                Clipboard.SetText(sb.ToString());
+            }
+            catch { }
+        }
 
-        
+        private void CopySelectionBgiRef()
+        {
+            try
+            {
+                var dg = this.FindName("ResultsDataGrid") as DataGrid;
+                var items = GetCurrentSelection();
+                if (dg == null || items.Count == 0) return;
+
+                // Find the column bound to the displayed "BGI Ref" header
+                string headerName = "BGI Ref";
+                var col = dg.Columns.FirstOrDefault(c => string.Equals(c.Header?.ToString(), headerName, StringComparison.OrdinalIgnoreCase)) as DataGridBoundColumn;
+                // Fallback to data property if column not found
+                string path = null;
+                if (col?.Binding is Binding b && b.Path != null) path = b.Path.Path;
+                if (string.IsNullOrWhiteSpace(path)) path = nameof(ReconciliationViewData.Receivable_DWRefFromAmbre);
+
+                var sb = new StringBuilder();
+                foreach (var it in items)
+                {
+                    sb.AppendLine(GetPropertyString(it, path));
+                }
+                Clipboard.SetText(sb.ToString());
+            }
+            catch { }
+        }
+
+        private void CopySelectionAllLines(bool includeHeader)
+        {
+            try
+            {
+                var dg = this.FindName("ResultsDataGrid") as DataGrid;
+                var items = GetCurrentSelection();
+                if (dg == null || items.Count == 0) return;
+
+                // Build list of exportable columns in current display order
+                var cols = dg.Columns
+                    .Where(c => c.Visibility == Visibility.Visible)
+                    .Where(c => !string.IsNullOrWhiteSpace(c.Header?.ToString()))
+                    .OfType<DataGridBoundColumn>()
+                    .ToList();
+
+                var sb = new StringBuilder();
+                // Header
+                if (includeHeader)
+                {
+                    sb.AppendLine(string.Join("\t", cols.Select(c => c.Header?.ToString()?.Trim())));
+                }
+
+                foreach (var it in items)
+                {
+                    var values = cols.Select(c =>
+                    {
+                        var p = (c.Binding as Binding)?.Path?.Path;
+                        return GetPropertyString(it, p);
+                    });
+                    sb.AppendLine(string.Join("\t", values));
+                }
+
+                Clipboard.SetText(sb.ToString());
+            }
+            catch { }
+        }
+
+        private string GetPropertyString(object obj, string path)
+        {
+            if (obj == null || string.IsNullOrWhiteSpace(path)) return string.Empty;
+            try
+            {
+                var prop = obj.GetType().GetProperty(path);
+                if (prop == null) return string.Empty;
+                var val = prop.GetValue(obj);
+                if (val == null) return string.Empty;
+                // Format dates like grid
+                if (val is DateTime dt) return dt.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+                if (val is DateTime ndt) return ndt.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+                if (val is decimal dec) return dec.ToString("N2", CultureInfo.InvariantCulture);
+                if (val is decimal ndec) return ndec.ToString("N2", CultureInfo.InvariantCulture);
+                return Convert.ToString(val, CultureInfo.InvariantCulture) ?? string.Empty;
+            }
+            catch { return string.Empty; }
+        }
+
 
         /// <summary>
         /// Obtient la valeur d'une TextBox

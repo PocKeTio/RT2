@@ -292,13 +292,14 @@ namespace RecoTool.Services
             try
             {
                 var currentCountry = _offlineFirstService?.CurrentCountry;
-                var pivotId = currentCountry?.CNT_AmbrePivot;
-                var recvId = currentCountry?.CNT_AmbreReceivable;
+                var pivotId = currentCountry?.CNT_AmbrePivot?.Trim();
+                var recvId = currentCountry?.CNT_AmbreReceivable?.Trim();
                 foreach (var row in list)
                 {
-                    if (!string.IsNullOrWhiteSpace(pivotId) && string.Equals(row.Account_ID, pivotId, StringComparison.OrdinalIgnoreCase))
+                    var acc = row.Account_ID?.Trim();
+                    if (!string.IsNullOrWhiteSpace(pivotId) && string.Equals(acc, pivotId, StringComparison.OrdinalIgnoreCase))
                         row.AccountSide = "P";
-                    else if (!string.IsNullOrWhiteSpace(recvId) && string.Equals(row.Account_ID, recvId, StringComparison.OrdinalIgnoreCase))
+                    else if (!string.IsNullOrWhiteSpace(recvId) && string.Equals(acc, recvId, StringComparison.OrdinalIgnoreCase))
                         row.AccountSide = "R";
                     else row.AccountSide = null;
                 }
@@ -324,6 +325,42 @@ namespace RecoTool.Services
                     if (hasP && hasR)
                     {
                         foreach (var row in g) row.IsMatchedAcrossAccounts = true;
+                    }
+                }
+
+                // Fallback: if DWINGS_InvoiceID is not populated yet, try matching by BGI token present in AMBRE fields
+                // This helps when users manually link BGI in receivable/pivot text fields but enrichment did not resolve DWINGS_InvoiceID for both sides.
+                string Norm(string s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim().ToUpperInvariant();
+                string KeyFromRow(RecoTool.Services.DTOs.ReconciliationViewData r)
+                {
+                    // Priority order: DWINGS_InvoiceID -> Receivable_InvoiceFromAmbre -> extracted BGI from common text fields -> InternalInvoiceReference
+                    var k = Norm(r.DWINGS_InvoiceID);
+                    if (!string.IsNullOrWhiteSpace(k)) return k;
+                    k = Norm(r.Receivable_InvoiceFromAmbre);
+                    if (!string.IsNullOrWhiteSpace(k)) return k;
+                    // Try extract BGI token heuristically from available texts
+                    var probe = r.Reconciliation_Num;
+                    var token = DwingsLinkingHelper.ExtractBgiToken(probe)
+                               ?? DwingsLinkingHelper.ExtractBgiToken(r.Comments)
+                               ?? DwingsLinkingHelper.ExtractBgiToken(r.RawLabel)
+                               ?? DwingsLinkingHelper.ExtractBgiToken(r.Receivable_DWRefFromAmbre);
+                    if (!string.IsNullOrWhiteSpace(token)) return Norm(token);
+                    // Lastly, fall back to internal reference if present
+                    return Norm(r.InternalInvoiceReference);
+                }
+
+                var byAnyBgi = list
+                    .Select(r => new { Row = r, Key = KeyFromRow(r) })
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Key))
+                    .GroupBy(x => x.Key, StringComparer.OrdinalIgnoreCase);
+
+                foreach (var g in byAnyBgi)
+                {
+                    bool hasP = g.Any(x => string.Equals(x.Row.AccountSide, "P", StringComparison.OrdinalIgnoreCase));
+                    bool hasR = g.Any(x => string.Equals(x.Row.AccountSide, "R", StringComparison.OrdinalIgnoreCase));
+                    if (hasP && hasR)
+                    {
+                        foreach (var it in g) it.Row.IsMatchedAcrossAccounts = true;
                     }
                 }
             }
@@ -675,6 +712,17 @@ namespace RecoTool.Services
                             }
 
                             transaction.Commit();
+
+                            // Invalidate caches so next view refresh recomputes flags (e.g., IsMatchedAcrossAccounts)
+                            try
+                            {
+                                var countryId = _offlineFirstService?.CurrentCountryId;
+                                if (!string.IsNullOrWhiteSpace(countryId))
+                                    InvalidateReconciliationViewCache(countryId);
+                                else
+                                    InvalidateReconciliationViewCache();
+                            }
+                            catch { }
 
                             // Record changes in ChangeLog (stored locally via OfflineFirstService configuration)
                             try

@@ -931,12 +931,53 @@ namespace RecoTool.UI.Views.Windows
                 _reconciliation = reco;
                 StatusText.Text = "Linked and saved.";
                 UpdateLinkStatusBadge();
+                // Update cross-account "G" flags in the in-memory list immediately for this invoice
+                try { UpdateGFlagsAfterLink(reco.DWINGS_InvoiceID); } catch { }
                 await ShowLinkedInDwingsGridAsync(reco.DWINGS_InvoiceID, reco.DWINGS_GuaranteeID);
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Link failed: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        // Recompute IsMatchedAcrossAccounts in the current view model after a link operation
+        private void UpdateGFlagsAfterLink(string invoiceId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(invoiceId) || _all == null) return;
+
+                var key = invoiceId.Trim();
+                var cc = _offlineFirstService?.CurrentCountry;
+                var pivotId = cc?.CNT_AmbrePivot?.Trim();
+                var recvId = cc?.CNT_AmbreReceivable?.Trim();
+
+                var group = _all.Where(r => string.Equals(r?.DWINGS_InvoiceID?.Trim(), key, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (group.Count == 0) return;
+
+                // Ensure AccountSide is set consistently
+                foreach (var row in group)
+                {
+                    try
+                    {
+                        var acc = row?.Account_ID?.Trim();
+                        if (!string.IsNullOrWhiteSpace(pivotId) && string.Equals(acc, pivotId, StringComparison.OrdinalIgnoreCase))
+                            row.AccountSide = "P";
+                        else if (!string.IsNullOrWhiteSpace(recvId) && string.Equals(acc, recvId, StringComparison.OrdinalIgnoreCase))
+                            row.AccountSide = "R";
+                    }
+                    catch { }
+                }
+
+                bool hasP = group.Any(x => string.Equals(x?.AccountSide, "P", StringComparison.OrdinalIgnoreCase));
+                bool hasR = group.Any(x => string.Equals(x?.AccountSide, "R", StringComparison.OrdinalIgnoreCase));
+                foreach (var row in group)
+                {
+                    try { row.IsMatchedAcrossAccounts = hasP && hasR; } catch { }
+                }
+            }
+            catch { }
         }
 
         // Local regex extractors removed in favor of centralized RecoTool.Helpers.DwingsLinkingHelper

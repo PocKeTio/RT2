@@ -190,7 +190,19 @@ namespace RecoTool.Services.DTOs
         public string AccountSide { get; set; }
 
         // True if the reference (DWINGS_InvoiceID or InternalInvoiceReference) exists on both accounts
-        public bool IsMatchedAcrossAccounts { get; set; }
+        private bool _isMatchedAcrossAccounts;
+        public bool IsMatchedAcrossAccounts
+        {
+            get => _isMatchedAcrossAccounts;
+            set
+            {
+                if (_isMatchedAcrossAccounts != value)
+                {
+                    _isMatchedAcrossAccounts = value;
+                    OnPropertyChanged(nameof(IsMatchedAcrossAccounts));
+                }
+            }
+        }
 
         // Propriétés DWINGS
         public string GUARANTEE_ID { get; set; }

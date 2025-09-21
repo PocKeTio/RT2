@@ -26,6 +26,7 @@ namespace RecoTool.Domain.Filters
         public string EventNum { get; set; }
         public string DwGuaranteeId { get; set; }
         public string DwCommissionId { get; set; }
+        public string DwInvoiceId { get; set; }
         public int? TransactionTypeId { get; set; }
         public string TransactionType { get; set; }
         public string GuaranteeStatus { get; set; }

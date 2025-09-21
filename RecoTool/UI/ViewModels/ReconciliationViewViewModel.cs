@@ -103,6 +103,12 @@ namespace RecoTool.UI.ViewModels
             set { if (CurrentFilter.DwCommissionId != value) { CurrentFilter.DwCommissionId = value; OnPropertyChanged(); } }
         }
 
+        public string FilterDwInvoiceId
+        {
+            get => CurrentFilter.DwInvoiceId;
+            set { if (CurrentFilter.DwInvoiceId != value) { CurrentFilter.DwInvoiceId = value; OnPropertyChanged(); } }
+        }
+
         public string FilterGuaranteeType
         {
             get => CurrentFilter.GuaranteeType;
@@ -246,6 +252,12 @@ namespace RecoTool.UI.ViewModels
             }
 
             // DW ids
+            if (!string.IsNullOrWhiteSpace(f.DwInvoiceId))
+            {
+                var id = f.DwInvoiceId;
+                q = q.Where(x => (x.DWINGS_InvoiceID ?? string.Empty).IndexOf(id, System.StringComparison.OrdinalIgnoreCase) >= 0
+                                 || (x.INVOICE_ID ?? string.Empty).IndexOf(id, System.StringComparison.OrdinalIgnoreCase) >= 0);
+            }
             if (!string.IsNullOrWhiteSpace(f.DwGuaranteeId))
             {
                 var id = f.DwGuaranteeId;

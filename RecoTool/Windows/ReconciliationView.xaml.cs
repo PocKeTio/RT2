@@ -635,6 +635,7 @@ namespace RecoTool.Windows
         public string FilterComments { get => VM.FilterComments; set { VM.FilterComments = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterComments)); ScheduleApplyFiltersDebounced(); } }
         public string FilterDwGuaranteeId { get => VM.FilterDwGuaranteeId; set { VM.FilterDwGuaranteeId = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterDwGuaranteeId)); ScheduleApplyFiltersDebounced(); } }
         public string FilterDwCommissionId { get => VM.FilterDwCommissionId; set { VM.FilterDwCommissionId = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterDwCommissionId)); ScheduleApplyFiltersDebounced(); } }
+        public string FilterDwInvoiceId { get => VM.FilterDwInvoiceId; set { VM.FilterDwInvoiceId = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterDwInvoiceId)); ScheduleApplyFiltersDebounced(); } }
         public string FilterStatus { get => VM.FilterStatus; set { VM.FilterStatus = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterStatus)); ScheduleApplyFiltersDebounced(); } }
 
         // New string-backed ComboBox filters

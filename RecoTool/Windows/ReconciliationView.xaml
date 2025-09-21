@@ -336,6 +336,16 @@
                                         <ColumnDefinition Width="120"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="BGI:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
+                                        <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding VM.FilterDwInvoiceId, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </Border>
+                                </Grid>
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Guarantee Ref:" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
                                         <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding VM.FilterDwGuaranteeId, UpdateSourceTrigger=PropertyChanged}"/>
@@ -358,7 +368,7 @@
                                         <ColumnDefinition Width="120"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="Commission Ref:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <TextBlock Grid.Column="0" Text="BGPMT:" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <Border Grid.Column="1" Background="White" CornerRadius="4" BorderBrush="#DDDDDD" BorderThickness="1">
                                         <TextBox Margin="5" BorderThickness="0" Background="Transparent" Text="{Binding VM.FilterDwCommissionId, UpdateSourceTrigger=PropertyChanged}"/>
                                     </Border>

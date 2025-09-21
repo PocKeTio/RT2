@@ -905,17 +905,17 @@
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>
                             <DataGridTextColumn Header="Event Num" Binding="{Binding Event_Num}" Width="100" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Folder" Binding="{Binding Folder}" Width="100" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Pivot Transaction Codes" Binding="{Binding Pivot_TransactionCodesFromLabel}" Width="150" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Pivot TRN" Binding="{Binding Pivot_TRNFromLabel}" Width="100" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Category" Binding="{Binding CategoryLabel}" Width="140" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Raw Label" Binding="{Binding RawLabel}" Width="200" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="BGI Ref" Binding="{Binding Receivable_DWRefFromAmbre}" Width="120" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Local Signed Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="130" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Operation Date" Binding="{Binding Operation_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Reconciliation Num" Binding="{Binding Reconciliation_Num}" Width="130" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Receivable Invoice" Binding="{Binding Receivable_InvoiceFromAmbre}" Width="120" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Reconciliation Origin Num" Binding="{Binding ReconciliationOrigin_Num}" Width="150" IsReadOnly="True"/>
+                            <!-- DWINGS link fields (from T_Reconciliation) -->
+                            <DataGridTextColumn Header="DW Invoice ID (BGI)" Binding="{Binding DWINGS_InvoiceID}" Width="150" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="DW Commission (BGPMT)" Binding="{Binding DWINGS_BGPMT}" Width="170" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="DW Guarantee ID" Binding="{Binding DWINGS_GuaranteeID}" Width="170" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Signed Amount" Binding="{Binding SignedAmount, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Value Date" Binding="{Binding Value_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Guarantee Type" Width="130" IsReadOnly="True" SortMemberPath="G_GUARANTEE_TYPE">

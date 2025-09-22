@@ -281,15 +281,6 @@ namespace RecoTool.Services
         {
             bool isCredit = signedAmount > 0;
 
-            // Primary deterministic mapping based on the provided table.
-            // Where multiple options existed in the table for the same type, we choose a primary action/KPI and keep
-            // sensible fallbacks commented as documentation for potential future refinement.
-
-            if (transactionType == null)
-            {
-                return (ActionType.Investigate, KPIType.ITIssues);
-            }
-
             switch (transactionType.Value)
             {
                 case TransactionType.COLLECTION:

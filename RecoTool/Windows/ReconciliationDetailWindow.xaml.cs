@@ -262,7 +262,7 @@ namespace RecoTool.UI.Views.Windows
             }
 
             // DWINGS Guarantee extended fields (if present)
-            if (GNatureValue != null) GNatureValue.Text = _item.G_NATURE ?? string.Empty;
+            if (GNatureValue != null) GNatureValue.Text = _item.G_NATUREOFDEAL ?? string.Empty;
             if (GStatusValue != null) GStatusValue.Text = _item.G_EVENT_STATUS ?? string.Empty;
             if (GIssueDateValue != null) GIssueDateValue.Text = _item.G_ISSUEDATE ?? string.Empty;
             if (GPartyIdValue != null) GPartyIdValue.Text = _item.G_PARTY_ID ?? string.Empty;

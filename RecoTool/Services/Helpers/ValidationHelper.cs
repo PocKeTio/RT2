@@ -260,16 +260,15 @@ namespace RecoTool.Helpers
             if (value == null)
                 return 0;
 
+            // Direct numeric types
+            if (value is decimal dec) return dec;
+            if (value is double d) return Convert.ToDecimal(d);
+            if (value is float f) return Convert.ToDecimal(f);
+            if (value is int i) return i;
+            if (value is long l) return l;
+
             var stringValue = value.ToString().Trim();
-            
-            if (decimal.TryParse(stringValue, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal result))
-                return result;
-
-            // Essayer avec la culture locale
-            if (decimal.TryParse(stringValue, NumberStyles.Any, CultureInfo.CurrentCulture, out result))
-                return result;
-
-            return 0;
+            return SafeParseDecimal(stringValue, null);
         }
 
         /// <summary>
@@ -282,11 +281,18 @@ namespace RecoTool.Helpers
             if (value == null)
                 return null;
 
+            // Direct DateTime and Excel OLE Automation numeric dates
+            if (value is DateTime dt) return dt;
+            if (value is double oa)
+            {
+                try { return DateTime.FromOADate(oa); } catch { }
+            }
+
             var stringValue = value.ToString().Trim();
             if (string.IsNullOrWhiteSpace(stringValue))
                 return null;
 
-            // 1) Essayer d'abord les formats jour/mois (français) pour éviter l'inversion MM/JJ
+            // Try with French-like formats first to avoid MM/DD confusion
             var fr = CultureInfo.GetCultureInfo("fr-FR");
             string[] preferredFormats = new[]
             {
@@ -302,7 +308,7 @@ namespace RecoTool.Helpers
             if (DateTime.TryParseExact(stringValue, preferredFormats, fr, DateTimeStyles.None, out DateTime result))
                 return result;
 
-            // 2) Retenter en tolérant les secondes
+            // Tolerate seconds
             string[] extendedFormats = new[]
             {
                 "dd/MM/yyyy HH:mm:ss",
@@ -313,12 +319,84 @@ namespace RecoTool.Helpers
             if (DateTime.TryParseExact(stringValue, extendedFormats, fr, DateTimeStyles.None, out result))
                 return result;
 
-            // 3) Fallback: invariant et culture courante
+            // Fallback: invariant and current culture
             if (DateTime.TryParse(stringValue, CultureInfo.InvariantCulture, DateTimeStyles.None, out result))
                 return result;
             if (DateTime.TryParse(stringValue, CultureInfo.CurrentCulture, DateTimeStyles.None, out result))
                 return result;
 
+            return null;
+        }
+
+        /// <summary>
+        /// Culture-aware decimal parsing with cleaning of thousand separators.
+        /// </summary>
+        public static decimal SafeParseDecimal(object value, CultureInfo preferredCulture)
+        {
+            if (value == null) return 0;
+            if (value is decimal dec) return dec;
+            if (value is double d) return Convert.ToDecimal(d);
+            if (value is float f) return Convert.ToDecimal(f);
+            if (value is int i) return i;
+            if (value is long l) return l;
+
+            var s = value.ToString()?.Trim();
+            if (string.IsNullOrEmpty(s)) return 0;
+
+            // Try preferred culture first
+            if (preferredCulture != null && decimal.TryParse(s, NumberStyles.Any, preferredCulture, out var vPref))
+                return vPref;
+
+            // Heuristic cleanup: remove non-breaking spaces and normal spaces
+            var cleaned = s.Replace("\u00A0", "").Replace(" ", "");
+            // If preferredCulture has distinct decimal separator, normalize to '.' for invariant parsing
+            if (preferredCulture != null)
+            {
+                var decSep = preferredCulture.NumberFormat.NumberDecimalSeparator;
+                if (!string.IsNullOrEmpty(decSep) && decSep != ".")
+                    cleaned = cleaned.Replace(decSep, ".");
+                var grpSep = preferredCulture.NumberFormat.NumberGroupSeparator;
+                if (!string.IsNullOrEmpty(grpSep) && grpSep != ",")
+                    cleaned = cleaned.Replace(grpSep, "");
+            }
+
+            if (decimal.TryParse(cleaned, NumberStyles.Any, CultureInfo.InvariantCulture, out var vInv))
+                return vInv;
+
+            // Fallbacks
+            if (decimal.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var v1)) return v1;
+            if (decimal.TryParse(s, NumberStyles.Any, CultureInfo.CurrentCulture, out var v2)) return v2;
+            return 0;
+        }
+
+        /// <summary>
+        /// Culture-aware DateTime parsing with Excel numeric support.
+        /// </summary>
+        public static DateTime? SafeParseDateTime(object value, CultureInfo preferredCulture)
+        {
+            if (value == null) return null;
+            if (value is DateTime dt) return dt;
+            if (value is double oa)
+            {
+                try { return DateTime.FromOADate(oa); } catch { }
+            }
+
+            var s = value.ToString()?.Trim();
+            if (string.IsNullOrEmpty(s)) return null;
+
+            if (preferredCulture != null && DateTime.TryParse(s, preferredCulture, DateTimeStyles.None, out var vPref))
+                return vPref;
+
+            // Try dd/MM/yyyy style common in many EU countries
+            var fr = CultureInfo.GetCultureInfo("fr-FR");
+            string[] fmts = new[] { "dd/MM/yyyy", "d/M/yyyy", "dd/MM/yyyy HH:mm", "d/M/yyyy HH:mm", "dd/MM/yyyy HH:mm:ss", "d/M/yyyy HH:mm:ss" };
+            if (DateTime.TryParseExact(s, fmts, fr, DateTimeStyles.None, out var exFr))
+                return exFr;
+
+            if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out var inv))
+                return inv;
+            if (DateTime.TryParse(s, CultureInfo.CurrentCulture, DateTimeStyles.None, out var cur))
+                return cur;
             return null;
         }
     }

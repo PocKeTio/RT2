@@ -122,7 +122,7 @@ namespace RecoTool.Services
             }
         }
 
-        private string GetNetworkDwZipPath(string countryId)
+        public string GetNetworkDwZipPath(string countryId)
         {
             string networkDbPath = GetNetworkDwDbPath(countryId);
             string remoteDir = Path.GetDirectoryName(networkDbPath);
@@ -222,7 +222,7 @@ namespace RecoTool.Services
             try
             {
                 if (string.IsNullOrWhiteSpace(countryId)) return null;
-                string path = GetNetworkDwDbPath(countryId);
+                string path = GetNetworkDwZipPath(countryId);
                 if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
                 return File.GetLastWriteTime(path);
             }

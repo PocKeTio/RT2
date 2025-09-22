@@ -644,13 +644,14 @@ namespace RecoTool.Windows
                 if (importResult.Success)
                 {
                     LogMessage($"Import completed successfully!");
+                    LogMessage($"  - Processed rows: {importResult.ProcessedCount}");
                     LogMessage($"  - Imported rows: {importResult.ImportedCount}");
                     LogMessage($"  - Updated rows: {importResult.UpdatedCount}");
                     LogMessage($"  - Deleted rows: {importResult.DeletedCount}");
                     
                     UpdateProgress(100, "Import completed successfully");
                     
-                    ShowInfo($"Import completed successfully!\n\nImported rows: {importResult.ImportedCount}\nUpdated rows: {importResult.UpdatedCount}\nDeleted rows: {importResult.DeletedCount}");
+                    ShowInfo($"Import completed successfully!\n\nProcessed rows: {importResult.ProcessedCount}\nImported rows: {importResult.ImportedCount}\nUpdated rows: {importResult.UpdatedCount}\nDeleted rows: {importResult.DeletedCount}");
 
                     // Snapshot freeze/insert is handled in AmbreImportService under the global lock.
                     
@@ -717,6 +718,7 @@ namespace RecoTool.Windows
                 return new ImportResult
                 {
                     Success = svcResult.IsSuccess,
+                    ProcessedCount = svcResult.ProcessedRecords,
                     ImportedCount = svcResult.NewRecords,
                     UpdatedCount = svcResult.UpdatedRecords,
                     DeletedCount = svcResult.DeletedRecords,
@@ -923,6 +925,7 @@ namespace RecoTool.Windows
     public class ImportResult
     {
         public bool Success { get; set; }
+        public int ProcessedCount { get; set; }
         public int ImportedCount { get; set; }
         public int UpdatedCount { get; set; }
         public int DeletedCount { get; set; }

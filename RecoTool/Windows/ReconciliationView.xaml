@@ -750,6 +750,7 @@
                                 <Setter Property="Background" Value="Transparent"/>
                                 <Setter Property="BorderBrush" Value="#DDDDDD"/>
                                 <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                                <Setter Property="Foreground" Value="Black"/>
                                 <EventSetter Event="PreviewMouseLeftButtonDown" Handler="DataGridCell_PreviewMouseLeftButtonDown"/>
                                 <Setter Property="Template">
                                     <Setter.Value>
@@ -777,6 +778,7 @@
                                                 <Trigger Property="IsSelected" Value="True">
                                                     <Setter TargetName="CellBorder" Property="Background" Value="#DCEBFF"/>
                                                     <Setter Property="BorderBrush" Value="#A7C5FF"/>
+                                                    <Setter Property="Foreground" Value="Black"/>
                                                 </Trigger>
                                                 <!-- read-only hides glyph entirely -->
                                                 <Trigger Property="IsReadOnly" Value="True">
@@ -799,6 +801,7 @@
                                         </MultiBinding>
                                     </Setter.Value>
                                 </Setter>
+                                <Setter Property="Foreground" Value="Black"/>
                                 <Setter Property="ContextMenu">
                                     <Setter.Value>
                                         <ContextMenu>
@@ -823,6 +826,7 @@
                                     </Trigger>
                                     <Trigger Property="IsSelected" Value="True">
                                         <Setter Property="Background" Value="#DCEBFF"/>
+                                        <Setter Property="Foreground" Value="Black"/>
                                     </Trigger>
                                 </Style.Triggers>
                             </Style>
@@ -856,6 +860,7 @@
                                         <Setter Property="Background" Value="Transparent"/>
                                         <Setter Property="BorderBrush" Value="#DDDDDD"/>
                                         <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                                        <Setter Property="Foreground" Value="Black"/>
                                         <Setter Property="Template">
                                             <Setter.Value>
                                                 <ControlTemplate TargetType="DataGridCell">
@@ -878,6 +883,7 @@
                                                         <Trigger Property="IsSelected" Value="True">
                                                             <Setter TargetName="CellBorder" Property="Background" Value="#DCEBFF"/>
                                                             <Setter Property="BorderBrush" Value="#A7C5FF"/>
+                                                            <Setter Property="Foreground" Value="Black"/>
                                                         </Trigger>
                                                         <Trigger Property="IsReadOnly" Value="True">
                                                             <Setter TargetName="EditGlyph" Property="Opacity" Value="0"/>
@@ -918,6 +924,10 @@
                             <DataGridTextColumn Header="Pivot Transaction Codes" Binding="{Binding Pivot_TransactionCodesFromLabel}" Width="150" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Category" Binding="{Binding CategoryLabel}" Width="140" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Raw Label" Binding="{Binding RawLabel}" Width="200" IsReadOnly="True"/>
+                            <!-- Newly added DWINGS invoice columns near the beginning -->
+                            <DataGridTextColumn Header="Receiver" Binding="{Binding I_RECEIVER_NAME}" Width="180" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="MT Status" Binding="{Binding I_MT_STATUS}" Width="120" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="MT Error message" Binding="{Binding I_ERROR_MESSAGE}" Width="220" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Local Signed Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="130" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Operation Date" Binding="{Binding Operation_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Reconciliation Num" Binding="{Binding Reconciliation_Num}" Width="130" IsReadOnly="True"/>

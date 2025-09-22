@@ -8,6 +8,7 @@ using OfflineFirstAccess.Helpers;
 using OfflineFirstAccess.Models;
 using RecoTool.Helpers;
 using RecoTool.Models;
+using System.Globalization;
 
 namespace RecoTool.Services.AmbreImport
 {
@@ -79,6 +80,7 @@ namespace RecoTool.Services.AmbreImport
             {
                 var transformedData = new List<DataAmbre>();
                 var transformationService = _configurationLoader?.TransformationService;
+                var culture = ResolvePreferredCulture(country);
 
                 foreach (var row in rawData)
                 {
@@ -88,11 +90,11 @@ namespace RecoTool.Services.AmbreImport
                     foreach (var transform in transforms)
                     {
                         var transformedValue = transformationService?.ApplyTransformation(row, transform);
-                        SetPropertyValue(dataAmbre, transform.AMB_Destination, transformedValue);
+                        SetPropertyValue(dataAmbre, transform.AMB_Destination, transformedValue, culture);
                     }
 
                     // Copie des champs directs
-                    CopyDirectFields(row, dataAmbre);
+                    CopyDirectFields(row, dataAmbre, culture);
 
                     // Génération de l'ID unique
                     dataAmbre.ID = dataAmbre.GetUniqueKey();
@@ -154,9 +156,9 @@ namespace RecoTool.Services.AmbreImport
             });
         }
 
-        private void CopyDirectFields(Dictionary<string, object> rawData, DataAmbre dataAmbre)
+        private void CopyDirectFields(Dictionary<string, object> rawData, DataAmbre dataAmbre, CultureInfo culture)
         {
-            var fieldMappings = GetFieldMappings();
+            var fieldMappings = GetFieldMappings(culture);
 
             foreach (var mapping in fieldMappings)
             {
@@ -167,7 +169,7 @@ namespace RecoTool.Services.AmbreImport
             }
         }
 
-        private Dictionary<string, Action<DataAmbre, object>> GetFieldMappings()
+        private Dictionary<string, Action<DataAmbre, object>> GetFieldMappings(CultureInfo culture)
         {
             return new Dictionary<string, Action<DataAmbre, object>>
             {
@@ -182,16 +184,16 @@ namespace RecoTool.Services.AmbreImport
                 { "ReconciliationOrigin_Num", (d, v) => { if (string.IsNullOrWhiteSpace(d.ReconciliationOrigin_Num)) d.ReconciliationOrigin_Num = v?.ToString(); } },
 
                 // Nullable dates: set only if currently null
-                { "Operation_Date", (d, v) => { if (!d.Operation_Date.HasValue) d.Operation_Date = ValidationHelper.SafeParseDateTime(v); } },
-                { "Value_Date", (d, v) => { if (!d.Value_Date.HasValue) d.Value_Date = ValidationHelper.SafeParseDateTime(v); } },
+                { "Operation_Date", (d, v) => { if (!d.Operation_Date.HasValue) d.Operation_Date = ValidationHelper.SafeParseDateTime(v, culture) ?? d.Operation_Date; } },
+                { "Value_Date", (d, v) => { if (!d.Value_Date.HasValue) d.Value_Date = ValidationHelper.SafeParseDateTime(v, culture) ?? d.Value_Date; } },
 
                 // Amounts (non-nullable decimals): set only if currently default (0)
-                { "LocalSignedAmount", (d, v) => { if (d.LocalSignedAmount == default(decimal)) d.LocalSignedAmount = ValidationHelper.SafeParseDecimal(v); } },
-                { "SignedAmount", (d, v) => { if (d.SignedAmount == default(decimal)) d.SignedAmount = ValidationHelper.SafeParseDecimal(v); } },
+                { "LocalSignedAmount", (d, v) => { if (d.LocalSignedAmount == default(decimal)) d.LocalSignedAmount = ValidationHelper.SafeParseDecimal(v, culture); } },
+                { "SignedAmount", (d, v) => { if (d.SignedAmount == default(decimal)) d.SignedAmount = ValidationHelper.SafeParseDecimal(v, culture); } },
             };
         }
 
-        private void SetPropertyValue(object obj, string propertyName, string value)
+        private void SetPropertyValue(object obj, string propertyName, string value, CultureInfo culture)
         {
             if (string.IsNullOrEmpty(propertyName))
                 return;
@@ -199,21 +201,21 @@ namespace RecoTool.Services.AmbreImport
             var property = obj.GetType().GetProperty(propertyName);
             if (property != null && property.CanWrite)
             {
-                var convertedValue = ConvertPropertyValue(value, property.PropertyType);
+                var convertedValue = ConvertPropertyValue(value, property.PropertyType, culture);
                 property.SetValue(obj, convertedValue);
             }
         }
 
-        private object ConvertPropertyValue(string value, Type targetType)
+        private object ConvertPropertyValue(string value, Type targetType, CultureInfo culture)
         {
             if (targetType == typeof(string))
                 return value;
                 
             if (targetType == typeof(decimal) || targetType == typeof(decimal?))
-                return ValidationHelper.SafeParseDecimal(value);
+                return ValidationHelper.SafeParseDecimal(value, culture);
                 
             if (targetType == typeof(DateTime) || targetType == typeof(DateTime?))
-                return ValidationHelper.SafeParseDateTime(value);
+                return ValidationHelper.SafeParseDateTime(value, culture);
                 
             return null;
         }
@@ -373,6 +375,22 @@ namespace RecoTool.Services.AmbreImport
                    || 
                    (!string.IsNullOrWhiteSpace(recv) && 
                     string.Equals(accountId, recv, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private CultureInfo ResolvePreferredCulture(Country country)
+        {
+            try
+            {
+                // Prefer the OS (Windows) current culture so that parsing matches the user's
+                // Excel/regional settings. This avoids issues where the country mapping differs
+                // from the machine's number/date formats.
+                return CultureInfo.CurrentCulture;
+            }
+            catch
+            {
+                // Fallback to invariant if the OS culture cannot be resolved for any reason.
+                return CultureInfo.InvariantCulture;
+            }
         }
     }
 }

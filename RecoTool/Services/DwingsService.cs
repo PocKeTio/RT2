@@ -132,6 +132,8 @@ namespace RecoTool.Services
                             END_DATE = TryToDate(TryGet(rd, "END_DATE")),
                             DEBTOR_PARTY_NAME = TryToStringSafe(rd, "DEBTOR_PARTY_NAME"),
                             CREDITOR_PARTY_NAME = TryToStringSafe(rd, "CREDITOR_PARTY_NAME"),
+                            MT_STATUS = TryToStringSafe(rd, "MT_STATUS"),
+                            ERROR_MESSAGE = TryToStringSafe(rd, "ERROR_MESSAGE"),
                         });
                     }
                 }

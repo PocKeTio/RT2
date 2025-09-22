@@ -29,5 +29,7 @@ namespace RecoTool.Services.DTOs
         public DateTime? END_DATE { get; set; }
         public string DEBTOR_PARTY_NAME { get; set; }
         public string CREDITOR_PARTY_NAME { get; set; }
+        public string MT_STATUS { get; set; }
+        public string ERROR_MESSAGE { get; set; }
     }
 }

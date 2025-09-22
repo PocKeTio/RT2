@@ -109,7 +109,10 @@ namespace RecoTool.Services.Helpers
                     row.I_START_DATE = inv.START_DATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                     row.I_END_DATE = inv.END_DATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                     row.I_DEBTOR_PARTY_NAME = inv.DEBTOR_PARTY_NAME;
-                    row.I_RECEIVER_NAME = inv.CREDITOR_PARTY_NAME; // map as available
+                    row.I_RECEIVER_NAME = inv.RECEIVER_NAME;
+                    // Newly added invoice fields to surface MT status and error in the grid
+                    row.I_MT_STATUS = inv.MT_STATUS ?? row.I_MT_STATUS;
+                    row.I_ERROR_MESSAGE = inv.ERROR_MESSAGE ?? row.I_ERROR_MESSAGE;
 
                     // If guarantee link is missing but invoice carries Business Case reference, propose it
                     if (string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID) && !string.IsNullOrWhiteSpace(inv.BUSINESS_CASE_REFERENCE))

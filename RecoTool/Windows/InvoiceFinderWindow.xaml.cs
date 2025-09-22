@@ -57,6 +57,33 @@ namespace RecoTool.Windows
             };
         }
 
+        // Programmatic search helpers
+        public void SetSearchInvoiceId(string invoiceId)
+        {
+            try
+            {
+                if (InvoiceIdText != null)
+                {
+                    InvoiceIdText.Text = invoiceId ?? string.Empty;
+                    DebouncedApplyFiltersStart();
+                }
+            }
+            catch { }
+        }
+
+        public void SetSearchGuaranteeId(string guaranteeId)
+        {
+            try
+            {
+                if (GuaranteeIdOrLegacyText != null)
+                {
+                    GuaranteeIdOrLegacyText.Text = guaranteeId ?? string.Empty;
+                    DebouncedApplyFiltersStart();
+                }
+            }
+            catch { }
+        }
+
         private void DebouncedApplyFiltersStart()
         {
             try

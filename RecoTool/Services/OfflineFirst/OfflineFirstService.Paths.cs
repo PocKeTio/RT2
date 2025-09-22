@@ -213,6 +213,37 @@ namespace RecoTool.Services
             return Path.Combine(dataDirectory, $"{prefix}{countryId}.accdb");
         }
 
+        /// <summary>
+        /// Returns the LastWriteTime (local time) of the DWINGS network database for the given country,
+        /// or null when the file cannot be found.
+        /// </summary>
+        public DateTime? GetNetworkDwDatabaseLastWriteDate(string countryId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(countryId)) return null;
+                string path = GetNetworkDwDbPath(countryId);
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
+                return File.GetLastWriteTime(path);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Convenience check: true when the DWINGS network database file was modified today (local date).
+        /// Returns false when the file is missing.
+        /// </summary>
+        public bool IsNetworkDwDatabaseFromToday(string countryId)
+        {
+            try
+            {
+                var dt = GetNetworkDwDatabaseLastWriteDate(countryId);
+                if (!dt.HasValue) return false;
+                return dt.Value.Date == DateTime.Today;
+            }
+            catch { return false; }
+        }
+
         private string GetNetworkCountryConnectionString(string countryId)
         {
             if (string.IsNullOrWhiteSpace(countryId)) throw new ArgumentException("countryId est requis", nameof(countryId));

@@ -292,16 +292,19 @@ namespace RecoTool.Windows
                     // Avoid duplicates: remove previous injected items
                     var existing = cm.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "__SetComment__");
                     if (existing != null) cm.Items.Remove(existing);
-                    var existingTake = cm.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "__Take__");
-                    if (existingTake != null) cm.Items.Remove(existingTake);
-                    var existingRem = cm.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "__SetReminder__");
-                    if (existingRem != null) cm.Items.Remove(existingRem);
-                    var existingDone = cm.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "__MarkActionDone__");
-                    if (existingDone != null) cm.Items.Remove(existingDone);
-                    var existingCopy = cm.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "__Copy__");
-                    if (existingCopy != null) cm.Items.Remove(existingCopy);
-                    var sep = cm.Items.OfType<Separator>().FirstOrDefault(s => (s.Tag as string) == "__InjectedSep__");
-                    if (sep != null) cm.Items.Remove(sep);
+                    foreach (var mi in cm.Items.OfType<MenuItem>().Where(m =>
+                                 (m.Tag as string) == "__Take__"
+                              || (m.Tag as string) == "__SetReminder__"
+                              || (m.Tag as string) == "__MarkActionDone__"
+                              || (m.Tag as string) == "__Copy__"
+                              || (m.Tag as string) == "__SearchBGI__").ToList())
+                    {
+                        cm.Items.Remove(mi);
+                    }
+                    foreach (var sp in cm.Items.OfType<Separator>().Where(s => (s.Tag as string) == "__InjectedSep__").ToList())
+                    {
+                        cm.Items.Remove(sp);
+                    }
 
                     cm.Items.Add(new Separator { Tag = "__InjectedSep__" });
                     var takeItem = new MenuItem { Header = "Take (Assign to me)", Tag = "__Take__", DataContext = rowData };
@@ -321,15 +324,26 @@ namespace RecoTool.Windows
                     var copyRoot = new MenuItem { Header = "Copy", Tag = "__Copy__" };
                     var copyId = new MenuItem { Header = "ID" };
                     copyId.Click += (s2, e2) => CopySelectionIds();
-                    var copyBgi = new MenuItem { Header = "BGI Ref" };
-                    copyBgi.Click += (s2, e2) => CopySelectionBgiRef();
+                    var copyDwInvoice = new MenuItem { Header = "DWINGS Invoice ID (BGI)" };
+                    copyDwInvoice.Click += (s2, e2) => CopySelectionDwInvoiceId();
+                    var copyDwBgpmt = new MenuItem { Header = "DWINGS BGPMT" };
+                    copyDwBgpmt.Click += (s2, e2) => CopySelectionDwCommissionBgpmt();
+                    var copyDwGuarantee = new MenuItem { Header = "DWINGS Guarantee ID" };
+                    copyDwGuarantee.Click += (s2, e2) => CopySelectionDwGuaranteeId();
                     var copyAll = new MenuItem { Header = "All line (with header)" };
                     copyAll.Click += (s2, e2) => CopySelectionAllLines(includeHeader: true);
                     copyRoot.Items.Add(copyId);
-                    copyRoot.Items.Add(copyBgi);
+                    copyRoot.Items.Add(copyDwInvoice);
+                    copyRoot.Items.Add(copyDwBgpmt);
+                    copyRoot.Items.Add(copyDwGuarantee);
                     copyRoot.Items.Add(new Separator());
                     copyRoot.Items.Add(copyAll);
                     cm.Items.Add(copyRoot);
+
+                    // Search BGI in DWINGS (open or reuse Invoice Finder)
+                    var searchBgi = new MenuItem { Header = "Search BGI…", Tag = "__SearchBGI__", DataContext = rowData };
+                    searchBgi.Click += SearchBgiMenuItem_Click;
+                    cm.Items.Add(searchBgi);
                 }
                 catch { }
             }
@@ -813,6 +827,77 @@ namespace RecoTool.Windows
                     sb.AppendLine(it?.ID ?? string.Empty);
                 }
                 Clipboard.SetText(sb.ToString());
+            }
+            catch { }
+        }
+
+        private void CopySelectionDwInvoiceId()
+        {
+            try
+            {
+                var items = GetCurrentSelection();
+                if (items.Count == 0) return;
+                var sb = new StringBuilder();
+                foreach (var it in items)
+                    sb.AppendLine(it?.DWINGS_InvoiceID ?? string.Empty);
+                Clipboard.SetText(sb.ToString());
+            }
+            catch { }
+        }
+
+        private void CopySelectionDwCommissionBgpmt()
+        {
+            try
+            {
+                var items = GetCurrentSelection();
+                if (items.Count == 0) return;
+                var sb = new StringBuilder();
+                foreach (var it in items)
+                    sb.AppendLine(it?.DWINGS_BGPMT ?? string.Empty);
+                Clipboard.SetText(sb.ToString());
+            }
+            catch { }
+        }
+
+        private void CopySelectionDwGuaranteeId()
+        {
+            try
+            {
+                var items = GetCurrentSelection();
+                if (items.Count == 0) return;
+                var sb = new StringBuilder();
+                foreach (var it in items)
+                    sb.AppendLine(it?.DWINGS_GuaranteeID ?? string.Empty);
+                Clipboard.SetText(sb.ToString());
+            }
+            catch { }
+        }
+
+        private void SearchBgiMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var row = GetCurrentSelection().FirstOrDefault();
+                if (row == null) return;
+
+                // Find existing window or create new
+                var existing = Application.Current?.Windows?.OfType<InvoiceFinderWindow>()?.FirstOrDefault();
+                InvoiceFinderWindow win = existing ?? new InvoiceFinderWindow();
+                if (win.Owner == null)
+                {
+                    try { win.Owner = Window.GetWindow(this); } catch { }
+                }
+                try { win.Show(); } catch { }
+                try { win.Activate(); } catch { }
+
+                if (!string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID))
+                {
+                    try { win.SetSearchInvoiceId(row.DWINGS_InvoiceID); } catch { }
+                }
+                else if (!string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID))
+                {
+                    try { win.SetSearchGuaranteeId(row.DWINGS_GuaranteeID); } catch { }
+                }
             }
             catch { }
         }

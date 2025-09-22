@@ -99,8 +99,32 @@ namespace RecoTool.Windows
 
         #region Constructor
 
+        private void CheckDW()
+        {
+            // Avertir si la base DWINGS réseau n'est pas datée d'aujourd'hui pour le pays sélectionné
+            try
+            {
+                var cid = CurrentCountry?.CNT_Id;
+                if (!string.IsNullOrWhiteSpace(cid))
+                {
+                    bool isToday = _offlineFirstService?.IsNetworkDwDatabaseFromToday(cid) == true;
+                    if (!isToday)
+                    {
+                        MessageBox.Show(
+                            "Warning ! The DWINGS data of today is not yet available. Please close and retry in 15 minutes.",
+                            "DWINGS Data",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                    }
+                }
+            }
+            catch { }
+
+        }
+
         public ImportAmbreWindow()
         {
+            CheckDW();
         }
 
         public ImportAmbreWindow(OfflineFirstService offlineFirstService, AmbreImportService ambreImportService)
@@ -110,6 +134,8 @@ namespace RecoTool.Windows
             InitializeComponent();
             DataContext = this;
             InitializeData();
+
+            CheckDW();
         }
 
         #endregion

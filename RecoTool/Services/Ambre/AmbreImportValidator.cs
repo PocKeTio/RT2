@@ -129,30 +129,30 @@ namespace RecoTool.Services.AmbreImport
         {
             var errors = new List<string>();
 
-            // Validation des champs obligatoires
-            if (string.IsNullOrWhiteSpace(item.Account_ID))
-                errors.Add("Account_ID is required");
+            //// Validation des champs obligatoires
+            //if (string.IsNullOrWhiteSpace(item.Account_ID))
+            //    errors.Add("Account_ID is required");
 
-            if (string.IsNullOrWhiteSpace(item.Event_Num))
-                errors.Add("Event_Num is required");
+            //if (string.IsNullOrWhiteSpace(item.Event_Num))
+            //    errors.Add("Event_Num is required");
 
-            //if (!item.Operation_Date.HasValue && !item.Value_Date.HasValue)
-            //    errors.Add("At least one date (Operation_Date or Value_Date) is required");
+            ////if (!item.Operation_Date.HasValue && !item.Value_Date.HasValue)
+            ////    errors.Add("At least one date (Operation_Date or Value_Date) is required");
 
-            // Validation de cohérence des montants
-            if (item.SignedAmount == 0 && item.LocalSignedAmount == 0)
-                errors.Add("Amount cannot be zero");
+            //// Validation de cohérence des montants
+            //if (item.SignedAmount == 0 && item.LocalSignedAmount == 0)
+            //    errors.Add("Amount cannot be zero");
 
-            // Validation du compte par rapport au pays
-            if (!IsValidAccountForCountry(item.Account_ID, country))
-                errors.Add($"Account {item.Account_ID} is not valid for country {country?.CNT_Id}");
+            //// Validation du compte par rapport au pays
+            //if (!IsValidAccountForCountry(item.Account_ID, country))
+            //    errors.Add($"Account {item.Account_ID} is not valid for country {country?.CNT_Id}");
 
-            // Validation des dates
-            if (item.Operation_Date.HasValue && item.Value_Date.HasValue)
-            {
-                if (item.Value_Date.Value < item.Operation_Date.Value.AddDays(-30))
-                    errors.Add("Value date is too far before operation date");
-            }
+            //// Validation des dates
+            //if (item.Operation_Date.HasValue && item.Value_Date.HasValue)
+            //{
+            //    if (item.Value_Date.Value < item.Operation_Date.Value.AddDays(-30))
+            //        errors.Add("Value date is too far before operation date");
+            //}
 
             return errors;
         }

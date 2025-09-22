@@ -304,6 +304,7 @@ namespace RecoTool.Windows
                 _currentCountryId = cid;
                 _filterCountry = cc?.CNT_Name;
                 UpdateCountryPivotReceivableInfo();
+
                 // Recharger les options de devise dépendantes du pays
                 _ = LoadCurrencyOptionsAsync();
                 _ = LoadGuaranteeTypeOptionsAsync();

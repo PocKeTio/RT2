@@ -54,6 +54,9 @@ namespace RecoTool.Services
                 case "REMOVEZEROSFROMSTART":
                     return RemoveZerosFromStart(source);
 
+                case "ADDSIGN":
+                    return AddSign(source, sourceData);
+
                 default:
                     // Si la fonction n'est pas reconnue, retourne la valeur source
                     return source;
@@ -209,6 +212,38 @@ namespace RecoTool.Services
                 return string.Empty;
 
             return value.TrimStart('0');
+        }
+
+        /// <summary>
+        /// Ajoute un signe '-' au début de la valeur si le champ SS indique un débit ("D").
+        /// Si la valeur est déjà négative, elle est renvoyée telle quelle. Les '+' initiaux sont supprimés.
+        /// </summary>
+        /// <param name="value">Valeur à signer (telle que lue des colonnes Excel selon la config)</param>
+        /// <param name="sourceData">Ligne source complète pour lire le champ SS</param>
+        /// <returns>Valeur potentiellement préfixée d'un '-'</returns>
+        public string AddSign(string value, Dictionary<string, object> sourceData)
+        {
+            try
+            {
+                var ss = sourceData != null && sourceData.ContainsKey("")
+                    ? sourceData[""]?.ToString()?.Trim()
+                    : null;
+
+                if (string.Equals(ss, "D", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrWhiteSpace(value)) return "-0";
+                    var v = value.Trim();
+                    if (v.StartsWith("-")) return v; // déjà négatif
+                    if (v.StartsWith("+")) v = v.Substring(1);
+                    return "-" + v;
+                }
+
+                return value; // crédit ou non indiqué: laisser tel quel
+            }
+            catch
+            {
+                return value;
+            }
         }
 
         /// <summary>

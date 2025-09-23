@@ -197,13 +197,16 @@ namespace RecoTool.Services
             string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
             string ambreJoin = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre AS a" : $"(SELECT * FROM [{ambreEsc}].T_Data_Ambre) AS a";
 
-            // Filter by Action = Trigger (use enum to avoid hardcoded IDs)
+            // Filter by Action = Trigger and only RECEIVABLE account side
+            var country = _countries.ContainsKey(countryId) ? _countries[countryId] : null;
+            var receivableId = country?.CNT_AmbreReceivable;
+
             var query = $@"SELECT r.* FROM (T_Reconciliation AS r
                              INNER JOIN {ambreJoin} ON r.ID = a.ID)
-                           WHERE r.DeleteDate IS NULL AND r.Action = ?
+                           WHERE r.DeleteDate IS NULL AND r.Action = ? AND a.Account_ID = ?
                            ORDER BY r.LastModified DESC";
 
-            return await ExecuteQueryAsync<Reconciliation>(query, _connectionString, (int)ActionType.Trigger);
+            return await ExecuteQueryAsync<Reconciliation>(query, _connectionString, (int)ActionType.Trigger, receivableId);
         }
 
         // JSON filter preset is defined in Domain/Filters/FilterPreset

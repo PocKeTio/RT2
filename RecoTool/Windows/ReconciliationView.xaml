@@ -5,16 +5,9 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
              xmlns:local="clr-namespace:RecoTool.Windows"
              x:Name="Root"
-             xmlns:conv="clr-namespace:RecoTool.Converters"
              mc:Ignorable="d" 
              d:DesignHeight="600" d:DesignWidth="900">
     <UserControl.Resources>
-        <!-- Converters defined in code-behind -->
-        <local:UserFieldOptionsConverter x:Key="UserFieldOptionsConverter" />
-        <local:UserFieldIdToNameConverter x:Key="UserFieldIdToNameConverter" />
-        <local:ActionColorConverter x:Key="ActionColorConverter" />
-        <local:AssigneeIdToNameConverter x:Key="AssigneeIdToNameConverter" />
-        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
         <!-- Item template that renders null items as an empty option so users can clear selection -->
         <DataTemplate x:Key="UserFieldItemTemplate">
             <TextBlock>
@@ -23,14 +16,19 @@
                 </TextBlock.Text>
             </TextBlock>
         </DataTemplate>
-        <local:GuaranteeTypeDisplayConverter x:Key="GuaranteeTypeDisplayConverter" />
-        <!-- Converter to display Pending/Done -->
-        <conv:BoolToPendingDoneConverter x:Key="BoolToPendingDoneConverter" />
         <!-- Force ComboBoxItem alignment to avoid theme templates using ancestor bindings that may fail during dynamic updates -->
         <Style TargetType="ComboBoxItem">
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
+        <!-- Converters -->
+        <local:UserFieldOptionsConverter x:Key="UserFieldOptionsConverter"/>
+        <local:ActionColorConverter x:Key="ActionColorConverter"/>
+        <local:GuaranteeTypeDisplayConverter x:Key="GuaranteeTypeDisplayConverter"/>
+        <local:UserFieldIdToNameConverter x:Key="UserFieldIdToNameConverter"/>
+        <local:BoolToPendingDoneConverter x:Key="BoolToPendingDoneConverter"/>
+        <local:AssigneeIdToNameConverter x:Key="AssigneeIdToNameConverter"/>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
     </UserControl.Resources>
     <Grid Background="{DynamicResource BNPBackground}">
         <Grid.RowDefinitions>
@@ -145,9 +143,20 @@
                         </StackPanel>
                     </Button>
 
-                    
-
-                    
+                    <!-- Run Rules Now Button -->
+                    <Button x:Name="RunRulesNowButton" Click="RunRulesNow_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0" ToolTip="Execute rules immediately on selection or on the current filtered set if no selection.">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE773;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="Run Rules" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Button>
 
                     <!-- Export Button (moved from KPI bar) -->
                     <Button x:Name="ExportButton" Click="Export_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0">
@@ -163,8 +172,6 @@
                             <TextBlock Text="Export" VerticalAlignment="Center" FontWeight="SemiBold"/>
                         </StackPanel>
                     </Button>
-
-                    
 
                     <!-- Close View Button -->
                     <Button x:Name="CloseViewButton" Click="CloseViewButton_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0">

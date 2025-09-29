@@ -4,8 +4,10 @@ using RecoTool.Models;
 namespace RecoTool.Services.Rules
 {
     /// <summary>
-    /// Encapsulates reconciliation rule logic applied to Ambre lines for both Pivot and Receivable accounts.
+    /// Encapsulates legacy reconciliation rule logic.
+    /// Deprecated: replaced by the truth-table rules engine.
     /// </summary>
+    [Obsolete("Deprecated: use RulesEngine and truth-table rules instead.")]
     internal static class ReconciliationRules
     {
         public static void ApplyPivotRules(Reconciliation reconciliation, DataAmbre data)

@@ -27,6 +27,7 @@ using RecoTool.Infrastructure.Logging;
 using System.Windows.Media;
 using System.Windows.Controls.Primitives;
 using RecoTool.Services.DTOs;
+using RecoTool.Services.Rules;
 using RecoTool.UI.Helpers;
 using RecoTool.Helpers;
 
@@ -90,11 +91,69 @@ namespace RecoTool.Windows
 
         private void OnPropertyChanged(string propertyName = null)
         {
-            try
             {
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
             }
-            catch { }
+        }
+
+        // Quick add rule based on the current line
+        private async void QuickAddRuleFromLineMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var mi = sender as MenuItem;
+                var row = mi?.DataContext as ReconciliationViewData;
+                if (row == null || _offlineFirstService == null) return;
+
+                // Build a seed rule from the selected row
+                string accountSide = string.IsNullOrWhiteSpace(row.AccountSide) ? "*" : row.AccountSide.Trim().ToUpperInvariant();
+                string guaranteeType = string.IsNullOrWhiteSpace(row.G_GUARANTEE_TYPE) ? "*" : row.G_GUARANTEE_TYPE.Trim().ToUpperInvariant();
+                string txName = row.Category.HasValue ? Enum.GetName(typeof(TransactionType), row.Category.Value) : "*";
+                bool hasDw = !(string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID) && string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID) && string.IsNullOrWhiteSpace(row.DWINGS_BGPMT));
+
+                var seed = new TruthRule
+                {
+                    RuleId = $"USR_{row.ID}",
+                    Enabled = true,
+                    Priority = 100,
+                    Scope = RuleScope.Both,
+                    AccountSide = string.IsNullOrWhiteSpace(accountSide) ? "*" : accountSide,
+                    GuaranteeType = string.IsNullOrWhiteSpace(guaranteeType) ? "*" : guaranteeType,
+                    TransactionType = string.IsNullOrWhiteSpace(txName) ? "*" : txName,
+                    HasDwingsLink = hasDw,
+                    // Outputs from current row values
+                    OutputActionId = row.Action,
+                    OutputKpiId = row.KPI,
+                    OutputIncidentTypeId = row.IncidentType,
+                    ApplyTo = ApplyTarget.Self,
+                    AutoApply = true
+                };
+
+                var win = new RuleEditorWindow(seed, _offlineFirstService)
+                {
+                    Owner = Window.GetWindow(this)
+                };
+                var ok = win.ShowDialog();
+                if (ok == true && win.ResultRule != null)
+                {
+                    var repo = new TruthTableRepository(_offlineFirstService);
+                    // Ensure table exists best-effort
+                    try { await repo.EnsureRulesTableAsync(); } catch { }
+                    var saved = await repo.UpsertRuleAsync(win.ResultRule);
+                    if (saved)
+                    {
+                        UpdateStatusInfo($"Rule '{win.ResultRule.RuleId}' saved.");
+                    }
+                    else
+                    {
+                        ShowError("Failed to save rule (Upsert returned false)");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Failed to add rule: {ex.Message}");
+            }
         }
 
         // Lock first 4 columns (N, U, M, Account) from being moved
@@ -296,6 +355,7 @@ namespace RecoTool.Windows
                                  (m.Tag as string) == "__Take__"
                               || (m.Tag as string) == "__SetReminder__"
                               || (m.Tag as string) == "__MarkActionDone__"
+                              || (m.Tag as string) == "__AddRuleFromLine__"
                               || (m.Tag as string) == "__Copy__"
                               || (m.Tag as string) == "__SearchBGI__").ToList())
                     {
@@ -316,6 +376,9 @@ namespace RecoTool.Windows
                     var doneItem = new MenuItem { Header = "Set Action as DONE", Tag = "__MarkActionDone__", DataContext = rowData };
                     doneItem.Click += QuickMarkActionDoneMenuItem_Click;
                     cm.Items.Add(doneItem);
+                    var addRuleItem = new MenuItem { Header = "Add Rule based on this line…", Tag = "__AddRuleFromLine__", DataContext = rowData };
+                    addRuleItem.Click += QuickAddRuleFromLineMenuItem_Click;
+                    cm.Items.Add(addRuleItem);
                     var commentItem = new MenuItem { Header = "Set Comment…", Tag = "__SetComment__" };
                     commentItem.Click += QuickSetCommentMenuItem_Click;
                     cm.Items.Add(commentItem);
@@ -511,6 +574,18 @@ namespace RecoTool.Windows
         private void ResultsDataGrid_GotFocus(object sender, RoutedEventArgs e)
         {
             try { ReconciliationViewFocusTracker.SetLastFocused(this); } catch { }
+        }
+
+        private void RulesAdmin_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var win = new RulesAdminWindow();
+                var owner = Window.GetWindow(this);
+                if (owner != null) win.Owner = owner;
+                win.Show();
+            }
+            catch { }
         }
 
         public void FlashLinkProposalHighlight()

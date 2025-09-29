@@ -8,6 +8,8 @@ using OfflineFirstAccess.Models;
 using RecoTool.Helpers;
 using RecoTool.Models;
 using RecoTool.Services.DTOs;
+using RecoTool.Services;
+using RecoTool.Services.Rules;
 
 namespace RecoTool.Services.AmbreImport
 {
@@ -20,6 +22,10 @@ namespace RecoTool.Services.AmbreImport
         private readonly string _currentUser;
         private readonly ReconciliationService _reconciliationService;
         private readonly DwingsReferenceResolver _dwingsResolver;
+        private readonly RulesEngine _rulesEngine;
+        // Feature flag: keep legacy hard-coded mappings as a fallback (ComputeAutoAction + cross-side assignment)
+        // Default: false to rely solely on truth-table rules
+        private readonly bool _legacyFallbacksEnabled = false;
 
         public AmbreReconciliationUpdater(
             OfflineFirstService offlineFirstService,
@@ -30,6 +36,7 @@ namespace RecoTool.Services.AmbreImport
             _currentUser = currentUser;
             _reconciliationService = reconciliationService;
             _dwingsResolver = new DwingsReferenceResolver(reconciliationService);
+            _rulesEngine = new RulesEngine(_offlineFirstService);
         }
 
         /// <summary>
@@ -99,8 +106,14 @@ namespace RecoTool.Services.AmbreImport
                 });
             }
 
-            // Apply cross-side action rules
-            ApplyCrossSideActionRules(staged);
+            // Apply truth-table rules (import scope)
+            await ApplyTruthTableRulesAsync(staged, country, countryId);
+
+            // Apply legacy cross-side action rules as fallback (can be superseded by truth-table counterparts)
+            if (_legacyFallbacksEnabled)
+            {
+                ApplyCrossSideActionRules(staged);
+            }
 
             return reconciliations;
         }
@@ -130,15 +143,21 @@ namespace RecoTool.Services.AmbreImport
             reconciliation.DWINGS_BGPMT = dwingsRefs.CommissionId;
             reconciliation.DWINGS_GuaranteeID = dwingsRefs.GuaranteeId;
 
-            // Calculate KPI
-            var kpi = CalculateKpi(dataAmbre, isPivot, country);
-            reconciliation.KPI = (int)kpi;
+            // Calculate KPI (legacy path); by default we rely on truth-table rules to set KPI
+            if (_legacyFallbacksEnabled)
+            {
+                var kpi = CalculateKpi(dataAmbre, isPivot, country);
+                reconciliation.KPI = (int)kpi;
+            }
 
             // Calculate auto action
-            var action = await CalculateAutoActionAsync(
-                dataAmbre, reconciliation, country, countryId, isPivot);
-            if (action.HasValue)
-                reconciliation.Action = (int)action.Value;
+            if (_legacyFallbacksEnabled)
+            {
+                var action = await CalculateAutoActionAsync(
+                    dataAmbre, reconciliation, country, countryId, isPivot);
+                if (action.HasValue)
+                    reconciliation.Action = (int)action.Value;
+            }
 
             return reconciliation;
         }
@@ -159,15 +178,17 @@ namespace RecoTool.Services.AmbreImport
                     if (pivots.Count == 0 || receivables.Count == 0) 
                         continue;
 
-                    // Matched set: assign appropriate actions
+                    // Matched set: assign appropriate actions if not already set by rules engine
                     foreach (var pivot in pivots)
                     {
-                        pivot.Reconciliation.Action = (int)ActionType.Match;
+                        if (!pivot.Reconciliation.Action.HasValue)
+                            pivot.Reconciliation.Action = (int)ActionType.Match;
                     }
                     
                     foreach (var receivable in receivables)
                     {
-                        receivable.Reconciliation.Action = (int)ActionType.Trigger;
+                        if (!receivable.Reconciliation.Action.HasValue)
+                            receivable.Reconciliation.Action = (int)ActionType.Trigger;
                     }
                 }
             }
@@ -189,6 +210,207 @@ namespace RecoTool.Services.AmbreImport
                 transactionType, dataAmbre.SignedAmount, isPivot, guaranteeType);
                 
             return kpi;
+        }
+
+        private RuleContext BuildRuleContext(DataAmbre dataAmbre, Reconciliation reconciliation, Country country, string countryId, bool isPivot)
+        {
+            // Determine transaction type name as enum-style string
+            var transformationService = new TransformationService(new List<Country> { country });
+            var tx = transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot, dataAmbre.Category);
+            string txName = tx.HasValue ? Enum.GetName(typeof(TransactionType), tx.Value) : null;
+
+            // Guarantee type detectable primarily on receivable from label
+            string guaranteeType = !isPivot ? ExtractGuaranteeType(dataAmbre.RawLabel) : null;
+
+            // Sign from amount
+            var sign = dataAmbre.SignedAmount >= 0 ? "C" : "D";
+
+            // Presence of DWINGS links (any of Invoice/Guarantee/BGPMT)
+            bool? hasDw = (!string.IsNullOrWhiteSpace(reconciliation?.DWINGS_InvoiceID)
+                          || !string.IsNullOrWhiteSpace(reconciliation?.DWINGS_GuaranteeID)
+                          || !string.IsNullOrWhiteSpace(reconciliation?.DWINGS_BGPMT));
+
+            // Extended time/state inputs
+            var today = DateTime.Today;
+            bool? triggerDateIsNull = !(reconciliation?.TriggerDate.HasValue == true);
+            int? daysSinceTrigger = reconciliation?.TriggerDate.HasValue == true
+                ? (int?)(today - reconciliation.TriggerDate.Value.Date).TotalDays
+                : null;
+            // Transitory if a BGPMT token is present in reconciliation numbers or raw label
+            var bgpmt = DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.Reconciliation_Num)
+                        ?? DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.ReconciliationOrigin_Num)
+                        ?? DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.RawLabel);
+            bool? isTransitory = !string.IsNullOrWhiteSpace(bgpmt);
+            int? operationDaysAgo = dataAmbre.Operation_Date.HasValue
+                ? (int?)(today - dataAmbre.Operation_Date.Value.Date).TotalDays
+                : null;
+            bool? isMatched = hasDw; // consider matched when any DWINGS link is present
+            bool? hasManualMatch = null; // unknown at import time
+            bool? isFirstRequest = !(reconciliation?.FirstClaimDate.HasValue == true);
+            int? daysSinceReminder = reconciliation?.LastClaimDate.HasValue == true
+                ? (int?)(today - reconciliation.LastClaimDate.Value.Date).TotalDays
+                : null;
+
+            return new RuleContext
+            {
+                CountryId = countryId,
+                IsPivot = isPivot,
+                GuaranteeType = guaranteeType,
+                TransactionType = txName,
+                HasDwingsLink = hasDw,
+                IsGrouped = null, // TODO: compute when grouping info is available
+                IsAmountMatch = null, // TODO: compute when counterpart amounts available
+                Sign = sign,
+                Bgi = reconciliation?.DWINGS_InvoiceID,
+                // Extended fields
+                TriggerDateIsNull = triggerDateIsNull,
+                DaysSinceTrigger = daysSinceTrigger,
+                IsTransitory = isTransitory,
+                OperationDaysAgo = operationDaysAgo,
+                IsMatched = isMatched,
+                HasManualMatch = hasManualMatch,
+                IsFirstRequest = isFirstRequest,
+                DaysSinceReminder = daysSinceReminder,
+                CurrentActionId = reconciliation?.Action
+            };
+        }
+
+        private async Task ApplyTruthTableRulesAsync(List<ReconciliationStaging> staged, Country country, string countryId)
+        {
+            try
+            {
+                if (staged == null || staged.Count == 0) return;
+
+                // First pass: apply SELF outputs immediately; gather counterpart intents by BGI
+                var counterpartIntents = new List<(string Bgi, bool TargetIsPivot, int? ActionId, int? KpiId, int? IncidentTypeId, bool? RiskyItem, int? ReasonNonRiskyId, bool? ToRemind, int? ToRemindDays)>();
+
+                foreach (var s in staged)
+                {
+                    var ctx = BuildRuleContext(s.DataAmbre, s.Reconciliation, country, countryId, s.IsPivot);
+                    var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Import).ConfigureAwait(false);
+                    if (res == null || res.Rule == null) continue;
+
+                    // Self application
+                    if (res.Rule.ApplyTo == ApplyTarget.Self || res.Rule.ApplyTo == ApplyTarget.Both)
+                    {
+                        if (res.Rule.AutoApply)
+                        {
+                            if (res.NewActionIdSelf.HasValue) s.Reconciliation.Action = res.NewActionIdSelf.Value;
+                            if (res.NewKpiIdSelf.HasValue) s.Reconciliation.KPI = res.NewKpiIdSelf.Value;
+                            if (res.NewIncidentTypeIdSelf.HasValue) s.Reconciliation.IncidentType = res.NewIncidentTypeIdSelf.Value;
+                            if (res.NewRiskyItemSelf.HasValue) s.Reconciliation.RiskyItem = res.NewRiskyItemSelf.Value;
+                            if (res.NewReasonNonRiskyIdSelf.HasValue) s.Reconciliation.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value;
+                            if (res.NewToRemindSelf.HasValue)
+                            {
+                                s.Reconciliation.ToRemind = res.NewToRemindSelf.Value;
+                            }
+                            if (res.NewToRemindDaysSelf.HasValue)
+                            {
+                                var days = res.NewToRemindDaysSelf.Value;
+                                try { s.Reconciliation.ToRemindDate = DateTime.Today.AddDays(days); } catch { }
+                            }
+                        }
+                        if (!string.IsNullOrWhiteSpace(res.UserMessage))
+                        {
+                            // Prepend timestamped message to comments; keep non-blocking and avoid duplicates
+                            try
+                            {
+                                var prefix = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {_currentUser}: ";
+                                var msg = prefix + $"[Rule {res.Rule.RuleId ?? "(unnamed)"}] {res.UserMessage}";
+                                if (string.IsNullOrWhiteSpace(s.Reconciliation.Comments))
+                                {
+                                    s.Reconciliation.Comments = msg;
+                                }
+                                else if (!s.Reconciliation.Comments.Contains(msg))
+                                {
+                                    s.Reconciliation.Comments = msg + Environment.NewLine + s.Reconciliation.Comments;
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+
+                    // Counterpart application intents
+                    if (res.Rule.AutoApply
+                        && (res.Rule.ApplyTo == ApplyTarget.Counterpart || res.Rule.ApplyTo == ApplyTarget.Both)
+                        && !string.IsNullOrWhiteSpace(s.Bgi))
+                    {
+                        var targetIsPivot = !s.IsPivot; // counterpart side
+                        counterpartIntents.Add((
+                            s.Bgi.Trim().ToUpperInvariant(),
+                            targetIsPivot,
+                            res.Rule.OutputActionId,
+                            res.Rule.OutputKpiId,
+                            res.Rule.OutputIncidentTypeId,
+                            res.Rule.OutputRiskyItem,
+                            res.Rule.OutputReasonNonRiskyId,
+                            res.Rule.OutputToRemind,
+                            res.Rule.OutputToRemindDays
+                        ));
+                    }
+                }
+
+                // Second pass: realize counterpart intents within the staged set using BGI grouping
+                if (counterpartIntents.Count > 0)
+                {
+                    // Group staged by normalized BGI
+                    var byBgi = staged
+                        .Where(x => !string.IsNullOrWhiteSpace(x.Bgi))
+                        .GroupBy(x => x.Bgi.Trim().ToUpperInvariant());
+
+                    var map = byBgi.ToDictionary(g => g.Key, g => g.ToList());
+                    foreach (var intent in counterpartIntents)
+                    {
+                        if (!map.TryGetValue(intent.Bgi, out var rows)) continue;
+                        foreach (var row in rows)
+                        {
+                            if (row.IsPivot != intent.TargetIsPivot) continue;
+                            if (intent.ActionId.HasValue) row.Reconciliation.Action = intent.ActionId.Value;
+                            if (intent.KpiId.HasValue) row.Reconciliation.KPI = intent.KpiId.Value;
+                            if (intent.IncidentTypeId.HasValue) row.Reconciliation.IncidentType = intent.IncidentTypeId.Value;
+                            if (intent.RiskyItem.HasValue) row.Reconciliation.RiskyItem = intent.RiskyItem.Value;
+                            if (intent.ReasonNonRiskyId.HasValue) row.Reconciliation.ReasonNonRisky = intent.ReasonNonRiskyId.Value;
+                            if (intent.ToRemind.HasValue) row.Reconciliation.ToRemind = intent.ToRemind.Value;
+                            if (intent.ToRemindDays.HasValue)
+                            {
+                                try { row.Reconciliation.ToRemindDate = DateTime.Today.AddDays(intent.ToRemindDays.Value); } catch { }
+                            }
+                        }
+                    }
+                }
+
+                // Finalize default ActionStatus and ActionDate values after all rule outputs are applied
+                try
+                {
+                    var allUserFields = _offlineFirstService?.UserFields;
+                    var nowLocal = DateTime.Now;
+                    foreach (var s in staged)
+                    {
+                        var rec = s?.Reconciliation;
+                        if (rec == null) continue;
+                        try
+                        {
+                            bool isNa = !rec.Action.HasValue || UserFieldUpdateService.IsActionNA(rec.Action, allUserFields);
+                            if (isNa)
+                            {
+                                rec.ActionStatus = null;
+                                rec.ActionDate = null;
+                            }
+                            else
+                            {
+                                if (!rec.ActionStatus.HasValue) rec.ActionStatus = false; // default to PENDING
+                                if (!rec.ActionDate.HasValue) rec.ActionDate = nowLocal;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
+            }
+            catch (Exception ex)
+            {
+                LogManager.Warning($"Truth-table rules application failed: {ex.Message}");
+            }
         }
 
         private async Task<ActionType?> CalculateAutoActionAsync(
@@ -510,10 +732,10 @@ namespace RecoTool.Services.AmbreImport
         {
             var cmd = new OleDbCommand(@"INSERT INTO [T_Reconciliation] (
                 [ID],[DWINGS_GuaranteeID],[DWINGS_InvoiceID],[DWINGS_BGPMT],
-                [Action],[Comments],[InternalInvoiceReference],[FirstClaimDate],[LastClaimDate],
+                [Action],[ActionStatus],[ActionDate],[Comments],[InternalInvoiceReference],[FirstClaimDate],[LastClaimDate],
                 [ToRemind],[ToRemindDate],[ACK],[SwiftCode],[PaymentReference],[KPI],
                 [IncidentType],[RiskyItem],[ReasonNonRisky],[CreationDate],[ModifiedBy],[LastModified]
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", conn, tx);
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", conn, tx);
 
             // Add parameters in order
             cmd.Parameters.AddWithValue("@ID", (object)rec.ID ?? DBNull.Value);
@@ -521,6 +743,8 @@ namespace RecoTool.Services.AmbreImport
             cmd.Parameters.AddWithValue("@DWINGS_InvoiceID", (object)rec.DWINGS_InvoiceID ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@DWINGS_BGPMT", (object)rec.DWINGS_BGPMT ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@Action", (object)rec.Action ?? DBNull.Value);
+            cmd.Parameters.Add("@ActionStatus", OleDbType.Boolean).Value = rec.ActionStatus.HasValue ? (object)rec.ActionStatus.Value : DBNull.Value;
+            cmd.Parameters.Add("@ActionDate", OleDbType.Date).Value = rec.ActionDate.HasValue ? (object)rec.ActionDate.Value : DBNull.Value;
             cmd.Parameters.AddWithValue("@Comments", (object)rec.Comments ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@InternalInvoiceReference", (object)rec.InternalInvoiceReference ?? DBNull.Value);
             

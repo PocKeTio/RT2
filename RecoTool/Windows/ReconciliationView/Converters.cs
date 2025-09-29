@@ -180,6 +180,37 @@ namespace RecoTool.Windows
             => throw new NotSupportedException();
     }
 
+    // Converter: map int? <-> sentinel (e.g., -1) for ComboBox SelectedValue bindings
+    // Use case: allow a "— (None) —" item with Id = Sentinel to represent null in the model
+    public class NullableIdSentinelConverter : IValueConverter
+    {
+        public int Sentinel { get; set; } = -1;
+
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            try
+            {
+                if (value == null) return Sentinel;
+                if (value is int i) return i;
+                if (int.TryParse(value?.ToString(), out var parsed)) return parsed;
+                return Sentinel;
+            }
+            catch { return Sentinel; }
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            try
+            {
+                if (value == null) return null;
+                if (value is int i) return i == Sentinel ? (int?)null : i;
+                if (int.TryParse(value?.ToString(), out var parsed)) return parsed == Sentinel ? (int?)null : parsed;
+                return null;
+            }
+            catch { return null; }
+        }
+    }
+
     public class UserFieldIdToNameConverter : IMultiValueConverter
     {
         // values: [0]=int? id, [1]=AllUserFields
@@ -240,4 +271,234 @@ namespace RecoTool.Windows
         public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
             => throw new NotSupportedException();
     }
+
+    // Badge background for Scope values (Both/Import/Edit)
+    public class ScopeToBadgeBrushConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            try
+            {
+                var s = value?.ToString()?.Trim();
+                if (string.IsNullOrWhiteSpace(s)) return Brushes.Transparent;
+                switch (s.ToUpperInvariant())
+                {
+                    case "BOTH": return new SolidColorBrush(Color.FromArgb(255, 204, 229, 255)); // light blue
+                    case "IMPORT": return new SolidColorBrush(Color.FromArgb(255, 204, 255, 204)); // light green
+                    case "EDIT": return new SolidColorBrush(Color.FromArgb(255, 255, 242, 204)); // light yellow
+                    default: return Brushes.Transparent;
+                }
+            }
+            catch { return Brushes.Transparent; }
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
+    }
+
+    // Badge background for Priority values (lower = more important)
+    public class PriorityToBadgeBrushConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            try
+            {
+                int p = 0;
+                if (value is int i) p = i;
+                else int.TryParse(value?.ToString() ?? "0", out p);
+                if (p <= 25) return new SolidColorBrush(Color.FromArgb(255, 255, 204, 204)); // redish
+                if (p <= 50) return new SolidColorBrush(Color.FromArgb(255, 255, 224, 178)); // orange
+                if (p <= 100) return new SolidColorBrush(Color.FromArgb(255, 255, 251, 204)); // yellow
+                if (p <= 200) return new SolidColorBrush(Color.FromArgb(255, 230, 244, 234)); // pale green
+                return new SolidColorBrush(Color.FromArgb(255, 240, 240, 240)); // neutral gray
+            }
+            catch { return Brushes.Transparent; }
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
+    }
+
+    // Map an integer (or nullable) id and a list of OptionItem-like objects (Id/Name) to the display Name
+    public class IdToOptionNameConverter : IMultiValueConverter
+    {
+        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+        {
+            try
+            {
+                if (values == null || values.Length < 2) return null;
+                // Value 0: the id (int or string)
+                if (values[0] == null) return null;
+                int id;
+                if (values[0] is int i) id = i;
+                else if (values[0] is int ni) id = ni;
+                else if (!int.TryParse(values[0]?.ToString(), out id)) return null;
+
+                // Value 1: the options (IEnumerable of objects with Id/Name)
+                if (!(values[1] is System.Collections.IEnumerable seq)) return null;
+                foreach (var item in seq)
+                {
+                    if (item == null) continue;
+                    var t = item.GetType();
+                    var idProp = t.GetProperty("Id");
+                    var nameProp = t.GetProperty("Name");
+                    if (idProp == null) continue;
+                    var rawId = idProp.GetValue(item);
+                    int itemId;
+                    if (rawId is int ii) itemId = ii;
+                    else if (rawId is int ni2) itemId = ni2;
+                    else if (!int.TryParse(rawId?.ToString(), out itemId)) continue;
+                    if (itemId == id)
+                    {
+                        var name = nameProp?.GetValue(item)?.ToString();
+                        return string.IsNullOrWhiteSpace(name) ? item.ToString() : name;
+                    }
+                }
+                return null;
+            }
+            catch { return null; }
+        }
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) => throw new NotSupportedException();
+    }
+
+    // Expose static instances for XAML x:Static usage to avoid designer construction issues
+    public static class UIConverters
+    {
+        public static readonly IValueConverter ScopeToBadgeBrush = new ScopeToBadgeBrushConverter();
+        public static readonly IValueConverter PriorityToBadgeBrush = new PriorityToBadgeBrushConverter();
+        public static readonly IMultiValueConverter IdToOptionName = new IdToOptionNameConverter();
+        public static readonly IValueConverter AccountSideToFriendly = new global::AccountSideToFriendlyConverter();
+        public static readonly IValueConverter SignToFriendly = new global::SignToFriendlyConverter();
+        public static readonly IValueConverter GuaranteeTypeToFriendly = new global::GuaranteeTypeToFriendlyConverter();
+        public static readonly IValueConverter TransactionTypeToFriendly = new global::TransactionTypeToFriendlyConverter();
+        public static readonly IValueConverter ApplyToToFriendly = new global::ApplyToToFriendlyConverter();
+        public static readonly IValueConverter NullableIdToSentinel = new NullableIdSentinelConverter { Sentinel = -1 };
+    }
+    
+    public class BoolToPendingDoneConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            if (value == null || value is DBNull) return string.Empty;
+            if (value is bool b) return b ? "DONE" : "PENDING";
+            if (bool.TryParse(value.ToString(), out var parsed)) return parsed ? "DONE" : "PENDING";
+            return string.Empty;
+        }
+        
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            var s = value?.ToString();
+            if (string.Equals(s, "DONE", StringComparison.OrdinalIgnoreCase)) return true;
+            if (string.Equals(s, "PENDING", StringComparison.OrdinalIgnoreCase)) return false;
+            return null;
+        }
+    }
+}
+
+// Converter: map AccountSide to friendly display name
+public class AccountSideToFriendlyConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        try
+        {
+            var s = value?.ToString()?.Trim();
+            if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+            switch (s.ToUpperInvariant())
+            {
+                case "P": return "Pivot";
+                case "R": return "Receivable";
+                case "*": return "Any (*)";
+                default: return s;
+            }
+        }
+        catch { return string.Empty; }
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
+}
+
+// Converter: map Sign to friendly display name
+public class SignToFriendlyConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        try
+        {
+            var s = value?.ToString()?.Trim();
+            if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+            switch (s.ToUpperInvariant())
+            {
+                case "C": return "Credit";
+                case "D": return "Debit";
+                case "*": return "Any (*)";
+                default: return s;
+            }
+        }
+        catch { return string.Empty; }
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
+}
+
+// Converter: map GuaranteeType to friendly display name
+public class GuaranteeTypeToFriendlyConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        try
+        {
+            var s = value?.ToString()?.Trim();
+            if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+            var u = s.ToUpperInvariant();
+            if (u == "*") return "Any (*)";
+            var pretty = CultureInfo.CurrentCulture.TextInfo.ToTitleCase(u.ToLowerInvariant().Replace('_', ' '));
+            return pretty;
+        }
+        catch { return string.Empty; }
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
+}
+
+// Converter: map TransactionType (enum-like string) to friendly text
+public class TransactionTypeToFriendlyConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        try
+        {
+            var s = value?.ToString()?.Trim();
+            if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+            var u = s.ToUpperInvariant();
+            if (u == "*") return "Any (*)";
+            var pretty = CultureInfo.CurrentCulture.TextInfo.ToTitleCase(u.ToLowerInvariant().Replace('_', ' '));
+            return pretty;
+        }
+        catch { return string.Empty; }
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
+}
+
+// Converter: map ApplyTo to friendly display name
+public class ApplyToToFriendlyConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        try
+        {
+            var s = value?.ToString()?.Trim();
+            if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+            switch (s.ToUpperInvariant())
+            {
+                case "SELF": return "Self";
+                case "COUNTERPART": return "Counterpart";
+                case "BOTH": return "Both";
+                default: return s;
+            }
+        }
+        catch { return string.Empty; }
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
 }

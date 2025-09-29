@@ -1,0 +1,306 @@
+<Window x:Class="RecoTool.Windows.RulesAdminWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:RecoTool.Windows"
+        xmlns:rules="clr-namespace:RecoTool.Services.Rules"
+        mc:Ignorable="d"
+        Title="Rules Administration" Height="700" Width="1150"
+        WindowStartupLocation="CenterOwner">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Margin" Value="4"/>
+            <Setter Property="Padding" Value="8,4"/>
+        </Style>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="TriStateCheckBox" TargetType="CheckBox">
+            <Setter Property="IsThreeState" Value="True"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+    <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Background="#F6F6F6" >
+            <TextBlock Text="⚙️" FontSize="16" Margin="8,0,6,0"/>
+            <TextBlock Text="Rules Administration" FontWeight="Bold" FontSize="14" VerticalAlignment="Center"/>
+            <TextBlock Text=" ⓘ" Foreground="#666" VerticalAlignment="Center" Margin="6,0,0,0">
+                <TextBlock.ToolTip>
+                    <StackPanel MaxWidth="520">
+                        <TextBlock Text="Rules Admin Help" FontWeight="Bold"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="#555" Margin="0,4,0,0">
+• Use Ensure Table to create the referential table if missing.
+• Add/Edit to manage rules. Lower Priority wins when multiple rules match.
+• Scope = Import/Edit/Both. Account Side = P (Pivot) / R (Receivable) / * (any).
+• Use * to ignore a condition. Tri-state flags: Yes/No/— (None) — to ignore.
+• Outputs set Action/KPI/Incident/Reason and reminders when the rule matches.
+                        </TextBlock>
+                    </StackPanel>
+                </TextBlock.ToolTip>
+            </TextBlock>
+            <Separator Margin="8,0"/>
+            <Button Content="Ensure Table" Click="EnsureTable_Click"/>
+            <Button Content="Reload" Click="Reload_Click"/>
+            <Button Content="Add (Form)" Click="Add_Click"/>
+            <Button Content="Edit Selected" Click="EditSelected_Click"/>
+            <Button Content="Save Selected" Click="SaveSelected_Click"/>
+            <Button Content="Delete Selected" Click="DeleteSelected_Click"/>
+            <Button Content="Seed Defaults" Click="SeedDefaults_Click" ToolTip="Insert default rules derived from legacy logic (idempotent)."/>
+            <Button Content="Run Rules Now…" Click="RunRulesNow_Click" ToolTip="Execute rules immediately on all rows of the current country."/>
+            <TextBox x:Name="SearchBox" Width="220" Margin="16,0,0,0" VerticalAlignment="Center" 
+                     ToolTip="Filter by RuleId, Message or TransactionType"
+                     TextChanged="SearchBox_TextChanged"/>
+            <TextBlock Text="Status:" Margin="16,0,4,0"/>
+            <TextBlock x:Name="StatusText" Text="Ready"/>
+        </StackPanel>
+        <DataGrid x:Name="RulesGrid"
+                  ItemsSource="{Binding Rules}"
+                  AutoGenerateColumns="False"
+                  CanUserAddRows="False"
+                  SelectionMode="Single"
+                  SelectionUnit="FullRow"
+                  IsReadOnly="False"
+                  Margin="8">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="RuleId" Binding="{Binding RuleId, UpdateSourceTrigger=PropertyChanged}" Width="160"/>
+                <DataGridCheckBoxColumn Header="Enabled" Binding="{Binding Enabled, UpdateSourceTrigger=PropertyChanged}" Width="70"/>
+                <!-- Priority with badge background -->
+                <DataGridTemplateColumn Header="Priority" Width="90">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Border CornerRadius="10" Padding="6,2" Background="{Binding Priority, Converter={x:Static local:UIConverters.PriorityToBadgeBrush}}">
+                                <TextBlock Text="{Binding Priority}" HorizontalAlignment="Center"/>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <TextBox Text="{Binding Priority, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+                <!-- Scope with badge background -->
+                <DataGridTemplateColumn Header="Scope" Width="100">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Border CornerRadius="10" Padding="6,2" Background="{Binding Scope, Converter={x:Static local:UIConverters.ScopeToBadgeBrush}}">
+                                <TextBlock Text="{Binding Scope}" HorizontalAlignment="Center"/>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=Scopes}"
+                                      SelectedItem="{Binding Scope, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="AccountSide" Width="100">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding AccountSide, Converter={x:Static local:UIConverters.AccountSideToFriendly}, TargetNullValue='*'}" ToolTip="P (Pivot) / R (Receivable) / * (Any)"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=AccountSides}"
+                                      SelectedItem="{Binding AccountSide, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="GuaranteeType" Width="160">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding GuaranteeType, Converter={x:Static local:UIConverters.GuaranteeTypeToFriendly}, TargetNullValue='*'}" ToolTip="Example: ISSUANCE, REISSUANCE, ADVISING or * to ignore"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=GuaranteeTypes}"
+                                      SelectedItem="{Binding GuaranteeType, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="TransactionType" Width="160">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding TransactionType, Converter={x:Static local:UIConverters.TransactionTypeToFriendly}, TargetNullValue='*'}" ToolTip="Use enum name (e.g., INCOMING_PAYMENT) or * to ignore"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TransactionTypes}"
+                                      SelectedItem="{Binding TransactionType, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Booking" Binding="{Binding Booking, UpdateSourceTrigger=PropertyChanged}" Width="120"/>
+                <DataGridCheckBoxColumn Header="HasDwingsLink" Binding="{Binding HasDwingsLink, UpdateSourceTrigger=PropertyChanged}" Width="110"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
+                <DataGridCheckBoxColumn Header="IsGrouped" Binding="{Binding IsGrouped, UpdateSourceTrigger=PropertyChanged}" Width="90"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
+                <DataGridCheckBoxColumn Header="IsAmountMatch" Binding="{Binding IsAmountMatch, UpdateSourceTrigger=PropertyChanged}" Width="120"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
+                <DataGridTemplateColumn Header="CurrentAction" Width="140">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock>
+                                <TextBlock.Text>
+                                    <MultiBinding Converter="{x:Static local:UIConverters.IdToOptionName}">
+                                        <Binding Path="CurrentActionId"/>
+                                        <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="ActionOptions"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=ActionOptions}"
+                                      SelectedValuePath="Id" DisplayMemberPath="Name"
+                                      SelectedValue="{Binding CurrentActionId, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Sign" Width="70">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Sign, Converter={x:Static local:UIConverters.SignToFriendly}, TargetNullValue='*'}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=Signs}"
+                                      SelectedItem="{Binding Sign, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+                <!-- Time/State Conditions -->
+                <DataGridCheckBoxColumn Header="TriggerDateIsNull" Binding="{Binding TriggerDateIsNull, UpdateSourceTrigger=PropertyChanged}" Width="150"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
+                <DataGridTextColumn Header="DaysSinceTriggerMin" Binding="{Binding DaysSinceTriggerMin, UpdateSourceTrigger=PropertyChanged}" Width="170"/>
+                <DataGridTextColumn Header="DaysSinceTriggerMax" Binding="{Binding DaysSinceTriggerMax, UpdateSourceTrigger=PropertyChanged}" Width="170"/>
+                <DataGridCheckBoxColumn Header="IsTransitory" Binding="{Binding IsTransitory, UpdateSourceTrigger=PropertyChanged}" Width="110"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
+                <DataGridTextColumn Header="OperationDaysAgoMin" Binding="{Binding OperationDaysAgoMin, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
+                <DataGridTextColumn Header="OperationDaysAgoMax" Binding="{Binding OperationDaysAgoMax, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
+                <DataGridCheckBoxColumn Header="IsFirstClaim" Binding="{Binding IsFirstRequest, UpdateSourceTrigger=PropertyChanged}" Width="130"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
+                <DataGridTextColumn Header="DaysSinceReminderMin" Binding="{Binding DaysSinceReminderMin, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
+                <DataGridTextColumn Header="DaysSinceReminderMax" Binding="{Binding DaysSinceReminderMax, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
+                <DataGridTemplateColumn Header="Out.Action" Width="140">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock>
+                                <TextBlock.Text>
+                                    <MultiBinding Converter="{x:Static local:UIConverters.IdToOptionName}">
+                                        <Binding Path="OutputActionId"/>
+                                        <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="ActionOptions"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=ActionOptions}"
+                                      SelectedValuePath="Id" DisplayMemberPath="Name"
+                                      SelectedValue="{Binding OutputActionId, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Out.KPI" Width="140">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock>
+                                <TextBlock.Text>
+                                    <MultiBinding Converter="{x:Static local:UIConverters.IdToOptionName}">
+                                        <Binding Path="OutputKpiId"/>
+                                        <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="KpiOptions"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=KpiOptions}"
+                                      SelectedValuePath="Id" DisplayMemberPath="Name"
+                                      SelectedValue="{Binding OutputKpiId, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Out.Incident" Width="160">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock>
+                                <TextBlock.Text>
+                                    <MultiBinding Converter="{x:Static local:UIConverters.IdToOptionName}">
+                                        <Binding Path="OutputIncidentTypeId"/>
+                                        <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="IncidentTypeOptions"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=IncidentTypeOptions}"
+                                      SelectedValuePath="Id" DisplayMemberPath="Name"
+                                      SelectedValue="{Binding OutputIncidentTypeId, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+                <DataGridCheckBoxColumn Header="Out.RiskyItem" Binding="{Binding OutputRiskyItem, UpdateSourceTrigger=PropertyChanged}" Width="110"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
+                <DataGridTemplateColumn Header="Out.ReasonNonRisky" Width="170">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock>
+                                <TextBlock.Text>
+                                    <MultiBinding Converter="{x:Static local:UIConverters.IdToOptionName}">
+                                        <Binding Path="OutputReasonNonRiskyId"/>
+                                        <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="ReasonOptions"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=ReasonOptions}"
+                                      SelectedValuePath="Id" DisplayMemberPath="Name"
+                                      SelectedValue="{Binding OutputReasonNonRiskyId, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+                <DataGridCheckBoxColumn Header="Out.ToRemind" Binding="{Binding OutputToRemind, UpdateSourceTrigger=PropertyChanged}" Width="110"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
+                <DataGridTextColumn Header="Out.ToRemindDays" Binding="{Binding OutputToRemindDays, UpdateSourceTrigger=PropertyChanged}" Width="130"/>
+                <DataGridTemplateColumn Header="ApplyTo" Width="100">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding ApplyTo, Converter={x:Static local:UIConverters.ApplyToToFriendly}, TargetNullValue='*'}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=ApplyTargets}"
+                                      SelectedItem="{Binding ApplyTo, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+                <DataGridCheckBoxColumn Header="AutoApply" Binding="{Binding AutoApply, UpdateSourceTrigger=PropertyChanged}" Width="90"/>
+                <DataGridTextColumn Header="Message" Binding="{Binding Message, UpdateSourceTrigger=PropertyChanged}" Width="200"/>
+                <DataGridTemplateColumn Header="Edit" Width="90">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Button Content="Edit…" Padding="6,2" Click="EditRowButton_Click"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</Window>

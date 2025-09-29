@@ -2358,12 +2358,7 @@ namespace RecoTool.Services
                 try
                 {
                     var reconPath = GetNetworkReconciliationDbPath(countryId);
-                    var ambreZip = GetNetworkAmbreZipPath(countryId);
-                    var lockPath = GetControlDbPath(countryId);
-                    bool hasRecon = !string.IsNullOrWhiteSpace(reconPath) && File.Exists(reconPath);
-                    bool hasAmbre = !string.IsNullOrWhiteSpace(ambreZip) && File.Exists(ambreZip);
-                    bool hasLock = !string.IsNullOrWhiteSpace(lockPath) && File.Exists(lockPath);
-                    needProvision = !(hasRecon && hasAmbre && hasLock);
+                    needProvision = !string.IsNullOrWhiteSpace(reconPath) && File.Exists(reconPath);
                 }
                 catch { needProvision = true; }
 

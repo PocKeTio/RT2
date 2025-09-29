@@ -626,6 +626,24 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
+        /// Open the Rules Administration window
+        /// </summary>
+        private void RulesButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var win = new RulesAdminWindow();
+                win.Owner = this;
+                win.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+                win.Show();
+            }
+            catch (Exception ex)
+            {
+                ShowError("Error", $"Unable to open Rules Administration: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Met à jour l'UI selon l'état de connectivité (online/offline)
         /// </summary>
         private void UpdateUiForConnectivity()

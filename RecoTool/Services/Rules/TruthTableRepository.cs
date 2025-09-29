@@ -1,0 +1,559 @@
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.OleDb;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using RecoTool.Services;
+
+namespace RecoTool.Services.Rules
+{
+    /// <summary>
+    /// Administrative interface to manage rules storage (create table, upsert and delete rules).
+    /// Placed here to avoid new files while project includes are static.
+    /// </summary>
+    public interface IRulesAdmin
+    {
+        Task<bool> EnsureRulesTableAsync(CancellationToken token = default);
+        Task<bool> UpsertRuleAsync(TruthRule rule, CancellationToken token = default);
+        Task<int> DeleteRuleAsync(string ruleId, CancellationToken token = default);
+    }
+
+
+    public class TruthTableRepository : IRulesAdmin
+    {
+        private readonly OfflineFirstService _offlineFirstService;
+        private readonly ReferentialService _referentialService;
+
+        public TruthTableRepository(OfflineFirstService offlineFirstService)
+        {
+            _offlineFirstService = offlineFirstService ?? throw new ArgumentNullException(nameof(offlineFirstService));
+            _referentialService = new ReferentialService(_offlineFirstService);
+        }
+
+        private async Task<string> GetRulesTableNameAsync(CancellationToken token)
+        {
+            return "T_Reco_Rules";
+        }
+
+        private static bool HasColumn(DataTable schema, string columnName)
+            => schema != null && schema.Rows.Cast<DataRow>().Any(r => string.Equals(Convert.ToString(r["COLUMN_NAME"]), columnName, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>
+        /// Loads enabled rules ordered by Priority ASC, RuleId ASC.
+        /// Returns empty list when table is missing or unreadable.
+        /// </summary>
+        public async Task<List<TruthRule>> LoadRulesAsync(CancellationToken token = default)
+        {
+            var list = new List<TruthRule>();
+            try
+            {
+                var tableName = await GetRulesTableNameAsync(token).ConfigureAwait(false);
+                var cs = _offlineFirstService.ReferentialConnectionString;
+                using (var conn = new OleDbConnection(cs))
+                {
+                    await conn.OpenAsync(token).ConfigureAwait(false);
+                    // Introspect columns to be robust to schema variants
+                    var schema = conn.GetOleDbSchemaTable(OleDbSchemaGuid.Columns, new object[] { null, null, tableName, null });
+                    if (schema == null || schema.Rows.Count == 0)
+                    {
+                        // Table missing or not accessible
+                        return list;
+                    }
+
+                    var sql = $"SELECT * FROM [{tableName}]";
+                    using (var cmd = new OleDbCommand(sql, conn))
+                    using (var rdr = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false))
+                    {
+                        var table = new DataTable();
+                        table.Load(rdr);
+                        foreach (DataRow row in table.Rows)
+                        {
+                            try
+                            {
+                                // Read Enabled (default true if column missing or null)
+                                bool enabled = true;
+                                if (table.Columns.Contains("Enabled") && row["Enabled"] != DBNull.Value) enabled = Convert.ToBoolean(row["Enabled"]);
+                                if (!enabled) continue;
+
+                                var rule = new TruthRule
+                                {
+                                    RuleId = table.Columns.Contains("RuleId") ? Convert.ToString(row["RuleId"]) : null,
+                                    Enabled = enabled,
+                                    Priority = table.Columns.Contains("Priority") && row["Priority"] != DBNull.Value ? Convert.ToInt32(row["Priority"]) : 100,
+                                    Scope = ParseScope(GetString(row, table, "Scope") ?? "Both"),
+                                    AccountSide = NormalizeWildcard(GetString(row, table, "AccountSide") ?? "*"),
+                                    GuaranteeType = NormalizeWildcard(GetString(row, table, "GuaranteeType")),
+                                    TransactionType = NormalizeWildcard(GetString(row, table, "TransactionType")),
+                                    Booking = NormalizeWildcard(GetString(row, table, "Booking")),
+                                    HasDwingsLink = GetNullableBool(row, table, "HasDwingsLink"),
+                                    IsGrouped = GetNullableBool(row, table, "IsGrouped"),
+                                    IsAmountMatch = GetNullableBool(row, table, "IsAmountMatch"),
+                                    Sign = NormalizeWildcard(GetString(row, table, "Sign") ?? "*"),
+                                    TriggerDateIsNull = GetNullableBool(row, table, "TriggerDateIsNull"),
+                                    DaysSinceTriggerMin = GetNullableInt(row, table, "DaysSinceTriggerMin"),
+                                    DaysSinceTriggerMax = GetNullableInt(row, table, "DaysSinceTriggerMax"),
+                                    IsTransitory = GetNullableBool(row, table, "IsTransitory"),
+                                    OperationDaysAgoMin = GetNullableInt(row, table, "OperationDaysAgoMin"),
+                                    OperationDaysAgoMax = GetNullableInt(row, table, "OperationDaysAgoMax"),
+                                    IsMatched = GetNullableBool(row, table, "IsMatched"),
+                                    HasManualMatch = GetNullableBool(row, table, "HasManualMatch"),
+                                    IsFirstRequest = GetNullableBool(row, table, "IsFirstRequest"),
+                                    DaysSinceReminderMin = GetNullableInt(row, table, "DaysSinceReminderMin"),
+                                    DaysSinceReminderMax = GetNullableInt(row, table, "DaysSinceReminderMax"),
+                                    CurrentActionId = GetNullableInt(row, table, "CurrentActionId"),
+                                    OutputActionId = GetNullableInt(row, table, "OutputActionId"),
+                                    OutputKpiId = GetNullableInt(row, table, "OutputKpiId"),
+                                    OutputIncidentTypeId = GetNullableInt(row, table, "OutputIncidentTypeId"),
+                                    OutputRiskyItem = GetNullableBool(row, table, "OutputRiskyItem"),
+                                    OutputReasonNonRiskyId = GetNullableInt(row, table, "OutputReasonNonRiskyId"),
+                                    OutputToRemind = GetNullableBool(row, table, "OutputToRemind"),
+                                    OutputToRemindDays = GetNullableInt(row, table, "OutputToRemindDays"),
+                                    ApplyTo = ParseApplyTo(GetString(row, table, "ApplyTo") ?? "Self"),
+                                    AutoApply = table.Columns.Contains("AutoApply") && row["AutoApply"] != DBNull.Value ? Convert.ToBoolean(row["AutoApply"]) : true,
+                                    Message = GetString(row, table, "Message")
+                                };
+                                list.Add(rule);
+                            }
+                            catch { }
+                        }
+                    }
+                }
+
+                // Order by priority, then RuleId stable
+                list = list.OrderBy(r => r.Priority).ThenBy(r => r.RuleId, StringComparer.OrdinalIgnoreCase).ToList();
+            }
+            catch
+            {
+                // Return empty list on any error to avoid blocking
+                return new List<TruthRule>();
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// Creates the rules table in the referential DB if it does not already exist.
+        /// Returns true if the table exists or was created successfully.
+        /// </summary>
+        public async Task<bool> EnsureRulesTableAsync(CancellationToken token = default)
+        {
+            var tableName = await GetRulesTableNameAsync(token).ConfigureAwait(false);
+            var cs = _offlineFirstService.ReferentialConnectionString;
+            using (var conn = new OleDbConnection(cs))
+            {
+                await conn.OpenAsync(token).ConfigureAwait(false);
+                // Check existence
+                try
+                {
+                    var schema = conn.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, new object[] { null, null, tableName, "TABLE" });
+                    if (schema != null && schema.Rows.Count > 0)
+                    {
+                        // Table exists; ensure new columns are present
+                        await EnsureMissingColumnsAsync(conn, tableName).ConfigureAwait(false);
+                        return true; // already exists
+                    }
+                }
+                catch { /* fallback to create */ }
+
+                try
+                {
+                    // Create table with full schema (columns are optional when reading; we create full set)
+                    var sql = $@"CREATE TABLE [{tableName}] (
+                        RuleId TEXT(50),
+                        Enabled YESNO,
+                        Priority INTEGER,
+                        Scope TEXT(10),
+                        AccountSide TEXT(1),
+                        GuaranteeType TEXT(255),
+                        TransactionType TEXT(255),
+                        Booking TEXT(50),
+                        HasDwingsLink INTEGER,
+                        IsGrouped INTEGER,
+                        IsAmountMatch INTEGER,
+                        Sign TEXT(1),
+                        TriggerDateIsNull INTEGER,
+                        DaysSinceTriggerMin INTEGER,
+                        DaysSinceTriggerMax INTEGER,
+                        IsTransitory INTEGER,
+                        OperationDaysAgoMin INTEGER,
+                        OperationDaysAgoMax INTEGER,
+                        IsMatched INTEGER,
+                        HasManualMatch INTEGER,
+                        IsFirstRequest INTEGER,
+                        DaysSinceReminderMin INTEGER,
+                        DaysSinceReminderMax INTEGER,
+                        CurrentActionId INTEGER,
+                        OutputActionId INTEGER,
+                        OutputKpiId INTEGER,
+                        OutputIncidentTypeId INTEGER,
+                        OutputRiskyItem INTEGER,
+                        OutputReasonNonRiskyId INTEGER,
+                        OutputToRemind INTEGER,
+                        OutputToRemindDays INTEGER,
+                        ApplyTo TEXT(12),
+                        AutoApply YESNO,
+                        Message LONGTEXT
+                    )";
+                    using (var cmd = new OleDbCommand(sql, conn))
+                    {
+                        await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    }
+
+                    // Unique index on RuleId to avoid duplicates
+                    try
+                    {
+                        var idx = $"CREATE UNIQUE INDEX UX_{tableName}_RuleId ON [{tableName}] (RuleId)";
+                        using (var cmd = new OleDbCommand(idx, conn))
+                        {
+                            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                        }
+                    }
+                    catch { /* index best-effort */ }
+
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+
+        private static async Task EnsureMissingColumnsAsync(OleDbConnection conn, string tableName)
+        {
+            // Introspect existing columns
+            var cols = conn.GetOleDbSchemaTable(OleDbSchemaGuid.Columns, new object[] { null, null, tableName, null });
+            var need = new List<(string Name, string Ddl)> {
+                ("Booking", "TEXT(50)"),
+                ("TriggerDateIsNull", "INTEGER"),
+                ("DaysSinceTriggerMin", "INTEGER"),
+                ("DaysSinceTriggerMax", "INTEGER"),
+                ("IsTransitory", "INTEGER"),
+                ("OperationDaysAgoMin", "INTEGER"),
+                ("OperationDaysAgoMax", "INTEGER"),
+                ("IsMatched", "INTEGER"),
+                ("HasManualMatch", "INTEGER"),
+                ("IsFirstRequest", "INTEGER"),
+                ("DaysSinceReminderMin", "INTEGER"),
+                ("DaysSinceReminderMax", "INTEGER"),
+                ("CurrentActionId", "INTEGER")
+            };
+            foreach (var (name, ddl) in need)
+            {
+                bool exists = cols != null && cols.Rows.Cast<System.Data.DataRow>().Any(r => string.Equals(Convert.ToString(r["COLUMN_NAME"]), name, StringComparison.OrdinalIgnoreCase));
+                if (!exists)
+                {
+                    try
+                    {
+                        using (var cmd = new OleDbCommand($"ALTER TABLE [{tableName}] ADD COLUMN [{name}] {ddl}", conn))
+                        {
+                            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                        }
+                    }
+                    catch { /* best-effort */ }
+                }
+            }
+
+            // Ensure tri-state input boolean columns are INTEGER to allow NULL (-1/0/NULL)
+            try
+            {
+                var triStateBoolCols = new[]
+                {
+                    "HasDwingsLink", "IsGrouped", "IsAmountMatch",
+                    "TriggerDateIsNull", "IsTransitory", "IsMatched",
+                    "HasManualMatch", "IsFirstRequest", "OutputRiskyItem", "OutputToRemind"
+                };
+
+                // Reload schema for nullability info
+                cols = conn.GetOleDbSchemaTable(OleDbSchemaGuid.Columns, new object[] { null, null, tableName, null });
+                foreach (var colName in triStateBoolCols)
+                {
+                    var row = cols?.Rows.Cast<System.Data.DataRow>()
+                        .FirstOrDefault(r => string.Equals(Convert.ToString(r["COLUMN_NAME"]), colName, StringComparison.OrdinalIgnoreCase));
+                    if (row == null) continue; // column may not exist in older schemas; added above if missing
+                    try
+                    {
+                        using (var cmd = new OleDbCommand($"ALTER TABLE [{tableName}] ALTER COLUMN [{colName}] INTEGER", conn))
+                        {
+                            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                        }
+                    }
+                    catch { /* best-effort; if provider disallows direct ALTER, manual migration may be required */ }
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Inserts or updates a rule identified by RuleId. Returns true if one row was inserted/updated.
+        /// </summary>
+        public async Task<bool> UpsertRuleAsync(TruthRule rule, CancellationToken token = default)
+        {
+            if (rule == null || string.IsNullOrWhiteSpace(rule.RuleId)) return false;
+            var tableName = await GetRulesTableNameAsync(token).ConfigureAwait(false);
+            var cs = _offlineFirstService.ReferentialConnectionString;
+            using (var conn = new OleDbConnection(cs))
+            {
+                await conn.OpenAsync(token).ConfigureAwait(false);
+
+                // Exists?
+                int count = 0;
+                using (var check = new OleDbCommand($"SELECT COUNT(*) FROM [{tableName}] WHERE RuleId = ?", conn))
+                {
+                    check.Parameters.AddWithValue("@p1", rule.RuleId);
+                    var obj = await check.ExecuteScalarAsync(token).ConfigureAwait(false);
+                    int.TryParse(Convert.ToString(obj), out count);
+                }
+
+                if (count > 0)
+                {
+                    // UPDATE
+                    // Ensure columns exist before update
+                    await EnsureMissingColumnsAsync(conn, tableName).ConfigureAwait(false);
+                    var sql = $@"UPDATE [{tableName}] SET
+                        Enabled=?, Priority=?, Scope=?, AccountSide=?, GuaranteeType=?, TransactionType=?, Booking=?,
+                        HasDwingsLink=?, IsGrouped=?, IsAmountMatch=?, Sign=?,
+                        TriggerDateIsNull=?, DaysSinceTriggerMin=?, DaysSinceTriggerMax=?,
+                        IsTransitory=?, OperationDaysAgoMin=?, OperationDaysAgoMax=?,
+                        IsMatched=?, HasManualMatch=?, IsFirstRequest=?, DaysSinceReminderMin=?, DaysSinceReminderMax=?, CurrentActionId=?,
+                        OutputActionId=?, OutputKpiId=?, OutputIncidentTypeId=?, OutputRiskyItem=?, OutputReasonNonRiskyId=?,
+                        OutputToRemind=?, OutputToRemindDays=?, ApplyTo=?, AutoApply=?, Message=?
+                        WHERE RuleId=?";
+                    using (var cmd = new OleDbCommand(sql, conn))
+                    {
+                        AddRuleParams(cmd, rule, includeRuleIdAtEnd: true);
+                        var n = await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                        return n == 1;
+                    }
+                }
+                else
+                {
+                    // INSERT
+                    await EnsureMissingColumnsAsync(conn, tableName).ConfigureAwait(false);
+                    var sql = $@"INSERT INTO [{tableName}] (
+                        RuleId, Enabled, Priority, Scope, AccountSide, GuaranteeType, TransactionType, Booking,
+                        HasDwingsLink, IsGrouped, IsAmountMatch, Sign,
+                        TriggerDateIsNull, DaysSinceTriggerMin, DaysSinceTriggerMax,
+                        IsTransitory, OperationDaysAgoMin, OperationDaysAgoMax,
+                        IsMatched, HasManualMatch, IsFirstRequest, DaysSinceReminderMin, DaysSinceReminderMax, CurrentActionId,
+                        OutputActionId, OutputKpiId, OutputIncidentTypeId, OutputRiskyItem, OutputReasonNonRiskyId,
+                        OutputToRemind, OutputToRemindDays, ApplyTo, AutoApply, Message)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+                    using (var cmd = new OleDbCommand(sql, conn))
+                    {
+                        AddRuleParams(cmd, rule, includeRuleIdAtEnd: false);
+                        var n = await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                        return n == 1;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Deletes a rule by RuleId. Returns number of rows deleted.
+        /// </summary>
+        public async Task<int> DeleteRuleAsync(string ruleId, CancellationToken token = default)
+        {
+            if (string.IsNullOrWhiteSpace(ruleId)) return 0;
+            var tableName = await GetRulesTableNameAsync(token).ConfigureAwait(false);
+            var cs = _offlineFirstService.ReferentialConnectionString;
+            using (var conn = new OleDbConnection(cs))
+            {
+                await conn.OpenAsync(token).ConfigureAwait(false);
+                using (var cmd = new OleDbCommand($"DELETE FROM [{tableName}] WHERE RuleId = ?", conn))
+                {
+                    cmd.Parameters.AddWithValue("@p1", ruleId);
+                    var n = await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                    return n;
+                }
+            }
+        }
+
+        private static void AddRuleParams(OleDbCommand cmd, TruthRule r, bool includeRuleIdAtEnd)
+        {
+            // Order must match INSERT/UPDATE placeholders
+            if (!includeRuleIdAtEnd) cmd.Parameters.AddWithValue("@RuleId", (object)r.RuleId ?? DBNull.Value);
+            cmd.Parameters.Add("@Enabled", OleDbType.Boolean).Value = (object)r.Enabled;
+            cmd.Parameters.Add("@Priority", OleDbType.Integer).Value = (object)r.Priority;
+            cmd.Parameters.AddWithValue("@Scope", (object)r.Scope.ToString() ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@AccountSide", (object)r.AccountSide ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@GuaranteeType", (object)r.GuaranteeType ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@TransactionType", (object)r.TransactionType ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@Booking", (object)r.Booking ?? DBNull.Value);
+            cmd.Parameters.Add("@HasDwingsLink", OleDbType.Integer).Value = (object)(r.HasDwingsLink.HasValue ? (r.HasDwingsLink.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@IsGrouped", OleDbType.Integer).Value = (object)(r.IsGrouped.HasValue ? (r.IsGrouped.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@IsAmountMatch", OleDbType.Integer).Value = (object)(r.IsAmountMatch.HasValue ? (r.IsAmountMatch.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.AddWithValue("@Sign", (object)r.Sign ?? DBNull.Value);
+            cmd.Parameters.Add("@TriggerDateIsNull", OleDbType.Integer).Value = (object)(r.TriggerDateIsNull.HasValue ? (r.TriggerDateIsNull.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@DaysSinceTriggerMin", OleDbType.Integer).Value = (object)(r.DaysSinceTriggerMin.HasValue ? r.DaysSinceTriggerMin.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@DaysSinceTriggerMax", OleDbType.Integer).Value = (object)(r.DaysSinceTriggerMax.HasValue ? r.DaysSinceTriggerMax.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@IsTransitory", OleDbType.Integer).Value = (object)(r.IsTransitory.HasValue ? (r.IsTransitory.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@OperationDaysAgoMin", OleDbType.Integer).Value = (object)(r.OperationDaysAgoMin.HasValue ? r.OperationDaysAgoMin.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@OperationDaysAgoMax", OleDbType.Integer).Value = (object)(r.OperationDaysAgoMax.HasValue ? r.OperationDaysAgoMax.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@IsMatched", OleDbType.Integer).Value = (object)(r.IsMatched.HasValue ? (r.IsMatched.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@HasManualMatch", OleDbType.Integer).Value = (object)(r.HasManualMatch.HasValue ? (r.HasManualMatch.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@IsFirstRequest", OleDbType.Integer).Value = (object)(r.IsFirstRequest.HasValue ? (r.IsFirstRequest.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@DaysSinceReminderMin", OleDbType.Integer).Value = (object)(r.DaysSinceReminderMin.HasValue ? r.DaysSinceReminderMin.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@DaysSinceReminderMax", OleDbType.Integer).Value = (object)(r.DaysSinceReminderMax.HasValue ? r.DaysSinceReminderMax.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@CurrentActionId", OleDbType.Integer).Value = (object)(r.CurrentActionId.HasValue ? r.CurrentActionId.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@OutputActionId", OleDbType.Integer).Value = (object)(r.OutputActionId.HasValue ? r.OutputActionId.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@OutputKpiId", OleDbType.Integer).Value = (object)(r.OutputKpiId.HasValue ? r.OutputKpiId.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@OutputIncidentTypeId", OleDbType.Integer).Value = (object)(r.OutputIncidentTypeId.HasValue ? r.OutputIncidentTypeId.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@OutputRiskyItem", OleDbType.Integer).Value = (object)(r.OutputRiskyItem.HasValue ? (r.OutputRiskyItem.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@OutputReasonNonRiskyId", OleDbType.Integer).Value = (object)(r.OutputReasonNonRiskyId.HasValue ? r.OutputReasonNonRiskyId.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@OutputToRemind", OleDbType.Integer).Value = (object)(r.OutputToRemind.HasValue ? (r.OutputToRemind.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@OutputToRemindDays", OleDbType.Integer).Value = (object)(r.OutputToRemindDays.HasValue ? r.OutputToRemindDays.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.AddWithValue("@ApplyTo", (object)r.ApplyTo.ToString() ?? DBNull.Value);
+            cmd.Parameters.Add("@AutoApply", OleDbType.Boolean).Value = (object)r.AutoApply;
+            cmd.Parameters.AddWithValue("@Message", (object)r.Message ?? DBNull.Value);
+            if (includeRuleIdAtEnd) cmd.Parameters.AddWithValue("@RuleId", (object)r.RuleId ?? DBNull.Value);
+        }
+
+        private static string GetString(DataRow row, DataTable table, string col)
+        {
+            if (!table.Columns.Contains(col)) return null;
+            var v = row[col];
+            if (v == null || v == DBNull.Value) return null;
+            return Convert.ToString(v);
+        }
+
+        private static bool? GetNullableBool(DataRow row, DataTable table, string col)
+        {
+            if (!table.Columns.Contains(col)) return null;
+            var v = row[col];
+            if (v == null || v == DBNull.Value) return null;
+            try { return Convert.ToBoolean(v); } catch { return null; }
+        }
+
+        private static int? GetNullableInt(DataRow row, DataTable table, string col)
+        {
+            if (!table.Columns.Contains(col)) return null;
+            var v = row[col];
+            if (v == null || v == DBNull.Value) return null;
+            try { return Convert.ToInt32(v); } catch { return null; }
+        }
+
+        private static RuleScope ParseScope(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return RuleScope.Both;
+            if (Enum.TryParse<RuleScope>(s.Trim(), true, out var e)) return e;
+            return RuleScope.Both;
+        }
+        private static ApplyTarget ParseApplyTo(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return ApplyTarget.Self;
+            if (Enum.TryParse<ApplyTarget>(s.Trim(), true, out var e)) return e;
+            return ApplyTarget.Self;
+        }
+        private static string NormalizeWildcard(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            s = s.Trim();
+            if (s == "*") return "*";
+            return s;
+        }
+
+        /// <summary>
+        /// Seed a set of default rules (idempotent) inspired by legacy reconciliation logic.
+        /// Returns the number of rules successfully upserted.
+        /// </summary>
+        public async Task<int> SeedDefaultRulesAsync(CancellationToken token = default)
+        {
+            try
+            {
+                var tableOk = await EnsureRulesTableAsync(token).ConfigureAwait(false);
+                if (!tableOk) return 0;
+
+                // Resolve Action and KPI user field IDs by friendly name
+                int? A(string name) => ResolveUserFieldId("Action", name);
+                int? K(string name) => ResolveUserFieldId("KPI", name);
+
+                var rules = new List<TruthRule>
+                {
+                    // Cross-cutting heuristics migrated from legacy ComputeAutoAction
+                    new TruthRule { RuleId = "HEUR_COLLECTION_TRIGGER_IF_NO_TRIGGERDATE", Scope = RuleScope.Import, AccountSide = "*", TransactionType = "COLLECTION", TriggerDateIsNull = true, OutputActionId = A("Trigger"), Enabled = true, Priority = 80, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "HEUR_P_TRANSITORY_OLD_OP_LT_D1", Scope = RuleScope.Import, AccountSide = "P", IsTransitory = true, OperationDaysAgoMin = 2, OutputActionId = A("Investigate"), OutputKpiId = K("Under Investigation"), Enabled = true, Priority = 85, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "HEUR_MATCH_WHEN_TRIGGER_OVERDUE_NO_MATCH", Scope = RuleScope.Import, AccountSide = "*", DaysSinceTriggerMin = 1, HasDwingsLink = false, OutputActionId = A("Match"), Enabled = true, Priority = 90, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "HEUR_R_INCOMING_FIRST_REQUEST", Scope = RuleScope.Import, AccountSide = "R", TransactionType = "INCOMING_PAYMENT", IsFirstRequest = true, OutputActionId = A("Request"), Enabled = true, Priority = 95, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "HEUR_R_INCOMING_REMIND_30D", Scope = RuleScope.Import, AccountSide = "R", TransactionType = "INCOMING_PAYMENT", DaysSinceReminderMin = 30, OutputActionId = A("Remind"), Enabled = true, Priority = 95, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    // Pivot side
+                    new TruthRule { RuleId = "LEGACY_P_COLLECTION_C", Scope = RuleScope.Import, AccountSide = "P", TransactionType = "COLLECTION", Sign = "C", OutputActionId = A("Match"), OutputKpiId = K("Paid But Not Reconciled"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "LEGACY_P_COLLECTION_D", Scope = RuleScope.Import, AccountSide = "P", TransactionType = "COLLECTION", Sign = "D", OutputActionId = A("Not Applicable"), OutputKpiId = K("IT Issues"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+
+                    new TruthRule { RuleId = "LEGACY_P_PAYMENT_D", Scope = RuleScope.Import, AccountSide = "P", TransactionType = "PAYMENT", Sign = "D", OutputActionId = A("Do Pricing"), OutputKpiId = K("Correspondent Charges To Be Invoiced"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "LEGACY_P_PAYMENT_C", Scope = RuleScope.Import, AccountSide = "P", TransactionType = "PAYMENT", Sign = "C", OutputActionId = A("Not Applicable"), OutputKpiId = K("IT Issues"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+
+                    new TruthRule { RuleId = "LEGACY_P_ADJUSTMENT", Scope = RuleScope.Import, AccountSide = "P", TransactionType = "ADJUSTMENT", Sign = "*", OutputActionId = A("Adjust"), OutputKpiId = K("Paid But Not Reconciled"), Enabled = true, Priority = 110, ApplyTo = ApplyTarget.Self, AutoApply = true },
+
+                    new TruthRule { RuleId = "LEGACY_P_XCL_LOADER_C", Scope = RuleScope.Import, AccountSide = "P", TransactionType = "XCL_LOADER", Sign = "C", OutputActionId = A("Match"), OutputKpiId = K("Paid But Not Reconciled"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "LEGACY_P_XCL_LOADER_D", Scope = RuleScope.Import, AccountSide = "P", TransactionType = "XCL_LOADER", Sign = "D", OutputActionId = A("Investigate"), OutputKpiId = K("Under Investigation"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+
+                    new TruthRule { RuleId = "LEGACY_P_TRIGGER_C", Scope = RuleScope.Import, AccountSide = "P", TransactionType = "TRIGGER", Sign = "C", OutputActionId = A("Investigate"), OutputKpiId = K("Under Investigation"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "LEGACY_P_TRIGGER_D", Scope = RuleScope.Import, AccountSide = "P", TransactionType = "TRIGGER", Sign = "D", OutputActionId = A("Do Pricing"), OutputKpiId = K("Correspondent Charges To Be Invoiced"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+
+                    // Receivable side
+                    new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_REISSUANCE", Scope = RuleScope.Import, AccountSide = "R", TransactionType = "INCOMING_PAYMENT", GuaranteeType = "REISSUANCE", OutputActionId = A("Request"), OutputKpiId = K("Not Claimed"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_ISSUANCE", Scope = RuleScope.Import, AccountSide = "R", TransactionType = "INCOMING_PAYMENT", GuaranteeType = "ISSUANCE", OutputActionId = A("Not Applicable"), OutputKpiId = K("Claimed But Not Paid"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_ADVISING", Scope = RuleScope.Import, AccountSide = "R", TransactionType = "INCOMING_PAYMENT", GuaranteeType = "ADVISING", OutputActionId = A("Trigger"), OutputKpiId = K("Paid But Not Reconciled"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_OTHER", Scope = RuleScope.Import, AccountSide = "R", TransactionType = "INCOMING_PAYMENT", GuaranteeType = "*", OutputActionId = A("Investigate"), OutputKpiId = K("IT Issues"), Enabled = true, Priority = 120, ApplyTo = ApplyTarget.Self, AutoApply = true },
+
+                    new TruthRule { RuleId = "LEGACY_R_DIRECT_DEBIT", Scope = RuleScope.Import, AccountSide = "R", TransactionType = "DIRECT_DEBIT", OutputActionId = A("Investigate"), OutputKpiId = K("IT Issues"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "LEGACY_R_MANUAL_OUTGOING", Scope = RuleScope.Import, AccountSide = "R", TransactionType = "MANUAL_OUTGOING", OutputActionId = A("Trigger"), OutputKpiId = K("Correspondent Charges Pending Trigger"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "LEGACY_R_OUTGOING_PAYMENT", Scope = RuleScope.Import, AccountSide = "R", TransactionType = "OUTGOING_PAYMENT", OutputActionId = A("Trigger"), OutputKpiId = K("Correspondent Charges Pending Trigger"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true },
+                    new TruthRule { RuleId = "LEGACY_R_EXTERNAL_DEBIT_PAYMENT", Scope = RuleScope.Import, AccountSide = "R", TransactionType = "EXTERNAL_DEBIT_PAYMENT", OutputActionId = A("Execute"), OutputKpiId = K("Not Claimed"), Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true }
+                };
+
+                // Only keep rules that have at least one output to apply
+                rules = rules.Where(r => r.OutputActionId.HasValue || r.OutputKpiId.HasValue || r.OutputIncidentTypeId.HasValue || r.OutputRiskyItem.HasValue || r.OutputReasonNonRiskyId.HasValue || r.OutputToRemind.HasValue || r.OutputToRemindDays.HasValue).ToList();
+
+                int saved = 0;
+                foreach (var r in rules)
+                {
+                    var ok = await UpsertRuleAsync(r, token).ConfigureAwait(false);
+                    if (ok) saved++;
+                }
+                return saved;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private int? ResolveUserFieldId(string category, string name)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(category) || string.IsNullOrWhiteSpace(name)) return null;
+                var all = _offlineFirstService?.UserFields;
+                if (all == null) return null;
+                string norm(string s) => new string((s ?? "").Where(ch => !char.IsWhiteSpace(ch) && ch != '-' && ch != '_' && ch != ':' && ch != '/').ToArray()).ToUpperInvariant();
+                var ncat = category.Trim();
+                var nname = norm(name);
+
+                var query = all.Where(u => string.Equals(u?.USR_Category, ncat, StringComparison.OrdinalIgnoreCase));
+                foreach (var u in query)
+                {
+                    var desc = norm(u?.USR_FieldDescription);
+                    if (!string.IsNullOrEmpty(desc) && desc == nname)
+                        return u.USR_ID;
+                }
+                foreach (var u in query)
+                {
+                    var fname = norm(u?.USR_FieldName);
+                    if (!string.IsNullOrEmpty(fname) && fname == nname)
+                        return u.USR_ID;
+                }
+                // Common synonyms for Action
+                if (string.Equals(ncat, "Action", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (nname == norm("Not Applicable")) return ResolveUserFieldId(category, "NA");
+                    if (nname == norm("Do Pricing")) return ResolveUserFieldId(category, "DoPricing");
+                }
+                return null;
+            }
+            catch { return null; }
+        }
+    }
+}

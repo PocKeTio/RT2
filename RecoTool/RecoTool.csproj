@@ -87,7 +87,9 @@
     <Compile Include="Services\Ambre\AmbreReconciliationUpdater.cs" />
     <Compile Include="Services\Ambre\DwingsReferenceResolver.cs" />
     <Compile Include="Infrastructure\DataAccess\DbConn.cs" />
-    <Compile Include="UI\Converters\BoolToPendingDoneConverter.cs" />
+    <Compile Include="Services\Rules\RulesEngine.cs" />
+    <Compile Include="Services\Rules\TruthRule.cs" />
+    <Compile Include="Services\Rules\TruthTableRepository.cs" />
     <Compile Include="Domain\Filters\FilterPreset.cs" />
     <Compile Include="Helpers\DwingsLinkingHelper.cs" />
     <Compile Include="Infrastructure\Logging\LogHelper.cs" />
@@ -161,6 +163,7 @@
     <Compile Include="Windows\FilterPickerWindow.xaml.cs">
       <DependentUpon>FilterPickerWindow.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Windows\ReconciliationView\Converters.cs" />
     <Compile Include="Windows\ReportsWindow.xaml.cs">
       <DependentUpon>ReportsWindow.xaml</DependentUpon>
     </Compile>
@@ -209,7 +212,6 @@
     <Compile Include="Windows\ReconciliationView\Options.cs" />
     <Compile Include="Windows\ReconciliationView\MatchedPopup.cs" />
     <Compile Include="Windows\ReconciliationView\SavedFilters.cs" />
-    <Compile Include="Windows\ReconciliationView\Converters.cs" />
     <Compile Include="Windows\ReconciliationView\Logging.cs" />
     <Compile Include="Windows\ReconciliationView\Title.cs" />
     <Compile Include="Windows\ReconciliationView\Events.cs" />
@@ -218,6 +220,12 @@
     <Compile Include="Windows\ReconciliationView\Editing.cs" />
     <Compile Include="Windows\ReconciliationView\SyncAndTimers.cs" />
     <Compile Include="Windows\ReconciliationView\FilterSqlBridge.cs" />
+    <Compile Include="Windows\RuleEditorWindow.xaml.cs">
+      <DependentUpon>RuleEditorWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\RulesAdminWindow.xaml.cs">
+      <DependentUpon>RulesAdminWindow.xaml</DependentUpon>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <Page Include="App.xaml">
@@ -273,6 +281,14 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Include="Windows\ReportsWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Windows\RuleEditorWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Windows\RulesAdminWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
@@ -335,5 +351,6 @@
       <EmbedInteropTypes>True</EmbedInteropTypes>
     </COMReference>
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

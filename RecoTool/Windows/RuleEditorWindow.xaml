@@ -1,0 +1,348 @@
+<Window x:Class="RecoTool.Windows.RuleEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Rule Editor" Height="680" Width="980"
+        WindowStartupLocation="CenterOwner">
+    <Window.Resources>
+        <Style TargetType="Label">
+            <Setter Property="Margin" Value="0,8,0,2"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Margin" Value="0,6,0,8"/>
+        </Style>
+        <SolidColorBrush x:Key="CardBg" Color="#FFFFFFFF"/>
+        <SolidColorBrush x:Key="CardBorder" Color="#E5E5E5"/>
+        <!-- Accent and UI Brushes -->
+        <SolidColorBrush x:Key="AccentBrush" Color="#2E7D32"/>
+        <SolidColorBrush x:Key="AccentBrushDark" Color="#1B5E20"/>
+        <SolidColorBrush x:Key="AccentForeground" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="SubtleTextBrush" Color="#666666"/>
+
+        <!-- Header gradient background -->
+        <LinearGradientBrush x:Key="HeaderGradient" StartPoint="0,0" EndPoint="1,0">
+            <GradientStop Color="#2E7D32" Offset="0"/>
+            <GradientStop Color="#1B5E20" Offset="1"/>
+        </LinearGradientBrush>
+
+        <!-- Card visual style with soft shadow -->
+        <DropShadowEffect x:Key="CardShadow" Color="#000000" BlurRadius="10" ShadowDepth="2" Opacity="0.08"/>
+        <Style x:Key="SectionCard" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBg}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="16"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Effect" Value="{StaticResource CardShadow}"/>
+        </Style>
+
+        <!-- Section title style -->
+        <Style x:Key="SectionTitleText" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+            <Setter Property="Foreground" Value="#333333"/>
+        </Style>
+
+        <!-- Button styles -->
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource AccentForeground}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrushDark}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Margin" Value="6"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{StaticResource AccentBrushDark}"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.6"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="SecondaryButton" TargetType="Button">
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="Foreground" Value="#333333"/>
+            <Setter Property="BorderBrush" Value="#CCCCCC"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Margin" Value="6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="BorderBrush" Value="#999999"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="{StaticResource HeaderGradient}" Padding="14" BorderBrush="#E6E6E6" BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="🧠" FontSize="18" Margin="0,0,8,0" Foreground="{StaticResource AccentForeground}"/>
+                <TextBlock Text="Rule Editor" FontSize="16" FontWeight="Bold" Foreground="{StaticResource AccentForeground}"/>
+                <TextBlock Text="  –  Create or edit a rule" Foreground="#FFFFFFCC" Margin="6,0,0,0"/>
+                <TextBlock Text=" ⓘ" Foreground="#FFFFFF" Margin="10,0,0,0" VerticalAlignment="Center">
+                    <TextBlock.ToolTip>
+                        <StackPanel MaxWidth="520">
+                            <TextBlock Text="How rules work" FontWeight="Bold"/>
+                            <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" Foreground="#555">
+• Priority: lower number is evaluated first.
+• Scope: Import/Edit/Both.
+• Account Side: P (Pivot), R (Receivable) or * for any.
+• Use * on a field to ignore it. Flags support Yes/No/— (None) to ignore.
+• Outputs are applied when all filled conditions match.
+                            </TextBlock>
+                        </StackPanel>
+                    </TextBlock.ToolTip>
+                </TextBlock>
+            </StackPanel>
+        </Border>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <ScrollViewer Grid.Row="0" Grid.ColumnSpan="2" Padding="16">
+                <StackPanel>
+                    <!-- Inputs -->
+                    <Border Style="{StaticResource SectionCard}">
+                        <StackPanel>
+                            <TextBlock Text="🧩 Inputs" Style="{StaticResource SectionTitleText}"/>
+                            <Label>Rule Id</Label>
+                            <TextBlock Foreground="#777" FontSize="11" Margin="0,0,0,4">Unique and stable identifier used as the primary key.</TextBlock>
+                            <TextBox Text="{Binding EditedRule.RuleId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Unique identifier for this rule (must be unique)."/>
+
+                            <Label ToolTip="Lower number = higher priority. Rules are applied in ascending order.">Priority</Label>
+                            <TextBlock Foreground="#777" FontSize="11" Margin="0,0,0,4">Lower number = higher priority. Evaluated ascending.</TextBlock>
+                            <TextBox x:Name="PriorityBox" Text="{Binding EditedRule.Priority, UpdateSourceTrigger=PropertyChanged}" PreviewTextInput="NumberOnly_PreviewTextInput" DataObject.Pasting="NumberOnly_Pasting" ToolTip="Lower number = higher priority."/>
+
+                            <Label ToolTip="Where the rule applies: during Import, user Edit, or Both.">Scope</Label>
+                            <TextBlock Foreground="#777" FontSize="11" Margin="0,0,0,4">Import, Edit or Both.</TextBlock>
+                            <ComboBox ItemsSource="{Binding Scopes}" SelectedItem="{Binding EditedRule.Scope, UpdateSourceTrigger=PropertyChanged}" ToolTip="Import, Edit or Both."/>
+
+                            <Label ToolTip="Which item to apply outputs to: Self, Counterpart, or Both.">Apply To</Label>
+                            <TextBlock Foreground="#777" FontSize="11" Margin="0,0,0,4">Self = current row; Counterpart = the other side; Both = apply to both.</TextBlock>
+                            <ComboBox ItemsSource="{Binding ApplyTargets}" SelectedItem="{Binding EditedRule.ApplyTo, UpdateSourceTrigger=PropertyChanged}" ToolTip="Self, Counterpart, or Both."/>
+
+                            <CheckBox Content="Enabled" IsChecked="{Binding EditedRule.Enabled}" ToolTip="If unchecked, the rule is ignored."/>
+                            <CheckBox Content="Auto-apply" IsChecked="{Binding EditedRule.AutoApply}" ToolTip="Apply outputs automatically when matched (no user confirmation)."/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Conditions -->
+                    <Border Style="{StaticResource SectionCard}" Margin="0,12,0,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                                <TextBlock Text="🧪 Conditions" Style="{StaticResource SectionTitleText}"/>
+                                <Label ToolTip="P (Pivot) / R (Receivable) / * (Any)">Account Side</Label>
+                                <TextBlock Foreground="#777" FontSize="11" Margin="0,0,0,4">P (Pivot) / R (Receivable) / * (Any)</TextBlock>
+                                <ComboBox ItemsSource="{Binding AccountSides}" SelectedItem="{Binding EditedRule.AccountSide, UpdateSourceTrigger=PropertyChanged}" ToolTip="P (Pivot) / R (Receivable) / * (Any)"/>
+
+                                <Label ToolTip="ISSUANCE / REISSUANCE / ADVISING or * to ignore.">Guarantee Type</Label>
+                                <TextBlock Foreground="#777" FontSize="11" Margin="0,0,0,4">ISSUANCE / REISSUANCE / ADVISING or * to ignore.</TextBlock>
+                                <ComboBox ItemsSource="{Binding GuaranteeTypes}" SelectedItem="{Binding EditedRule.GuaranteeType, UpdateSourceTrigger=PropertyChanged}" ToolTip="ISSUANCE / REISSUANCE / ADVISING or * to ignore."/>
+
+                                <Label ToolTip="Use enum name (e.g., INCOMING_PAYMENT) or * to ignore.">Transaction Type</Label>
+                                <TextBlock Foreground="#777" FontSize="11" Margin="0,0,0,4">Use enum name (e.g., INCOMING_PAYMENT) or * to ignore.</TextBlock>
+                                <ComboBox ItemsSource="{Binding TransactionTypes}" SelectedItem="{Binding EditedRule.TransactionType, UpdateSourceTrigger=PropertyChanged}" ToolTip="Use enum name (e.g., INCOMING_PAYMENT) or * to ignore."/>
+
+                                <Label ToolTip="Booking/country code(s): * for any, or list (e.g., FR;DE;ES).">Booking(s)</Label>
+                                <TextBlock Foreground="#777" FontSize="11" Margin="0,0,0,4">* for any, or list (e.g., FR;DE;ES)</TextBlock>
+                                <TextBox Text="{Binding EditedRule.Booking, UpdateSourceTrigger=PropertyChanged}" ToolTip="* for any, or list (e.g., FR;DE;ES)"/>
+
+                                <Label ToolTip="C = Credit, D = Debit, * = Any.">Sign</Label>
+                                <TextBlock Foreground="#777" FontSize="11" Margin="0,0,0,4">C = Credit, D = Debit, * = Any.</TextBlock>
+                                <ComboBox ItemsSource="{Binding Signs}" SelectedItem="{Binding EditedRule.Sign, UpdateSourceTrigger=PropertyChanged}" ToolTip="C = Credit, D = Debit, * = Any."/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Margin="12,0,12,0">
+                                <TextBlock Text="⚙️ Conditions (Flags)" Style="{StaticResource SectionTitleText}"/>
+                                <TextBlock Foreground="#777" FontSize="11" Margin="0,0,0,8">Set to — (None) to ignore.</TextBlock>
+                                <Label ToolTip="Yes, No, or — (None) to ignore.">Has DWINGS Link</Label>
+                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.HasDwingsLink, UpdateSourceTrigger=PropertyChanged}" ToolTip="Yes, No, or — (None) to ignore."/>
+
+                                <Label ToolTip="Yes, No, or — (None) to ignore.">Is Grouped</Label>
+                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.IsGrouped, UpdateSourceTrigger=PropertyChanged}" ToolTip="Yes, No, or — (None) to ignore."/>
+
+                                <Label ToolTip="Yes, No, or — (None) to ignore.">Is Amount Match</Label>
+                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.IsAmountMatch, UpdateSourceTrigger=PropertyChanged}" ToolTip="Yes, No, or — (None) to ignore."/>
+
+                                <Label ToolTip="Filter by existing Action value (— to ignore).">Current Action</Label>
+                                <ComboBox ItemsSource="{Binding ActionOptions}" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding EditedRule.CurrentActionId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Filter by existing Action value (— to ignore)."/>
+
+                                <Label ToolTip="Yes, No, or — (None) to ignore.">Is First Claim</Label>
+                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.IsFirstRequest, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2" Margin="12,0,0,0">
+                                <TextBlock Text="⏱️ Conditions (Time/State)" Style="{StaticResource SectionTitleText}"/>
+                                <Label ToolTip="Yes, No, or — (None) to ignore.">Trigger Date Is Null</Label>
+                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.TriggerDateIsNull, UpdateSourceTrigger=PropertyChanged}" ToolTip="Yes, No, or — (None) to ignore."/>
+
+                                <Label ToolTip="Yes, No, or — (None) to ignore.">Is Transitory</Label>
+                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.IsTransitory, UpdateSourceTrigger=PropertyChanged}"/>
+
+                                <Label>Days Since Trigger</Label>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Min" Foreground="#777" FontSize="11"/>
+                                        <TextBox Text="{Binding EditedRule.DaysSinceTriggerMin, UpdateSourceTrigger=PropertyChanged}" PreviewTextInput="NumberOnly_PreviewTextInput" DataObject.Pasting="NumberOnly_Pasting"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                        <TextBlock Text="Max" Foreground="#777" FontSize="11"/>
+                                        <TextBox Text="{Binding EditedRule.DaysSinceTriggerMax, UpdateSourceTrigger=PropertyChanged}" PreviewTextInput="NumberOnly_PreviewTextInput" DataObject.Pasting="NumberOnly_Pasting"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Label>Operation Days Ago</Label>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Min" Foreground="#777" FontSize="11"/>
+                                        <TextBox Text="{Binding EditedRule.OperationDaysAgoMin, UpdateSourceTrigger=PropertyChanged}" PreviewTextInput="NumberOnly_PreviewTextInput" DataObject.Pasting="NumberOnly_Pasting"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                        <TextBlock Text="Max" Foreground="#777" FontSize="11"/>
+                                        <TextBox Text="{Binding EditedRule.OperationDaysAgoMax, UpdateSourceTrigger=PropertyChanged}" PreviewTextInput="NumberOnly_PreviewTextInput" DataObject.Pasting="NumberOnly_Pasting"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Label>Days Since Reminder</Label>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Min" Foreground="#777" FontSize="11"/>
+                                        <TextBox Text="{Binding EditedRule.DaysSinceReminderMin, UpdateSourceTrigger=PropertyChanged}" PreviewTextInput="NumberOnly_PreviewTextInput" DataObject.Pasting="NumberOnly_Pasting"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                        <TextBlock Text="Max" Foreground="#777" FontSize="11"/>
+                                        <TextBox Text="{Binding EditedRule.DaysSinceReminderMax, UpdateSourceTrigger=PropertyChanged}" PreviewTextInput="NumberOnly_PreviewTextInput" DataObject.Pasting="NumberOnly_Pasting"/>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Outputs -->
+                    <Border Style="{StaticResource SectionCard}" Margin="0,12,0,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                <TextBlock Text="🚀 Outputs" Style="{StaticResource SectionTitleText}"/>
+                                <Label ToolTip="Action to set when the rule matches.">Action</Label>
+                                <ComboBox ItemsSource="{Binding ActionOptions}" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding EditedRule.OutputActionId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Action to set when the rule matches."/>
+
+                                <Label ToolTip="KPI to set when the rule matches.">KPI</Label>
+                                <ComboBox ItemsSource="{Binding KpiOptions}" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding EditedRule.OutputKpiId, UpdateSourceTrigger=PropertyChanged}" ToolTip="KPI to set when the rule matches."/>
+
+                                <Label ToolTip="Incident type to set when the rule matches.">Incident Type</Label>
+                                <ComboBox ItemsSource="{Binding IncidentTypeOptions}" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding EditedRule.OutputIncidentTypeId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Incident type to set when the rule matches."/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="✨ Outputs (More)" Style="{StaticResource SectionTitleText}"/>
+                                <Label ToolTip="If checked, the row will be marked as Risky.">Risky Item</Label>
+                                <CheckBox IsChecked="{Binding EditedRule.OutputRiskyItem}" Content="Mark as risky" ToolTip="If checked, the row will be marked as Risky."/>
+
+                                <Label ToolTip="If not risky, set a reason here.">Reason (non-risky)</Label>
+                                <ComboBox ItemsSource="{Binding ReasonOptions}" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding EditedRule.OutputReasonNonRiskyId, UpdateSourceTrigger=PropertyChanged}" ToolTip="If not risky, set a reason here."/>
+
+                                <Label ToolTip="Set Yes to create a reminder.">To Remind</Label>
+                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.OutputToRemind, UpdateSourceTrigger=PropertyChanged}" ToolTip="Set Yes to create a reminder."/>
+
+                                <Label ToolTip="Number of days until reminder.">To Remind (days)</Label>
+                                <TextBox x:Name="ToRemindDaysBox" Text="{Binding EditedRule.OutputToRemindDays, UpdateSourceTrigger=PropertyChanged}" PreviewTextInput="NumberOnly_PreviewTextInput" DataObject.Pasting="NumberOnly_Pasting" ToolTip="Number of days until reminder."/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Message -->
+                    <Border Style="{StaticResource SectionCard}" Margin="0,12,0,0">
+                        <StackPanel>
+                            <Label ToolTip="Optional confirmation/warning message shown to the user when applying the rule.">Message (optional)</Label>
+                            <TextBlock Foreground="#777" FontSize="11" Margin="0,0,0,4">If set, the UI will ask for confirmation and display this message.</TextBlock>
+                            <TextBox TextWrapping="Wrap" AcceptsReturn="True" Height="90" Text="{Binding EditedRule.Message, UpdateSourceTrigger=PropertyChanged}" ToolTip="Optional confirmation/warning message shown to the user when applying the rule."/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Border Grid.Row="1" Grid.ColumnSpan="2" Background="#F8F8FA" Padding="10" BorderBrush="#E6E6E6" BorderThickness="1,1,0,0">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <CheckBox x:Name="RunNowCheck" Content="Run now after Save" IsChecked="{Binding RunNow, Mode=TwoWay}"
+                              VerticalAlignment="Center" Margin="0,0,12,0" ToolTip="If checked, rules will run immediately after saving."/>
+                    <Button Style="{StaticResource SecondaryButton}" Width="120" Click="Cancel_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" Margin="0,0,6,0"/>
+                            <TextBlock Text="Cancel"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource PrimaryButton}" Width="140" Click="Save_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" Margin="0,0,6,0"/>
+                            <TextBlock Text="Save"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>

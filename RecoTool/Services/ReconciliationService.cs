@@ -39,6 +39,7 @@ namespace RecoTool.Services
         private readonly Dictionary<string, Country> _countries;
         private readonly OfflineFirstService _offlineFirstService;
         private DwingsService _dwingsService;
+        private RulesEngine _rulesEngine;
 
         public ReconciliationService(string connectionString, string currentUser, IEnumerable<Country> countries)
         {
@@ -82,6 +83,7 @@ namespace RecoTool.Services
             : this(connectionString, currentUser, countries)
         {
             _offlineFirstService = offlineFirstService;
+            try { _rulesEngine = new RulesEngine(_offlineFirstService); } catch { _rulesEngine = null; }
         }
 
         public string CurrentUser => _currentUser;
@@ -459,83 +461,164 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// Compute the automatic Action to apply after an AMBRE import for a reconciliation item, according to business rules.
+        /// Compute the automatic Action to apply after an AMBRE import for a reconciliation item using the truth-table rules.
         /// IMPORTANT: this must NOT override user-forced actions; call this only when r.Action is null.
         /// </summary>
-        /// <param name="transactionType">Detected transaction type (from AMBRE label/category)</param>
-        /// <param name="a">AMBRE row</param>
-        /// <param name="r">Reconciliation row (same ID)</param>
-        /// <param name="country">Country (to resolve Pivot/Receivable)</param>
-        /// <param name="paymentMethod">Optional DWINGS payment method (MANUAL_OUTGOING/OUTGOING_PAYMENT/DIRECT_DEBIT/INCOMING_PAYMENT)</param>
-        /// <param name="today">Business current date (DateTime.Today recommended)</param>
-        /// <returns>ActionType to set, or null if no automatic action applies</returns>
+        /// <remarks>
+        /// This method now delegates to the RulesEngine. All ACTION/KPI/INCIDENT logic belongs to the truth-table.
+        /// </remarks>
         public ActionType? ComputeAutoAction(TransactionType? transactionType, DataAmbre a, Reconciliation r, Country country, string paymentMethod, DateTime today)
         {
-            if (a == null || r == null || country == null) return null;
-            // Never override a user-forced action
-            if (r.Action.HasValue) return null;
-
-            bool isPivot = a.IsPivotAccount(country.CNT_AmbrePivot);
-            bool isReceivable = !isPivot; // Per model: receivable is the opposite of pivot for our 2-account scope
-
-            // Helpers
-            bool IsPm(string code) => !string.IsNullOrWhiteSpace(paymentMethod) && paymentMethod.Equals(code, StringComparison.OrdinalIgnoreCase);
-            bool TxIs(TransactionType t) => transactionType.HasValue && transactionType.Value == t;
-
-            // Rule 1: If category = COLLECTION and TriggerDate = blank THEN TRIGGER
-            if (TxIs(TransactionType.COLLECTION) && !r.TriggerDate.HasValue)
-                return ActionType.Trigger;
-
-            // Rule 2: ELSE IF transitory = "Y" AND Op.date < D-1 THEN INVESTIGATE (Pivot only)
-            // Transitory means Reconciliation_Num contains BGPMT
-            bool transitory = !string.IsNullOrWhiteSpace(a.Reconciliation_Num) && a.Reconciliation_Num.IndexOf("BGPMT", StringComparison.OrdinalIgnoreCase) >= 0;
-            if (isPivot && transitory)
+            try
             {
-                DateTime? op = a.Operation_Date?.Date;
-                if (op.HasValue && op.Value < today.AddDays(-1))
-                    return ActionType.Investigate;
-            }
+                if (a == null || r == null || country == null) return null;
+                if (r.Action.HasValue) return null; // never override user-forced action
+                if (_rulesEngine == null) return null;
 
-            // Rule 3: ELSE IF TriggerDate <= D-1 AND matched = "N" AND manual match date = blank THEN MATCH
-            // matched = DeleteDate != null (AMBRE or Reconciliation base entities). We use AMBRE deletion to reflect record matched/removed.
-            bool matched = a.DeleteDate.HasValue; // per spec "Matched = DeleteDate is not null"
-            bool manualMatchBlank = r.Action.GetValueOrDefault() != (int)ActionType.Match; // no explicit manual match set
-            if (r.TriggerDate.HasValue && r.TriggerDate.Value.Date <= today.AddDays(-1) && !matched && manualMatchBlank)
-                return ActionType.Match;
+                bool isPivot = a.IsPivotAccount(country.CNT_AmbrePivot);
 
-            // Rule 4: ELSE IF Account = receivable THEN
-            if (isReceivable)
-            {
-                // If Payment method = MANUAL_OUTGOING THEN TRIGGER
-                if (IsPm("MANUAL_OUTGOING") || TxIs(TransactionType.MANUAL_OUTGOING))
-                    return ActionType.Trigger;
+                // Build a minimal rule context similar to AmbreReconciliationUpdater.BuildRuleContext
+                string txName = transactionType.HasValue ? Enum.GetName(typeof(TransactionType), transactionType.Value) : null;
+                string guaranteeType = !isPivot ? ExtractGuaranteeTypeForRules(a.RawLabel) : null;
+                string sign = a.SignedAmount >= 0 ? "C" : "D";
+                bool? hasDw = (!string.IsNullOrWhiteSpace(r?.DWINGS_InvoiceID)
+                               || !string.IsNullOrWhiteSpace(r?.DWINGS_GuaranteeID)
+                               || !string.IsNullOrWhiteSpace(r?.DWINGS_BGPMT));
 
-                // If Payment method = OUTGOING_PAYMENT THEN EXECUTE
-                if (IsPm("OUTGOING_PAYMENT") || TxIs(TransactionType.OUTGOING_PAYMENT))
-                    return ActionType.Execute;
-
-                // If Payment method = DIRECT_DEBIT: no explicit rule here for auto action beyond table; leave null (let KPI mapping handle later)
-                if (IsPm("DIRECT_DEBIT") || TxIs(TransactionType.DIRECT_DEBIT))
-                    return null;
-
-                // If Payment method = Incoming THEN
-                // Interpret Incoming as INCOMING_PAYMENT per unified enum/tag
-                if (IsPm("INCOMING_PAYMENT") || TxIs(TransactionType.INCOMING_PAYMENT))
+                var ctx = new Services.Rules.RuleContext
                 {
-                    // IF first request = blank THEN REQUEST
-                    // FirstRequest mapped to CreationDate (all tables, AMBRE). If never requested before -> use AMBRE creation being today as first appearance.
-                    // If CreationDate is null or equals today, consider it first request.
-                    var ambreCreated = a.CreationDate?.Date;
-                    if (!ambreCreated.HasValue || ambreCreated.Value == today.Date)
-                        return ActionType.Request;
+                    CountryId = country.CNT_Id,
+                    IsPivot = isPivot,
+                    GuaranteeType = guaranteeType,
+                    TransactionType = txName,
+                    HasDwingsLink = hasDw,
+                    IsGrouped = null,
+                    IsAmountMatch = null,
+                    Sign = sign,
+                    Bgi = r?.DWINGS_InvoiceID,
+                    // Extended fields
+                    TriggerDateIsNull = !(r?.TriggerDate.HasValue == true),
+                    DaysSinceTrigger = r?.TriggerDate.HasValue == true ? (int?)(DateTime.Today - r.TriggerDate.Value.Date).TotalDays : (int?)null,
+                    IsTransitory = !string.IsNullOrWhiteSpace(DwingsLinkingHelper.ExtractBgpmtToken(a?.Reconciliation_Num)
+                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(a?.ReconciliationOrigin_Num)
+                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(a?.RawLabel)),
+                    OperationDaysAgo = a?.Operation_Date.HasValue == true ? (int?)(DateTime.Today - a.Operation_Date.Value.Date).TotalDays : (int?)null,
+                    IsMatched = hasDw,
+                    HasManualMatch = null,
+                    IsFirstRequest = !(r?.FirstClaimDate.HasValue == true),
+                    DaysSinceReminder = r?.LastClaimDate.HasValue == true ? (int?)(DateTime.Today - r.LastClaimDate.Value.Date).TotalDays : (int?)null,
+                    CurrentActionId = r?.Action
+                };
 
-                    // ELSE IF last reminder > 30 days THEN REMIND
-                    if (r.ToRemindDate.HasValue && r.ToRemindDate.Value.Date <= today.AddDays(-30).Date)
-                        return ActionType.Remind;
-                }
+                // Use Import scope; rules with Scope=Both will also match
+                var res = _rulesEngine.EvaluateAsync(ctx, Services.Rules.RuleScope.Import).GetAwaiter().GetResult();
+                if (res == null || res.Rule == null) return null;
+                if (!res.Rule.AutoApply) return null; // do not auto-apply if rule requests confirmation
+                if (!res.NewActionIdSelf.HasValue) return null;
+
+                try { return (ActionType)res.NewActionIdSelf.Value; } catch { return null; }
             }
+            catch
+            {
+                return null;
+            }
+        }
 
-            // ELSE BLANK (no automatic action)
+        /// <summary>
+        /// Exécute immédiatement les règles (scope Edit) pour les IDs donnés.
+        /// N'applique que les règles en Auto-apply; les autres peuvent ajouter un message.
+        /// </summary>
+        public async Task<int> ApplyRulesNowAsync(IEnumerable<string> ids)
+        {
+            try
+            {
+                if (ids == null) return 0;
+                // Ensure latest rules are loaded now
+                try { _rulesEngine?.InvalidateCache(); } catch { }
+                var distinct = ids.Where(id => !string.IsNullOrWhiteSpace(id))
+                                  .Distinct(StringComparer.OrdinalIgnoreCase)
+                                  .ToList();
+                if (distinct.Count == 0) return 0;
+
+                var recos = new List<Reconciliation>(distinct.Count);
+                var currentCountryId = _offlineFirstService?.CurrentCountryId;
+                Country country = null;
+                if (!string.IsNullOrWhiteSpace(currentCountryId) && _countries != null)
+                    _countries.TryGetValue(currentCountryId, out country);
+
+                foreach (var id in distinct)
+                {
+                    // Skip archived rows (IsDeleted == true on Ambre row)
+                    DataAmbre amb = null;
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(currentCountryId))
+                        {
+                            amb = await GetAmbreRowByIdAsync(currentCountryId, id).ConfigureAwait(false);
+                            if (amb == null || amb.IsDeleted) continue;
+                        }
+                    }
+                    catch { }
+
+                    var r = await GetOrCreateReconciliationAsync(id).ConfigureAwait(false);
+                    if (r == null) continue;
+
+                    // Evaluate and apply outputs in EDIT scope unconditionally when running now
+                    try
+                    {
+                        if (country != null && _rulesEngine != null && amb != null)
+                        {
+                            bool isPivot = amb.IsPivotAccount(country.CNT_AmbrePivot);
+                            var ctx = BuildRuleContext(amb, r, country, currentCountryId, isPivot);
+                            var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Edit).ConfigureAwait(false);
+                            if (res != null && res.Rule != null && res.Rule.AutoApply)
+                            {
+                                if (res.NewActionIdSelf.HasValue) r.Action = res.NewActionIdSelf.Value;
+                                if (res.NewKpiIdSelf.HasValue) r.KPI = res.NewKpiIdSelf.Value;
+                                if (res.NewIncidentTypeIdSelf.HasValue) r.IncidentType = res.NewIncidentTypeIdSelf.Value;
+                                if (res.NewRiskyItemSelf.HasValue) r.RiskyItem = res.NewRiskyItemSelf.Value;
+                                if (res.NewReasonNonRiskyIdSelf.HasValue) r.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value;
+                                if (res.NewToRemindSelf.HasValue) r.ToRemind = res.NewToRemindSelf.Value;
+                                if (res.NewToRemindDaysSelf.HasValue)
+                                {
+                                    try { r.ToRemindDate = DateTime.Today.AddDays(res.NewToRemindDaysSelf.Value); } catch { }
+                                }
+
+                                if (!string.IsNullOrWhiteSpace(res.UserMessage))
+                                {
+                                    try
+                                    {
+                                        var prefix = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {_currentUser}: ";
+                                        var msg = prefix + $"[Rule {res.Rule.RuleId ?? "(unnamed)"}] {res.UserMessage}";
+                                        if (string.IsNullOrWhiteSpace(r.Comments))
+                                            r.Comments = msg;
+                                        else if (!r.Comments.Contains(msg))
+                                            r.Comments = r.Comments + Environment.NewLine + msg;
+                                    }
+                                    catch { }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+
+                    recos.Add(r);
+                }
+                if (recos.Count == 0) return 0;
+
+                await SaveReconciliationsAsync(recos).ConfigureAwait(false);
+                return recos.Count;
+            }
+            catch { return 0; }
+        }
+
+        private static string ExtractGuaranteeTypeForRules(string label)
+        {
+            if (string.IsNullOrEmpty(label)) return null;
+            var upper = label.ToUpperInvariant();
+            if (upper.Contains("REISSUANCE")) return "REISSUANCE";
+            if (upper.Contains("ISSUANCE")) return "ISSUANCE";
+            if (upper.Contains("ADVISING")) return "ADVISING";
             return null;
         }
         #endregion
@@ -554,32 +637,85 @@ namespace RecoTool.Services
             try
             {
                 var country = _countries.ContainsKey(countryId) ? _countries[countryId] : null;
-                if (country == null) return false;
+                if (country == null || _rulesEngine == null) return false;
 
                 var ambreData = await GetAmbreDataAsync(countryId);
                 var updates = new List<Reconciliation>();
+
+                // Transformation service to detect transaction types like in import
+                var transformationService = new TransformationService(new List<Country> { country });
 
                 foreach (var data in ambreData)
                 {
                     var reconciliation = await GetOrCreateReconciliationAsync(data.ID);
 
-                    // Déterminer si c'est Pivot ou Receivable
                     bool isPivot = data.IsPivotAccount(country.CNT_AmbrePivot);
-                    bool isReceivable = !isPivot; // Per model: receivable is the opposite of pivot for our 2-account scope
+                    var tx = transformationService.DetermineTransactionType(data.RawLabel, isPivot, data.Category);
+                    string txName = tx.HasValue ? Enum.GetName(typeof(TransactionType), tx.Value) : null;
+                    string guaranteeType = !isPivot ? ExtractGuaranteeTypeForRules(data.RawLabel) : null;
+                    string sign = data.SignedAmount >= 0 ? "C" : "D";
+                    bool? hasDw = (!string.IsNullOrWhiteSpace(reconciliation?.DWINGS_InvoiceID)
+                                   || !string.IsNullOrWhiteSpace(reconciliation?.DWINGS_GuaranteeID)
+                                   || !string.IsNullOrWhiteSpace(reconciliation?.DWINGS_BGPMT));
 
-                    if (isPivot)
+                    var today1 = DateTime.Today;
+                    var ctx = new Services.Rules.RuleContext
                     {
-                        ReconciliationRules.ApplyPivotRules(reconciliation, data);
+                        CountryId = countryId,
+                        IsPivot = isPivot,
+                        GuaranteeType = guaranteeType,
+                        TransactionType = txName,
+                        HasDwingsLink = hasDw,
+                        IsGrouped = null,
+                        IsAmountMatch = null,
+                        Sign = sign,
+                        Bgi = reconciliation?.DWINGS_InvoiceID,
+                        // Extended
+                        TriggerDateIsNull = !(reconciliation?.TriggerDate.HasValue == true),
+                        DaysSinceTrigger = reconciliation?.TriggerDate.HasValue == true ? (int?)(today1 - reconciliation.TriggerDate.Value.Date).TotalDays : (int?)null,
+                        IsTransitory = !string.IsNullOrWhiteSpace(DwingsLinkingHelper.ExtractBgpmtToken(data?.Reconciliation_Num)
+                                        ?? DwingsLinkingHelper.ExtractBgpmtToken(data?.ReconciliationOrigin_Num)
+                                        ?? DwingsLinkingHelper.ExtractBgpmtToken(data?.RawLabel)),
+                        OperationDaysAgo = data?.Operation_Date.HasValue == true ? (int?)(today1 - data.Operation_Date.Value.Date).TotalDays : (int?)null,
+                        IsMatched = hasDw,
+                        HasManualMatch = null,
+                        IsFirstRequest = !(reconciliation?.FirstClaimDate.HasValue == true),
+                        DaysSinceReminder = reconciliation?.LastClaimDate.HasValue == true ? (int?)(today1 - reconciliation.LastClaimDate.Value.Date).TotalDays : (int?)null,
+                        CurrentActionId = reconciliation?.Action
+                    };
+
+                    var res = await _rulesEngine.EvaluateAsync(ctx, Services.Rules.RuleScope.Import).ConfigureAwait(false);
+                    if (res?.Rule == null) { updates.Add(reconciliation); continue; }
+                    if (!res.Rule.AutoApply) { updates.Add(reconciliation); continue; }
+
+                    if (res.NewActionIdSelf.HasValue) reconciliation.Action = res.NewActionIdSelf.Value;
+                    if (res.NewKpiIdSelf.HasValue) reconciliation.KPI = res.NewKpiIdSelf.Value;
+                    if (res.NewIncidentTypeIdSelf.HasValue) reconciliation.IncidentType = res.NewIncidentTypeIdSelf.Value;
+                    if (res.NewRiskyItemSelf.HasValue) reconciliation.RiskyItem = res.NewRiskyItemSelf.Value;
+                    if (res.NewReasonNonRiskyIdSelf.HasValue) reconciliation.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value;
+                    if (res.NewToRemindSelf.HasValue) reconciliation.ToRemind = res.NewToRemindSelf.Value;
+                    if (res.NewToRemindDaysSelf.HasValue)
+                    {
+                        try { reconciliation.ToRemindDate = DateTime.Today.AddDays(res.NewToRemindDaysSelf.Value); } catch { }
                     }
-                    else if (isReceivable)
+
+                    if (!string.IsNullOrWhiteSpace(res.UserMessage))
                     {
-                        ReconciliationRules.ApplyReceivableRules(reconciliation, data);
+                        try
+                        {
+                            var prefix = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {_currentUser}: ";
+                            var msg = prefix + $"[Rule {res.Rule.RuleId ?? "(unnamed)"}] {res.UserMessage}";
+                            if (string.IsNullOrWhiteSpace(reconciliation.Comments))
+                                reconciliation.Comments = msg;
+                            else if (!reconciliation.Comments.Contains(msg))
+                                reconciliation.Comments = msg + Environment.NewLine + reconciliation.Comments;
+                        }
+                        catch { }
                     }
 
                     updates.Add(reconciliation);
                 }
 
-                // Sauvegarder en batch
                 await SaveReconciliationsAsync(updates);
                 return true;
             }
@@ -621,8 +757,8 @@ namespace RecoTool.Services
 
                     if (matchingPivotLines.Any())
                     {
-                        // Créer ou mettre à jour les réconciliations
-                        await CreateMatchingReconciliationsAsync(receivableLine, matchingPivotLines);
+                        // Créer ou mettre à jour les réconciliations (table de vérité)
+                        await CreateMatchingReconciliationsAsync(country, receivableLine, matchingPivotLines);
                         matchCount++;
                     }
                 }
@@ -638,24 +774,145 @@ namespace RecoTool.Services
         /// <summary>
         /// Crée les réconciliations pour les lignes appariées
         /// </summary>
-        private async Task CreateMatchingReconciliationsAsync(DataAmbre receivableLine, List<DataAmbre> pivotLines)
+        private async Task CreateMatchingReconciliationsAsync(Country country, DataAmbre receivableLine, List<DataAmbre> pivotLines)
         {
             var receivableReco = await GetOrCreateReconciliationAsync(receivableLine.ID).ConfigureAwait(false);
 
-            // Marquer comme matché et ajouter commentaire
-            receivableReco.Action = (int)ActionType.Match;
-            receivableReco.KPI = (int)KPIType.PaidButNotReconciled;
-            receivableReco.Comments = $"Auto-matched with {pivotLines.Count} pivot line(s)";
+            // Apply truth-table to receivable side
+            try
+            {
+                if (_rulesEngine != null)
+                {
+                    var transformationService = new TransformationService(new List<Country> { country });
+                    bool isPivot = false; // receivable
+                    var tx = transformationService.DetermineTransactionType(receivableLine.RawLabel, isPivot, receivableLine.Category);
+                    string txName = tx.HasValue ? Enum.GetName(typeof(TransactionType), tx.Value) : null;
+                    string guaranteeType = ExtractGuaranteeTypeForRules(receivableLine.RawLabel);
+                    string sign = receivableLine.SignedAmount >= 0 ? "C" : "D";
+                    bool? hasDw = (!string.IsNullOrWhiteSpace(receivableReco?.DWINGS_InvoiceID)
+                                   || !string.IsNullOrWhiteSpace(receivableReco?.DWINGS_GuaranteeID)
+                                   || !string.IsNullOrWhiteSpace(receivableReco?.DWINGS_BGPMT));
 
+                    var today2 = DateTime.Today;
+                    var ctx = new Services.Rules.RuleContext
+                    {
+                        CountryId = country?.CNT_Id,
+                        IsPivot = isPivot,
+                        GuaranteeType = guaranteeType,
+                        TransactionType = txName,
+                        HasDwingsLink = hasDw,
+                        IsGrouped = null,
+                        IsAmountMatch = null,
+                        Sign = sign,
+                        Bgi = receivableReco?.DWINGS_InvoiceID,
+                        // Extended
+                        TriggerDateIsNull = !(receivableReco?.TriggerDate.HasValue == true),
+                        DaysSinceTrigger = receivableReco?.TriggerDate.HasValue == true ? (int?)(today2 - receivableReco.TriggerDate.Value.Date).TotalDays : (int?)null,
+                        IsTransitory = !string.IsNullOrWhiteSpace(DwingsLinkingHelper.ExtractBgpmtToken(receivableLine?.Reconciliation_Num)
+                                        ?? DwingsLinkingHelper.ExtractBgpmtToken(receivableLine?.ReconciliationOrigin_Num)
+                                        ?? DwingsLinkingHelper.ExtractBgpmtToken(receivableLine?.RawLabel)),
+                        OperationDaysAgo = receivableLine?.Operation_Date.HasValue == true ? (int?)(today2 - receivableLine.Operation_Date.Value.Date).TotalDays : (int?)null,
+                        IsMatched = hasDw,
+                        HasManualMatch = null,
+                        IsFirstRequest = !(receivableReco?.FirstClaimDate.HasValue == true),
+                        DaysSinceReminder = receivableReco?.LastClaimDate.HasValue == true ? (int?)(today2 - receivableReco.LastClaimDate.Value.Date).TotalDays : (int?)null,
+                        CurrentActionId = receivableReco?.Action
+                    };
+
+                    var res = await _rulesEngine.EvaluateAsync(ctx, Services.Rules.RuleScope.Import).ConfigureAwait(false);
+                    if (res?.Rule != null && res.Rule.AutoApply)
+                    {
+                        if (res.NewActionIdSelf.HasValue) receivableReco.Action = res.NewActionIdSelf.Value;
+                        if (res.NewKpiIdSelf.HasValue) receivableReco.KPI = res.NewKpiIdSelf.Value;
+                        if (res.NewIncidentTypeIdSelf.HasValue) receivableReco.IncidentType = res.NewIncidentTypeIdSelf.Value;
+                        if (res.NewRiskyItemSelf.HasValue) receivableReco.RiskyItem = res.NewRiskyItemSelf.Value;
+                        if (res.NewReasonNonRiskyIdSelf.HasValue) receivableReco.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value;
+                        if (res.NewToRemindSelf.HasValue) receivableReco.ToRemind = res.NewToRemindSelf.Value;
+                        if (res.NewToRemindDaysSelf.HasValue)
+                        {
+                            try { receivableReco.ToRemindDate = DateTime.Today.AddDays(res.NewToRemindDaysSelf.Value); } catch { }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // Apply truth-table to each pivot side item
             var pivotTasks = pivotLines.Select(p => GetOrCreateReconciliationAsync(p.ID));
             var pivotReconciliations = await Task.WhenAll(pivotTasks).ConfigureAwait(false);
 
-            foreach (var pivotReco in pivotReconciliations)
+            var transformation = new TransformationService(new List<Country> { country });
+            foreach (var pivotLine in pivotLines.Zip(pivotReconciliations, (line, reco) => (line, reco)))
             {
-                pivotReco.Action = (int)ActionType.Match;
-                pivotReco.KPI = (int)KPIType.PaidButNotReconciled;
-                pivotReco.Comments = $"Auto-matched with receivable line {receivableLine.ID}";
+                try
+                {
+                    if (_rulesEngine == null) continue;
+                    bool isPivot = true;
+                    var tx = transformation.DetermineTransactionType(pivotLine.line.RawLabel, isPivot, pivotLine.line.Category);
+                    string txName = tx.HasValue ? Enum.GetName(typeof(TransactionType), tx.Value) : null;
+                    string sign = pivotLine.line.SignedAmount >= 0 ? "C" : "D";
+                    bool? hasDw = (!string.IsNullOrWhiteSpace(pivotLine.reco?.DWINGS_InvoiceID)
+                                   || !string.IsNullOrWhiteSpace(pivotLine.reco?.DWINGS_GuaranteeID)
+                                   || !string.IsNullOrWhiteSpace(pivotLine.reco?.DWINGS_BGPMT));
+
+                    var today3 = DateTime.Today;
+                    var ctx = new Services.Rules.RuleContext
+                    {
+                        CountryId = country?.CNT_Id,
+                        IsPivot = isPivot,
+                        GuaranteeType = null,
+                        TransactionType = txName,
+                        HasDwingsLink = hasDw,
+                        IsGrouped = null,
+                        IsAmountMatch = null,
+                        Sign = sign,
+                        Bgi = pivotLine.reco?.DWINGS_InvoiceID,
+                        // Extended
+                        TriggerDateIsNull = !(pivotLine.reco?.TriggerDate.HasValue == true),
+                        DaysSinceTrigger = pivotLine.reco?.TriggerDate.HasValue == true ? (int?)(today3 - pivotLine.reco.TriggerDate.Value.Date).TotalDays : (int?)null,
+                        IsTransitory = !string.IsNullOrWhiteSpace(DwingsLinkingHelper.ExtractBgpmtToken(pivotLine.line?.Reconciliation_Num)
+                                        ?? DwingsLinkingHelper.ExtractBgpmtToken(pivotLine.line?.ReconciliationOrigin_Num)
+                                        ?? DwingsLinkingHelper.ExtractBgpmtToken(pivotLine.line?.RawLabel)),
+                        OperationDaysAgo = pivotLine.line?.Operation_Date.HasValue == true ? (int?)(today3 - pivotLine.line.Operation_Date.Value.Date).TotalDays : (int?)null,
+                        IsMatched = hasDw,
+                        HasManualMatch = null,
+                        IsFirstRequest = !(pivotLine.reco?.FirstClaimDate.HasValue == true),
+                        DaysSinceReminder = pivotLine.reco?.LastClaimDate.HasValue == true ? (int?)(today3 - pivotLine.reco.LastClaimDate.Value.Date).TotalDays : (int?)null,
+                        CurrentActionId = pivotLine.reco?.Action
+                    };
+
+                    var res = await _rulesEngine.EvaluateAsync(ctx, Services.Rules.RuleScope.Import).ConfigureAwait(false);
+                    if (res?.Rule != null && res.Rule.AutoApply)
+                    {
+                        if (res.NewActionIdSelf.HasValue) pivotLine.reco.Action = res.NewActionIdSelf.Value;
+                        if (res.NewKpiIdSelf.HasValue) pivotLine.reco.KPI = res.NewKpiIdSelf.Value;
+                        if (res.NewIncidentTypeIdSelf.HasValue) pivotLine.reco.IncidentType = res.NewIncidentTypeIdSelf.Value;
+                        if (res.NewRiskyItemSelf.HasValue) pivotLine.reco.RiskyItem = res.NewRiskyItemSelf.Value;
+                        if (res.NewReasonNonRiskyIdSelf.HasValue) pivotLine.reco.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value;
+                        if (res.NewToRemindSelf.HasValue) pivotLine.reco.ToRemind = res.NewToRemindSelf.Value;
+                        if (res.NewToRemindDaysSelf.HasValue)
+                        {
+                            try { pivotLine.reco.ToRemindDate = DateTime.Today.AddDays(res.NewToRemindDaysSelf.Value); } catch { }
+                        }
+                    }
+                }
+                catch { }
             }
+
+            // Add informational comments (not rule logic)
+            try
+            {
+                receivableReco.Comments = string.IsNullOrWhiteSpace(receivableReco.Comments)
+                    ? $"Auto-matched with {pivotLines.Count} pivot line(s)"
+                    : ($"Auto-matched with {pivotLines.Count} pivot line(s)" + Environment.NewLine + receivableReco.Comments);
+                foreach (var pivotReco in pivotReconciliations)
+                {
+                    pivotReco.Comments = string.IsNullOrWhiteSpace(pivotReco.Comments)
+                        ? $"Auto-matched with receivable line {receivableLine.ID}"
+                        : ($"Auto-matched with receivable line {receivableLine.ID}" + Environment.NewLine + pivotReco.Comments);
+                }
+            }
+            catch { }
 
             await SaveReconciliationsAsync(new[] { receivableReco }.Concat(pivotReconciliations)).ConfigureAwait(false);
         }
@@ -706,6 +963,63 @@ namespace RecoTool.Services
                             var updatedRows = new List<Reconciliation>();
                             foreach (var reconciliation in reconciliations)
                             {
+                                // Evaluate truth-table rules on edit (self updates + user message). Counterpart updates are planned separately.
+                                try
+                                {
+                                    var currentCountryId = _offlineFirstService?.CurrentCountryId;
+                                    if (!string.IsNullOrWhiteSpace(currentCountryId) && _rulesEngine != null)
+                                    {
+                                        Country countryCtx = null;
+                                        if (_countries != null && _countries.TryGetValue(currentCountryId, out var c)) countryCtx = c;
+                                        if (countryCtx != null)
+                                        {
+                                            var amb = await GetAmbreRowByIdAsync(currentCountryId, reconciliation.ID).ConfigureAwait(false);
+                                            if (amb != null)
+                                            {
+                                                bool isPivot = amb.IsPivotAccount(countryCtx.CNT_AmbrePivot);
+                                                var ctx = BuildRuleContext(amb, reconciliation, countryCtx, currentCountryId, isPivot);
+                                                var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Edit).ConfigureAwait(false);
+                                                if (res != null && res.Rule != null)
+                                                {
+                                                    if (res.Rule.AutoApply)
+                                                    {
+                                                        if (res.NewActionIdSelf.HasValue && !reconciliation.Action.HasValue)
+                                                            reconciliation.Action = res.NewActionIdSelf.Value;
+                                                        if (res.NewKpiIdSelf.HasValue && !reconciliation.KPI.HasValue)
+                                                            reconciliation.KPI = res.NewKpiIdSelf.Value;
+                                                        if (res.NewIncidentTypeIdSelf.HasValue && !reconciliation.IncidentType.HasValue)
+                                                            reconciliation.IncidentType = res.NewIncidentTypeIdSelf.Value;
+                                                        if (res.NewRiskyItemSelf.HasValue && !reconciliation.RiskyItem.HasValue)
+                                                            reconciliation.RiskyItem = res.NewRiskyItemSelf.Value;
+                                                        if (res.NewReasonNonRiskyIdSelf.HasValue && !reconciliation.ReasonNonRisky.HasValue)
+                                                            reconciliation.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value;
+                                                        if (res.NewToRemindSelf.HasValue)
+                                                            reconciliation.ToRemind = res.NewToRemindSelf.Value;
+                                                        if (res.NewToRemindDaysSelf.HasValue)
+                                                        {
+                                                            try { reconciliation.ToRemindDate = DateTime.Today.AddDays(res.NewToRemindDaysSelf.Value); } catch { }
+                                                        }
+                                                    }
+                                                    if (!string.IsNullOrWhiteSpace(res.UserMessage))
+                                                    {
+                                                        try
+                                                        {
+                                                            var prefix = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {_currentUser}: ";
+                                                            var msg = prefix + $"[Rule {res.Rule.RuleId ?? "(unnamed)"}] {res.UserMessage}";
+                                                            if (string.IsNullOrWhiteSpace(reconciliation.Comments))
+                                                                reconciliation.Comments = msg;
+                                                            else if (!reconciliation.Comments.Contains(msg))
+                                                                reconciliation.Comments = msg + Environment.NewLine + reconciliation.Comments;
+                                                        }
+                                                        catch { }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                catch { /* do not block user saves on rules engine errors */ }
+
                                 var op = await SaveSingleReconciliationAsync(connection, transaction, reconciliation).ConfigureAwait(false);
                                 if (!string.Equals(op, "NOOP", StringComparison.OrdinalIgnoreCase))
                                 {
@@ -1360,6 +1674,95 @@ namespace RecoTool.Services
 
             return results;
         }
+
+        #region Truth Table Helpers
+        private RuleContext BuildRuleContext(DataAmbre a, Reconciliation r, Country country, string countryId, bool isPivot)
+        {
+            // Determine transaction type enum name
+            var transformationService = new TransformationService(new List<Country> { country });
+            var tx = transformationService.DetermineTransactionType(a.RawLabel, isPivot, a.Category);
+            string txName = tx.HasValue ? Enum.GetName(typeof(TransactionType), tx.Value) : null;
+
+            // Guarantee type primarily on receivable from label
+            string guaranteeType = !isPivot ? ExtractGuaranteeTypeFromLabel(a.RawLabel) : null;
+
+            // Sign from signed amount
+            var sign = a.SignedAmount >= 0 ? "C" : "D";
+
+            // Presence of DWINGS links (any of Invoice/Guarantee/BGPMT)
+            bool? hasDw = (!string.IsNullOrWhiteSpace(r?.DWINGS_InvoiceID)
+                          || !string.IsNullOrWhiteSpace(r?.DWINGS_GuaranteeID)
+                          || !string.IsNullOrWhiteSpace(r?.DWINGS_BGPMT));
+
+            // Extended time/state inputs
+            var today = DateTime.Today;
+            bool? triggerDateIsNull = !(r?.TriggerDate.HasValue == true);
+            int? daysSinceTrigger = r?.TriggerDate.HasValue == true
+                ? (int?)(today - r.TriggerDate.Value.Date).TotalDays
+                : null;
+            // Transitory if a BGPMT token is present in reconciliation numbers or raw label
+            var bgpmt = DwingsLinkingHelper.ExtractBgpmtToken(a?.Reconciliation_Num)
+                        ?? DwingsLinkingHelper.ExtractBgpmtToken(a?.ReconciliationOrigin_Num)
+                        ?? DwingsLinkingHelper.ExtractBgpmtToken(a?.RawLabel);
+            bool? isTransitory = !string.IsNullOrWhiteSpace(bgpmt);
+            int? operationDaysAgo = a?.Operation_Date.HasValue == true
+                ? (int?)(today - a.Operation_Date.Value.Date).TotalDays
+                : null;
+            bool? isMatched = hasDw; // consider matched when any DWINGS link is present
+            bool? hasManualMatch = null; // unknown on edit path
+            bool? isFirstRequest = !(r?.FirstClaimDate.HasValue == true);
+            int? daysSinceReminder = r?.LastClaimDate.HasValue == true
+                ? (int?)(today - r.LastClaimDate.Value.Date).TotalDays
+                : null;
+
+            return new RuleContext
+            {
+                CountryId = countryId,
+                IsPivot = isPivot,
+                GuaranteeType = guaranteeType,
+                TransactionType = txName,
+                HasDwingsLink = hasDw,
+                IsGrouped = null, // not computed on edit path
+                IsAmountMatch = null, // not computed on edit path
+                Sign = sign,
+                Bgi = r?.DWINGS_InvoiceID,
+                // Extended fields
+                TriggerDateIsNull = triggerDateIsNull,
+                DaysSinceTrigger = daysSinceTrigger,
+                IsTransitory = isTransitory,
+                OperationDaysAgo = operationDaysAgo,
+                IsMatched = isMatched,
+                HasManualMatch = hasManualMatch,
+                IsFirstRequest = isFirstRequest,
+                DaysSinceReminder = daysSinceReminder,
+                CurrentActionId = r?.Action
+            };
+        }
+
+        private async Task<DataAmbre> GetAmbreRowByIdAsync(string countryId, string id)
+        {
+            if (string.IsNullOrWhiteSpace(countryId) || string.IsNullOrWhiteSpace(id)) return null;
+            try
+            {
+                var ambreCs = _offlineFirstService?.GetAmbreConnectionString(countryId);
+                if (string.IsNullOrWhiteSpace(ambreCs)) return null;
+                var list = await ExecuteQueryAsync<DataAmbre>("SELECT TOP 1 * FROM T_Data_Ambre WHERE ID = ? AND DeleteDate IS NULL", ambreCs, id).ConfigureAwait(false);
+                return list?.FirstOrDefault();
+            }
+            catch { return null; }
+        }
+        
+        private string ExtractGuaranteeTypeFromLabel(string label)
+        {
+            if (string.IsNullOrEmpty(label))
+                return null;
+            var upper = label.ToUpperInvariant();
+            if (upper.Contains("REISSUANCE")) return "REISSUANCE";
+            if (upper.Contains("ISSUANCE")) return "ISSUANCE";
+            if (upper.Contains("ADVISING") || upper.Contains("NOTIFICATION") || upper.Contains("NOTIF")) return "ADVISING";
+            return null;
+        }
+        #endregion
     }
     #endregion
 }

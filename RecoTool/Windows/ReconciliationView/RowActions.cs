@@ -4,44 +4,92 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using RecoTool.Models;
-using RecoTool.Services.DTOs;
 using RecoTool.Services;
+using RecoTool.Services.DTOs;
+using RecoTool.Models;
 using RecoTool.UI.Helpers;
 
 namespace RecoTool.Windows
 {
-    // Partial: Row context menu and quick-set actions for ReconciliationView
     public partial class ReconciliationView
     {
+        private async void RunRulesNow_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_reconciliationService == null)
+                {
+                    ShowError("Service not available.");
+                    return;
+                }
+
+                // Use selection if any, otherwise all rows in current filtered set
+                var selected = GetCurrentSelection();
+                var rows = (selected != null && selected.Count > 0)
+                    ? selected
+                    : (_filteredData?.ToList() ?? ViewData?.ToList() ?? new List<ReconciliationViewData>());
+
+                // Always exclude archived rows
+                rows = rows?.Where(r => r != null && !r.IsDeleted).ToList();
+
+                if (rows == null || rows.Count == 0)
+                {
+                    UpdateStatusInfo("No active rows to apply rules.");
+                    return;
+                }
+
+                var ids = rows.Select(r => r?.ID)
+                              .Where(id => !string.IsNullOrWhiteSpace(id))
+                              .Distinct(StringComparer.OrdinalIgnoreCase)
+                              .ToList();
+                if (ids.Count == 0)
+                {
+                    UpdateStatusInfo("No valid IDs to apply rules.");
+                    return;
+                }
+
+                UpdateStatusInfo($"Applying rules to {ids.Count} row(s)...");
+                var count = await _reconciliationService.ApplyRulesNowAsync(ids).ConfigureAwait(false);
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    UpdateStatusInfo($"Rules applied to {count} row(s). Reloading...");
+                    Refresh();
+                });
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Failed to run rules: {ex.Message}");
+            }
+        }
+
         private IEnumerable<UserField> GetUserFieldOptionsForRow(string category, ReconciliationViewData row)
         {
             try
             {
-                var all = AllUserFields ?? Array.Empty<UserField>();
+                var all = AllUserFields;
                 var country = CurrentCountryObject;
-                if (country == null) return Array.Empty<UserField>();
+                if (row == null || all == null || country == null) return Enumerable.Empty<UserField>();
 
-                bool isPivot = string.Equals(row?.Account_ID?.Trim(), country.CNT_AmbrePivot?.Trim(), StringComparison.OrdinalIgnoreCase);
-                bool isReceivable = string.Equals(row?.Account_ID?.Trim(), country.CNT_AmbreReceivable?.Trim(), StringComparison.OrdinalIgnoreCase);
+                bool isPivot = string.Equals(row.Account_ID?.Trim(), country.CNT_AmbrePivot?.Trim(), StringComparison.OrdinalIgnoreCase);
+                bool isReceivable = string.Equals(row.Account_ID?.Trim(), country.CNT_AmbreReceivable?.Trim(), StringComparison.OrdinalIgnoreCase);
 
-                // Category mapping: handle synonyms (e.g., Incident Type vs INC)
                 bool incident = string.Equals(category, "Incident Type", StringComparison.OrdinalIgnoreCase)
                                  || string.Equals(category, "INC", StringComparison.OrdinalIgnoreCase);
                 IEnumerable<UserField> query = incident
                     ? all.Where(u => string.Equals(u.USR_Category, "Incident Type", StringComparison.OrdinalIgnoreCase)
                                      || string.Equals(u.USR_Category, "INC", StringComparison.OrdinalIgnoreCase))
                     : all.Where(u => string.Equals(u.USR_Category, category, StringComparison.OrdinalIgnoreCase));
+
                 if (isPivot)
                     query = query.Where(u => u.USR_Pivot);
                 else if (isReceivable)
                     query = query.Where(u => u.USR_Receivable);
                 else
-                    return Array.Empty<UserField>();
+                    return Enumerable.Empty<UserField>();
 
                 return query.OrderBy(u => u.USR_FieldName).ToList();
             }
-            catch { return Array.Empty<UserField>(); }
+            catch { return Enumerable.Empty<UserField>(); }
         }
 
         // Open full conversation and allow appending a new comment line

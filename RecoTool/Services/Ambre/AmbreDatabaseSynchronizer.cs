@@ -345,7 +345,6 @@ namespace RecoTool.Services.AmbreImport
         private bool HasDataChanged(DataAmbre existing, DataAmbre newData)
         {
             return existing.Account_ID != newData.Account_ID ||
-                   existing.Country != newData.Country ||
                    existing.CCY != newData.CCY ||
                    existing.Event_Num != newData.Event_Num ||
                    existing.Folder != newData.Folder ||
@@ -359,7 +358,6 @@ namespace RecoTool.Services.AmbreImport
                    existing.Value_Date != newData.Value_Date ||
                    existing.Category != newData.Category ||
                    existing.Reconciliation_Num != newData.Reconciliation_Num ||
-                   existing.ReconciliationOrigin_Num != newData.ReconciliationOrigin_Num ||
                    existing.Receivable_InvoiceFromAmbre != newData.Receivable_InvoiceFromAmbre ||
                    existing.Receivable_DWRefFromAmbre != newData.Receivable_DWRefFromAmbre;
         }

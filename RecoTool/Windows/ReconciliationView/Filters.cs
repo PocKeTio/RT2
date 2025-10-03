@@ -6,6 +6,17 @@ namespace RecoTool.Windows
     // Partial: Saved filters and reset handlers for ReconciliationView
     public partial class ReconciliationView
     {
+        // Reapply current filters (useful to refresh after data changes)
+        private void ReapplyFilter_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                ApplyFilters();
+                UpdateViewTitle();
+            }
+            catch { }
+        }
+
         // Reset all filter controls to default values, preserving some parent-provided constraints
         private void ResetFilter_Click(object sender, RoutedEventArgs e)
         {
@@ -50,6 +61,7 @@ namespace RecoTool.Windows
                 FilterActionDone = null; // reset to All
                 FilterActionDateFrom = null;
                 FilterActionDateTo = null;
+                FilterLastReviewed = null; // reset to All
 
                 // Apply and refresh title/status
                 ApplyFilters();

@@ -31,5 +31,7 @@ namespace RecoTool.Services.DTOs
         public string CREDITOR_PARTY_NAME { get; set; }
         public string MT_STATUS { get; set; }
         public string ERROR_MESSAGE { get; set; }
+        // New: whether the COMM ID (email) flag is set on the invoice
+        public bool? COMM_ID_EMAIL { get; set; }
     }
 }

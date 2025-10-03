@@ -23,11 +23,10 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Mini Ribbon for Reconciliation Page -->
-        <Border Grid.Row="0" Background="{DynamicResource BNPLightGreenBrush}" Padding="15,8" Effect="{StaticResource LightShadow}">
+        <!-- Compact Ribbon for Reconciliation Page -->
+        <Border Grid.Row="0" Background="White" Padding="12,6" Effect="{StaticResource StandardShadow}" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
@@ -37,20 +36,28 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Add View Button -->
-                <Button Grid.Column="0" Style="{StaticResource StandardButtonStyle}" Margin="0,0,15,0" Height="36" Padding="15,5" Click="AddView_Click" IsEnabled="{Binding CanInteract}">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                        <TextBlock Text="Add View" FontSize="14" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </Button>
+                <!-- View Management Section -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="0,0,16,0">
+                    <Border Background="{DynamicResource BNPMainGreenBrush}" CornerRadius="6" Padding="10,6" Effect="{StaticResource LightShadow}">
+                        <Button Style="{StaticResource StandardButtonStyle}" Click="AddView_Click" IsEnabled="{Binding CanInteract}" Background="Transparent" BorderThickness="0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="White" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <TextBlock Text="Add View" FontSize="13" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </Border>
+                </StackPanel>
 
-                <!-- Account Selection -->
-                <Border Grid.Column="1" Background="{DynamicResource BNPSectionBackground}" CornerRadius="4" Padding="10,5" Margin="0,0,15,0" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1">
+                <!-- ToDo Management Section -->
+                <Border Grid.Column="1" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,16,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE8C9;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-                        <TextBlock Text="Account:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
-                        <ComboBox x:Name="AccountComboBox" Width="120" ItemsSource="{Binding Accounts}" SelectedItem="{Binding SelectedAccount, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
+                        <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+                        <TextBlock Text="ToDo:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
+                        <ComboBox x:Name="TodoListComboBox" Width="127" Style="{StaticResource ModernComboBoxStyle}"
+                                  ItemsSource="{Binding TodoItems}"
+                                  DisplayMemberPath="TDL_Name"
+                                  SelectedItem="{Binding SelectedTodoItem, Mode=TwoWay}"
+                                  SelectionChanged="TodoListComboBox_SelectionChanged"
                                   HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
                             <ComboBox.ItemContainerStyle>
                                 <Style TargetType="ComboBoxItem">
@@ -59,9 +66,31 @@
                                 </Style>
                             </ComboBox.ItemContainerStyle>
                         </ComboBox>
-                        <TextBlock Text="  " Width="6"/>
-                        <TextBlock Text="Live/Archived:" VerticalAlignment="Center" Margin="8,0,8,0" FontWeight="SemiBold"/>
-                        <ComboBox x:Name="StatusComboBoxInline" Width="110" ItemsSource="{Binding Statuses}" SelectedItem="{Binding SelectedStatus, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
+                        <TextBox x:Name="TodoNameTextBox" Width="92" Margin="8,0,0,0" Text="{Binding EditTodoName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Style="{StaticResource StandardButtonStyle}" Margin="8,0,0,0" Height="26" Padding="10,0" Click="TodoAdd_Click"><TextBlock Text="Add"/></Button>
+                        <Button Style="{StaticResource StandardButtonStyle}" Margin="4,0,0,0" Height="26" Padding="10,0" Click="TodoSave_Click"><TextBlock Text="Save"/></Button>
+                        <Button Style="{StaticResource StandardButtonStyle}" Margin="4,0,0,0" Height="26" Padding="10,0" Click="TodoDelete_Click"><TextBlock Text="Delete"/></Button>
+                        <Button Style="{StaticResource StandardButtonStyle}" Margin="8,0,0,0" Height="26" Padding="10,0" Click="TodoExit_Click" ToolTip="Exit ToDo mode" Visibility="{Binding IsTodoMode, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="Exit ToDo"/>
+                        </Button>
+                    </StackPanel>
+                </Border>
+
+                <!-- Data Scope Section -->
+                <Border Grid.Column="2" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,16,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE8C9;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                        <ComboBox x:Name="AccountComboBox" Width="110" ItemsSource="{Binding Accounts}" SelectedItem="{Binding SelectedAccount, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanChangeAccount}"
+                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                            <ComboBox.ItemContainerStyle>
+                                <Style TargetType="ComboBoxItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                    <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                </Style>
+                            </ComboBox.ItemContainerStyle>
+                        </ComboBox>
+                        <Rectangle Width="1" Height="24" Fill="#DEE2E6" Margin="12,0"/>
+                        <ComboBox x:Name="StatusComboBoxInline" Width="100" ItemsSource="{Binding Statuses}" SelectedItem="{Binding SelectedStatus, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanChangeStatus}"
                                   HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
                             <ComboBox.ItemContainerStyle>
                                 <Style TargetType="ComboBoxItem">
@@ -73,14 +102,11 @@
                     </StackPanel>
                 </Border>
 
-                <!-- (Removed separate status block; now inline next to Account) -->
-
-                <!-- Saved Filters Selection -->
-                <Border Grid.Column="2" Background="{DynamicResource BNPSectionBackground}" CornerRadius="4" Padding="10,5" Margin="0,0,15,0" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Height="38" VerticalAlignment="Top">
+                <!-- Saved Items Section -->
+                <Border Grid.Column="3" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,16,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-                        <TextBlock Text="Saved Filters:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
-                        <ComboBox x:Name="SavedFiltersComboBox" Width="140" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
+                        <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                        <ComboBox x:Name="SavedFiltersComboBox" Width="130" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanUseSavedControls}"
                                   ItemsSource="{Binding SavedFilters}"
                                   DisplayMemberPath="UFI_Name"
                                   SelectionChanged="SavedFiltersComboBox_SelectionChanged"
@@ -92,15 +118,8 @@
                                 </Style>
                             </ComboBox.ItemContainerStyle>
                         </ComboBox>
-                    </StackPanel>
-                </Border>
-
-                <!-- Saved Views Selection -->
-                <Border Grid.Column="3" Background="{DynamicResource BNPSectionBackground}" CornerRadius="4" Padding="10,5" Margin="0,0,15,0" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Height="38" VerticalAlignment="Top">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE8A1;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-                        <TextBlock Text="Saved Views:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
-                        <ComboBox x:Name="SavedViewsComboBox" Width="140" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
+                        <Rectangle Width="1" Height="24" Fill="#DEE2E6" Margin="12,0"/>
+                        <ComboBox x:Name="SavedViewsComboBox" Width="130" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanUseSavedControls}"
                                   ItemsSource="{Binding SavedViews}"
                                   SelectedItem="{Binding SelectedSavedView, Mode=TwoWay}"
                                   DisplayMemberPath="Name"
@@ -116,12 +135,11 @@
                     </StackPanel>
                 </Border>
 
-                <!-- View Type Selection -->
-                <Border Grid.Column="4" Background="{DynamicResource BNPSectionBackground}" CornerRadius="4" Padding="10,5" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1">
+                <!-- View Type & Tools Section -->
+                <Border Grid.Column="4" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,16,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE8A9;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-                        <TextBlock Text="View Type:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
-                        <ComboBox x:Name="ViewTypeComboBox" Width="120" ItemsSource="{Binding ViewTypes}" SelectedItem="{Binding SelectedViewType, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
+                        <TextBlock Text="&#xE8A9;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                        <ComboBox x:Name="ViewTypeComboBox" Width="110" ItemsSource="{Binding ViewTypes}" SelectedItem="{Binding SelectedViewType, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
                                   HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
                             <ComboBox.ItemContainerStyle>
                                 <Style TargetType="ComboBoxItem">
@@ -133,21 +151,27 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Invoice Finder Button -->
-                <Button Grid.Column="5" Style="{StaticResource StandardButtonStyle}" Margin="10,0,0,0" Height="36" Padding="12,5" Click="OpenInvoiceFinder_Click" IsEnabled="{Binding CanInteract}" ToolTip="Open Invoice Finder">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                        <TextBlock Text="Invoice Finder" FontSize="14" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </Button>
+                <!-- Quick Actions -->
+                <StackPanel Grid.Column="5" Orientation="Horizontal">
+                    <Button Style="{StaticResource StandardButtonStyle}" Padding="10,6" Click="OpenInvoiceFinder_Click" IsEnabled="{Binding CanInteract}" ToolTip="Open Invoice Finder" Background="#F0F7FF" BorderBrush="#2196F3" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#2196F3" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                            <TextBlock Text="Invoice Finder" FontSize="12" Foreground="#2196F3" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
 
-                <!-- Lock Status Indicator -->
-                <Border Grid.Column="6" Background="#FFF9E6" BorderBrush="#E6C200" BorderThickness="1" CornerRadius="4" Padding="10,5" Visibility="{Binding IsGlobalLockActive, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE785;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="#E6C200"/>
-                        <TextBlock Text="Import in progress - global lock active" VerticalAlignment="Center" Foreground="#6B5E00"/>
-                    </StackPanel>
-                </Border>
+                <!-- Status Indicators -->
+                <StackPanel Grid.Column="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="16,0,0,0">
+                    <Border Background="#FFF9E6" BorderBrush="#FFC107" BorderThickness="1" CornerRadius="6" Padding="8,5" Visibility="{Binding IsGlobalLockActive, Converter={StaticResource BooleanToVisibilityConverter}}" Effect="{StaticResource LightShadow}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE785;" FontFamily="Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="#FFC107" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                            <TextBlock Text="Import in progress" VerticalAlignment="Center" Foreground="#795548" FontSize="11" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- (Removed ToDo Mode Toggle and right-aligned selector) -->
 
             </Grid>
         </Border>

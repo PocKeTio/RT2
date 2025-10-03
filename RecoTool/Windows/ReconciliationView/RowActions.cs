@@ -126,76 +126,20 @@ namespace RecoTool.Windows
                         var reco = await _reconciliationService.GetOrCreateReconciliationAsync(row.ID);
                         reco.Comments = appended;
                         await _reconciliationService.SaveReconciliationAsync(reco);
+                        
+                        // Refresh KPIs to reflect changes immediately
+                        UpdateKpis(_filteredData);
 
                         // Best-effort background sync
                         try { ScheduleBulkPushDebounced(); } catch { }
                     }
                 }
-            }
-            catch (Exception ex)
+            } catch (Exception ex) 
             {
                 ShowError($"Failed to update comments: {ex.Message}");
             }
         }
-        // Populate the context menu items at open time to ensure correct DataContext
-        private void RowContextMenu_Opened(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                var cm = sender as ContextMenu;
-                if (cm == null) return;
-                var fe = cm.PlacementTarget as FrameworkElement;
-                var rowData = fe?.DataContext as ReconciliationViewData;
-                if (rowData == null) return;
-
-                // Resolve the root submenus
-                MenuItem actionRoot = cm.Items.OfType<MenuItem>().FirstOrDefault(mi => (mi.Tag as string) == "Action");
-                MenuItem kpiRoot = cm.Items.OfType<MenuItem>().FirstOrDefault(mi => (mi.Tag as string) == "KPI");
-                MenuItem incRoot = cm.Items.OfType<MenuItem>().FirstOrDefault(mi => (mi.Tag as string) == "Incident Type");
-
-                void Populate(MenuItem root, string category)
-                {
-                    if (root == null) return;
-                    root.Items.Clear();
-
-                    var options = GetUserFieldOptionsForRow(category, rowData).ToList();
-
-                    // Clear option (always present)
-                    var clearItem = new MenuItem { Header = $"Clear {category}", Tag = category, CommandParameter = null };
-                    clearItem.Click += QuickSetUserFieldMenuItem_Click;
-                    // Disable Clear if already empty
-                    bool hasValue = (string.Equals(category, "Action", StringComparison.OrdinalIgnoreCase) && rowData.Action.HasValue)
-                                     || (string.Equals(category, "KPI", StringComparison.OrdinalIgnoreCase) && rowData.KPI.HasValue)
-                                     || (string.Equals(category, "Incident Type", StringComparison.OrdinalIgnoreCase) && rowData.IncidentType.HasValue);
-                    clearItem.IsEnabled = hasValue;
-                    root.Items.Add(clearItem);
-
-                    foreach (var opt in options)
-                    {
-                        var mi = new MenuItem
-                        {
-                            Header = opt.USR_FieldName,
-                            Tag = category,
-                            CommandParameter = opt.USR_ID,
-                            IsCheckable = true,
-                            IsChecked = (string.Equals(category, "Action", StringComparison.OrdinalIgnoreCase) && rowData.Action == opt.USR_ID)
-                                        || (string.Equals(category, "KPI", StringComparison.OrdinalIgnoreCase) && rowData.KPI == opt.USR_ID)
-                                        || (string.Equals(category, "Incident Type", StringComparison.OrdinalIgnoreCase) && rowData.IncidentType == opt.USR_ID)
-                        };
-                        mi.Click += QuickSetUserFieldMenuItem_Click;
-                        root.Items.Add(mi);
-                    }
-
-                    // Disable the root if there are no applicable options and value is empty
-                    root.IsEnabled = options.Any() || hasValue; // keep enabled if Clear is relevant
-                }
-
-                Populate(actionRoot, "Action");
-                Populate(kpiRoot, "KPI");
-                Populate(incRoot, "Incident Type");
-            }
-            catch { }
-        }
+        
 
         private async void QuickSetUserFieldMenuItem_Click(object sender, RoutedEventArgs e)
         {
@@ -273,6 +217,9 @@ namespace RecoTool.Windows
                 }
 
                 await _reconciliationService.SaveReconciliationsAsync(updates);
+                
+                // Refresh KPIs to reflect changes immediately
+                UpdateKpis(_filteredData);
 
                 // background sync (debounced)
                 try
@@ -347,6 +294,9 @@ namespace RecoTool.Windows
                 }
 
                 await _reconciliationService.SaveReconciliationsAsync(updates);
+                
+                // Refresh KPIs to reflect changes immediately
+                UpdateKpis(_filteredData);
 
                 // Background sync best effort (debounced)
                 try
@@ -357,7 +307,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Save error: {ex.Message}");
+                ShowError($"Failed to set bulk comment: {ex.Message}");
             }
         }
 
@@ -387,6 +337,10 @@ namespace RecoTool.Windows
                 }
                 if (updates.Count == 0) return;
                 await _reconciliationService.SaveReconciliationsAsync(updates);
+                
+                // Refresh KPIs to reflect changes immediately
+                UpdateKpis(_filteredData);
+                
                 try { ScheduleBulkPushDebounced(); } catch { }
             }
             catch (Exception ex)
@@ -403,9 +357,7 @@ namespace RecoTool.Windows
                 var dg = this.FindName("ResultsDataGrid") as DataGrid;
                 if (dg == null) return;
                 var rowCtx = (sender as FrameworkElement)?.DataContext as ReconciliationViewData;
-                var targetRows = dg.SelectedItems.Count > 1 && rowCtx != null && dg.SelectedItems.OfType<ReconciliationViewData>().Contains(rowCtx)
-                    ? dg.SelectedItems.OfType<ReconciliationViewData>().ToList()
-                    : (rowCtx != null ? new List<ReconciliationViewData> { rowCtx } : new List<ReconciliationViewData>());
+                var targetRows = dg.Items.OfType<ReconciliationViewData>().ToList();
                 if (targetRows.Count == 0) return;
 
                 var updates = new List<Reconciliation>();
@@ -493,6 +445,9 @@ namespace RecoTool.Windows
                     updates.Add(reco);
                 }
                 await _reconciliationService.SaveReconciliationsAsync(updates);
+                
+                // Refresh KPIs to reflect changes immediately
+                UpdateKpis(_filteredData);
 
                 // Background sync best effort (debounced)
                 try

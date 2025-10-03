@@ -39,12 +39,5 @@ namespace RecoTool.Windows
                 System.Diagnostics.Debug.WriteLine($"Error updating title: {ex.Message}");
             }
         }
-
-        // Définit le titre de la vue (ex: nom du filtre sélectionné) et met à jour l'UI
-        public void SetViewTitle(string title)
-        {
-            _currentView = string.IsNullOrWhiteSpace(title) ? _currentView : title;
-            UpdateViewTitle();
-        }
     }
 }

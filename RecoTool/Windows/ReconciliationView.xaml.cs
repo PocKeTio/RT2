@@ -51,8 +51,10 @@ namespace RecoTool.Windows
         private bool _canRefresh = true;
         private bool _initialLoaded;
         private DispatcherTimer _filterDebounceTimer;
-        // Transient highlight clear timer
         private DispatcherTimer _highlightClearTimer;
+        private DispatcherTimer _toastTimer;
+        private Action _toastClickAction;
+        private string _toastTargetReconciliationId;
         private bool _isSyncRefreshInProgress;
         private const int HighlightDurationMs = 4000;
         private bool _syncEventsHooked;
@@ -91,8 +93,174 @@ namespace RecoTool.Windows
 
         private void OnPropertyChanged(string propertyName = null)
         {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+        // Allows parent page to set a custom title, optionally marking it as a ToDo title
+        public void SetViewTitle(string title, bool isTodo)
+        {
+            try
             {
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+                var text = string.IsNullOrWhiteSpace(title) ? "Default View" : (isTodo ? $"ToDo: {title}" : title);
+                if (TitleText != null)
+                {
+                    TitleText.Text = text;
+                    TitleText.ToolTip = title;
+                }
+            }
+            catch { }
+        }
+
+        // Backward-compatible overload: defaults to non-ToDo
+        public void SetViewTitle(string title) => SetViewTitle(title, false);
+
+        // Simple window to toggle visibility of multiple DataGrid columns
+        private sealed class ManageColumnsWindow : Window
+        {
+            private readonly DataGrid _dg;
+            private readonly List<ColumnItem> _items = new List<ColumnItem>();
+
+            private sealed class ColumnItem
+            {
+                public string Header { get; set; }
+                public bool IsVisible { get; set; }
+                public bool IsProtected { get; set; }
+                public DataGridColumn Column { get; set; }
+            }
+
+            public ManageColumnsWindow(DataGrid dg)
+            {
+                _dg = dg;
+                Title = "Manage Columns";
+                Width = 420;
+                Height = 520;
+                WindowStartupLocation = WindowStartupLocation.CenterOwner;
+                ResizeMode = ResizeMode.CanResizeWithGrip;
+                Content = BuildUI();
+                // Load columns after window is loaded to ensure visual tree is ready
+                this.Loaded += (s, e) => { try { LoadColumns(); } catch { } };
+            }
+
+            private UIElement BuildUI()
+            {
+                var root = new DockPanel { Margin = new Thickness(10) };
+
+                var topBar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+                var selectAllBtn = new Button { Content = "Select All", Height = 26, Margin = new Thickness(0, 0, 6, 0) };
+                var deselectAllBtn = new Button { Content = "Deselect All", Height = 26, Margin = new Thickness(0, 0, 6, 0) };
+                var resetBtn = new Button { Content = "Reset", Height = 26 };
+                selectAllBtn.Click += (s, e) => { foreach (var it in _items.Where(i => !i.IsProtected)) it.IsVisible = true; RefreshList(); };
+                deselectAllBtn.Click += (s, e) => { foreach (var it in _items.Where(i => !i.IsProtected)) it.IsVisible = false; RefreshList(); };
+                resetBtn.Click += (s, e) => { TryResetToDefaults(); };
+                topBar.Children.Add(selectAllBtn);
+                topBar.Children.Add(deselectAllBtn);
+                topBar.Children.Add(resetBtn);
+                DockPanel.SetDock(topBar, Dock.Top);
+
+                var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+                var list = new StackPanel { Name = "ListPanel" };
+                scroll.Content = list;
+
+                var btnBar = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
+                var okBtn = new Button { Content = "OK", Width = 80, Height = 28, Margin = new Thickness(0, 0, 6, 0) };
+                var cancelBtn = new Button { Content = "Cancel", Width = 80, Height = 28 };
+                okBtn.Click += (s, e) => { try { Apply(); } catch { } this.DialogResult = true; };
+                cancelBtn.Click += (s, e) => { this.DialogResult = false; };
+                btnBar.Children.Add(okBtn);
+                btnBar.Children.Add(cancelBtn);
+                DockPanel.SetDock(btnBar, Dock.Bottom);
+
+                root.Children.Add(topBar);
+                root.Children.Add(btnBar);
+                root.Children.Add(scroll);
+                return root;
+            }
+
+            private void LoadColumns()
+            {
+                _items.Clear();
+                if (_dg?.Columns == null) return;
+                // Protect first 3 indicator columns (N, U, M)
+                for (int i = 0; i < _dg.Columns.Count; i++)
+                {
+                    var col = _dg.Columns[i];
+                    var header = Convert.ToString(col.Header);
+                    bool isProtected = i < 3; // keep indicators always visible
+                    _items.Add(new ColumnItem
+                    {
+                        Header = string.IsNullOrWhiteSpace(header) ? $"Column {i + 1}" : header,
+                        IsVisible = col.Visibility == Visibility.Visible,
+                        IsProtected = isProtected,
+                        Column = col
+                    });
+                }
+                RefreshList();
+            }
+
+            private void RefreshList()
+            {
+                var listPanel = FindDescendant<StackPanel>(this.Content as DependencyObject, "ListPanel");
+                if (listPanel == null) return;
+                listPanel.Children.Clear();
+                foreach (var it in _items)
+                {
+                    var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+                    var cb = new CheckBox { IsChecked = it.IsVisible, IsEnabled = !it.IsProtected, VerticalAlignment = VerticalAlignment.Center };
+                    cb.Checked += (s, e) => it.IsVisible = true;
+                    cb.Unchecked += (s, e) => it.IsVisible = false;
+                    var tb = new TextBlock { Text = it.Header, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+                    if (it.IsProtected)
+                    {
+                        tb.Text += " (locked)";
+                        tb.Foreground = Brushes.Gray;
+                    }
+                    row.Children.Add(cb);
+                    row.Children.Add(tb);
+                    listPanel.Children.Add(row);
+                }
+            }
+
+            private void Apply()
+            {
+                foreach (var it in _items)
+                {
+                    try
+                    {
+                        if (it.IsProtected) continue;
+                        it.Column.Visibility = it.IsVisible ? Visibility.Visible : Visibility.Collapsed;
+                    }
+                    catch { }
+                }
+            }
+
+            private void TryResetToDefaults()
+            {
+                try
+                {
+                    // Simple default: first 12 data columns visible besides indicators, others visible too
+                    for (int i = 0; i < _items.Count; i++)
+                    {
+                        var it = _items[i];
+                        if (it.IsProtected) { it.IsVisible = true; continue; }
+                        it.IsVisible = true;
+                    }
+                    RefreshList();
+                }
+                catch { }
+            }
+
+            private static T FindDescendant<T>(DependencyObject root, string name) where T : FrameworkElement
+            {
+                if (root == null) return null;
+                if (root is T fe && (string.IsNullOrEmpty(name) || fe.Name == name)) return fe;
+                int count = VisualTreeHelper.GetChildrenCount(root);
+                for (int i = 0; i < count; i++)
+                {
+                    var child = VisualTreeHelper.GetChild(root, i);
+                    var match = FindDescendant<T>(child, name);
+                    if (match != null) return match;
+                }
+                return null;
             }
         }
 
@@ -184,6 +352,54 @@ namespace RecoTool.Windows
                 try { dp.IsDropDownOpen = true; } catch { }
             }
             catch { }
+        }
+
+        // Set date to today when clicking the calendar button
+        private void SetDateToToday_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var button = sender as Button;
+                if (button == null) return;
+
+                var fieldName = button.Tag as string;
+                if (string.IsNullOrEmpty(fieldName)) return;
+
+                // Find the DatePicker in the same Grid
+                var grid = button.Parent as Grid;
+                if (grid == null) return;
+
+                var datePicker = grid.Children.OfType<DatePicker>().FirstOrDefault();
+                if (datePicker == null) return;
+
+                // Set to today
+                datePicker.SelectedDate = DateTime.Today;
+
+                // Get the data context (the row)
+                var row = datePicker.DataContext as RecoTool.Services.DTOs.ReconciliationViewData;
+                if (row == null) return;
+
+                // Update the property based on field name
+                switch (fieldName)
+                {
+                    case "ActionDate":
+                        row.ActionDate = DateTime.Today;
+                        break;
+                    case "FirstClaimDate":
+                        row.FirstClaimDate = DateTime.Today;
+                        break;
+                    case "LastClaimDate":
+                        row.LastClaimDate = DateTime.Today;
+                        break;
+                    case "ToRemindDate":
+                        row.ToRemindDate = DateTime.Today;
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error setting date to today: {ex.Message}");
+            }
         }
 
         
@@ -543,6 +759,17 @@ namespace RecoTool.Windows
 
             InitializeFromServices();
 
+            // Subscribe to rule application events to show floating toasts (edit/run-now)
+            try
+            {
+                if (_reconciliationService != null)
+                {
+                    _reconciliationService.RuleApplied -= ReconciliationService_RuleApplied;
+                    _reconciliationService.RuleApplied += ReconciliationService_RuleApplied;
+                }
+            }
+            catch { }
+
             // Enable header context menu for column visibility
             this.Loaded += (s, e) =>
             {
@@ -574,6 +801,30 @@ namespace RecoTool.Windows
         private void ResultsDataGrid_GotFocus(object sender, RoutedEventArgs e)
         {
             try { ReconciliationViewFocusTracker.SetLastFocused(this); } catch { }
+        }
+
+        // Open "Manage columns" when user right-clicks a column header
+        private void ResultsDataGrid_PreviewMouseRightButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            try
+            {
+                var dg = sender as DataGrid;
+                if (dg == null) return;
+
+                var source = e.OriginalSource as DependencyObject;
+                var header = VisualTreeHelpers.FindParent<DataGridColumnHeader>(source);
+                if (header == null)
+                {
+                    // Not a header: let row context menu proceed
+                    return;
+                }
+
+                var win = new ManageColumnsWindow(dg);
+                try { win.Owner = Window.GetWindow(this); } catch { }
+                win.ShowDialog();
+                e.Handled = true;
+            }
+            catch { }
         }
 
         private void RulesAdmin_Click(object sender, RoutedEventArgs e)
@@ -610,6 +861,180 @@ namespace RecoTool.Windows
                     finally { (s as DispatcherTimer)?.Stop(); }
                 };
                 t.Start();
+            }
+            catch { }
+        }
+
+        private void ReconciliationService_RuleApplied(object sender, ReconciliationService.RuleAppliedEventArgs e)
+        {
+            try
+            {
+                if (e == null) return;
+                if (!string.Equals(e.Origin, "edit", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(e.Origin, "run-now", StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+                if (!Dispatcher.CheckAccess())
+                {
+                    Dispatcher.Invoke(() => ReconciliationService_RuleApplied(sender, e));
+                    return;
+                }
+                // Real-time update of the affected row (if visible)
+                try
+                {
+                    var row = (_allViewData ?? new List<ReconciliationViewData>()).FirstOrDefault(r => string.Equals(r?.ID, e.ReconciliationId, StringComparison.OrdinalIgnoreCase));
+                    if (row != null && !string.IsNullOrWhiteSpace(e.Outputs))
+                    {
+                        ApplyOutputsToRow(row, e.Outputs);
+                    }
+                }
+                catch { }
+
+                var summary = !string.IsNullOrWhiteSpace(e.Outputs) ? e.Outputs : e.Message;
+                var text = string.IsNullOrWhiteSpace(summary)
+                    ? $"Rule '{e.RuleId}' applied"
+                    : $"Rule '{e.RuleId}' applied: {summary}";
+                ShowToast(text, onClick: () =>
+                {
+                    try { OpenSingleReconciliationPopup(e.ReconciliationId); } catch { }
+                });
+            }
+            catch { }
+        }
+
+        private void ShowToast(string text, Action onClick = null)
+        {
+            try
+            {
+                var panel = this.FindName("ToastPanel") as Border;
+                var tb = this.FindName("ToastText") as TextBlock;
+                if (panel == null || tb == null) return;
+                tb.Text = text ?? string.Empty;
+                panel.Visibility = Visibility.Visible;
+                _toastClickAction = onClick;
+                _toastTargetReconciliationId = null;
+
+                if (_toastTimer == null)
+                {
+                    _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                    _toastTimer.Tick += (s, e) =>
+                    {
+                        try { panel.Visibility = Visibility.Collapsed; } catch { }
+                        finally { _toastTimer?.Stop(); }
+                    };
+                }
+                else
+                {
+                    _toastTimer.Stop();
+                }
+                _toastTimer.Start();
+            }
+            catch { }
+        }
+
+        private void ToastPanel_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            try
+            {
+                _toastClickAction?.Invoke();
+            }
+            catch { }
+            finally
+            {
+                try
+                {
+                    var panel = this.FindName("ToastPanel") as Border;
+                    if (panel != null) panel.Visibility = Visibility.Collapsed;
+                }
+                catch { }
+            }
+        }
+
+        private void OpenSingleReconciliationPopup(string reconciliationId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(reconciliationId)) return;
+                var where = $"r.ID = '{reconciliationId.Replace("'", "''")}'";
+
+                var targetView = new ReconciliationView(_reconciliationService, _offlineFirstService);
+                try { targetView.SyncCountryFromService(refresh: false); } catch { }
+                try { targetView.ApplySavedFilterSql(where); } catch { }
+                try { targetView.Refresh(); } catch { }
+
+                var win = new Window
+                {
+                    Title = $"Reconciliation - {reconciliationId}",
+                    Content = targetView,
+                    Owner = Window.GetWindow(this),
+                    Width = 1100,
+                    Height = 750,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner
+                };
+                targetView.CloseRequested += (s, e) => { try { win.Close(); } catch { } };
+                win.Show();
+            }
+            catch { }
+        }
+
+        private void ApplyOutputsToRow(ReconciliationViewData row, string outputs)
+        {
+            try
+            {
+                if (row == null || string.IsNullOrWhiteSpace(outputs)) return;
+                var parts = outputs.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+                int? newActionId = null;
+                foreach (var p in parts)
+                {
+                    var kv = p.Split(new[] { '=' }, 2);
+                    if (kv.Length != 2) continue;
+                    var key = kv[0].Trim();
+                    var val = kv[1].Trim();
+                    switch (key)
+                    {
+                        case "Action":
+                            if (int.TryParse(val, out var a)) { row.Action = a; newActionId = a; }
+                            break;
+                        case "KPI":
+                            if (int.TryParse(val, out var k)) row.KPI = k; break;
+                        case "IncidentType":
+                            if (int.TryParse(val, out var it)) row.IncidentType = it; break;
+                        case "RiskyItem":
+                            if (bool.TryParse(val, out var rb)) row.RiskyItem = rb; break;
+                        case "ReasonNonRisky":
+                            if (int.TryParse(val, out var rn)) row.ReasonNonRisky = rn; break;
+                        case "ToRemind":
+                            if (bool.TryParse(val, out var tr)) row.ToRemind = tr; break;
+                        case "ToRemindDays":
+                            if (int.TryParse(val, out var td))
+                            {
+                                try { row.ToRemindDate = DateTime.Today.AddDays(td); } catch { }
+                            }
+                            break;
+                    }
+                }
+
+                // If Action was set, ensure status is PENDING and date is today, unless action is N/A
+                if (newActionId.HasValue)
+                {
+                    try
+                    {
+                        var all = AllUserFields;
+                        var isNA = UserFieldUpdateService.IsActionNA(newActionId.Value, all);
+                        if (!isNA)
+                        {
+                            if (row.ActionStatus != false) row.ActionStatus = false; // PENDING
+                            row.ActionDate = DateTime.Now;
+                        }
+                        else
+                        {
+                            row.ActionStatus = null;
+                            row.ActionDate = null;
+                        }
+                    }
+                    catch { }
+                }
             }
             catch { }
         }
@@ -797,6 +1222,12 @@ namespace RecoTool.Windows
         {
             get => VM.FilterActionDateTo;
             set { VM.FilterActionDateTo = value; OnPropertyChanged(nameof(FilterActionDateTo)); ScheduleApplyFiltersDebounced(); }
+        }
+
+        public string FilterLastReviewed
+        {
+            get => VM.FilterLastReviewed;
+            set { VM.FilterLastReviewed = value == "All" ? null : value; OnPropertyChanged(nameof(FilterLastReviewed)); ScheduleApplyFiltersDebounced(); }
         }
 
         #endregion

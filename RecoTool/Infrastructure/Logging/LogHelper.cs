@@ -38,5 +38,23 @@ namespace RecoTool.Infrastructure.Logging
             }
             catch { /* swallow logging errors */ }
         }
+
+        public static void WriteRuleApplied(string origin, string countryId, string recoId, string ruleId, string outputs, string message)
+        {
+            try
+            {
+                var dir = EnsureAppDir();
+                var file = $"rules-{DateTime.Now.ToString("yyyyMMdd", CultureInfo.InvariantCulture)}.log";
+                var path = Path.Combine(dir, file);
+                var user = Environment.UserName;
+                var ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                // Columns: ts, user, origin(import/edit/run-now), country, recoId, ruleId, outputs, message
+                var safeOutputs = outputs?.Replace('\t', ' ');
+                var safeMsg = message?.Replace('\t', ' ');
+                var line = string.Join("\t", new[] { ts, user, origin ?? string.Empty, countryId ?? string.Empty, recoId ?? string.Empty, ruleId ?? string.Empty, safeOutputs ?? string.Empty, safeMsg ?? string.Empty });
+                File.AppendAllLines(path, new[] { line }, Encoding.UTF8);
+            }
+            catch { /* best-effort */ }
+        }
     }
 }

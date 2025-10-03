@@ -442,10 +442,15 @@ namespace RecoTool.Windows
                 AccountSide = r.AccountSide,
                 GuaranteeType = r.GuaranteeType,
                 TransactionType = r.TransactionType,
+                Booking = r.Booking,
                 HasDwingsLink = r.HasDwingsLink,
                 IsGrouped = r.IsGrouped,
                 IsAmountMatch = r.IsAmountMatch,
                 Sign = r.Sign,
+                // New DWINGS-related inputs
+                MTStatusAcked = r.MTStatusAcked,
+                CommIdEmail = r.CommIdEmail,
+                BgiStatusInitiated = r.BgiStatusInitiated,
                 // Time/state conditions
                 TriggerDateIsNull = r.TriggerDateIsNull,
                 DaysSinceTriggerMin = r.DaysSinceTriggerMin,
@@ -466,6 +471,8 @@ namespace RecoTool.Windows
                 OutputReasonNonRiskyId = r.OutputReasonNonRiskyId,
                 OutputToRemind = r.OutputToRemind,
                 OutputToRemindDays = r.OutputToRemindDays,
+                // New output
+                OutputFirstClaimToday = r.OutputFirstClaimToday,
                 ApplyTo = r.ApplyTo,
                 AutoApply = r.AutoApply,
                 Message = r.Message
@@ -486,6 +493,10 @@ namespace RecoTool.Windows
             target.IsGrouped = source.IsGrouped;
             target.IsAmountMatch = source.IsAmountMatch;
             target.Sign = source.Sign;
+            // New DWINGS-related inputs
+            target.MTStatusAcked = source.MTStatusAcked;
+            target.CommIdEmail = source.CommIdEmail;
+            target.BgiStatusInitiated = source.BgiStatusInitiated;
             // Time/state conditions
             target.TriggerDateIsNull = source.TriggerDateIsNull;
             target.DaysSinceTriggerMin = source.DaysSinceTriggerMin;
@@ -506,6 +517,8 @@ namespace RecoTool.Windows
             target.OutputReasonNonRiskyId = source.OutputReasonNonRiskyId;
             target.OutputToRemind = source.OutputToRemind;
             target.OutputToRemindDays = source.OutputToRemindDays;
+            // New output
+            target.OutputFirstClaimToday = source.OutputFirstClaimToday;
             target.ApplyTo = source.ApplyTo;
             target.AutoApply = source.AutoApply;
             target.Message = source.Message;

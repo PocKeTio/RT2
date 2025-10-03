@@ -82,6 +82,42 @@ namespace RecoTool.Windows
             }
         }
 
+        /// <summary>
+        /// Loads shared/global ToDo items from the referential database.
+        /// </summary>
+        private async Task LoadTodoListAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var refCs = _offlineFirstService?.ReferentialConnectionString ?? RecoTool.Properties.Settings.Default.ReferentialDB;
+                var todoSvc = new UserTodoListService(refCs);
+                try { await todoSvc.EnsureTableAsync().ConfigureAwait(false); } catch { }
+                var cid = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                cancellationToken.ThrowIfCancellationRequested();
+                var list = await todoSvc.ListAsync(cid).ConfigureAwait(false);
+
+                // Update on UI thread
+                if (Dispatcher != null && !Dispatcher.CheckAccess())
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        TodoItems.Clear();
+                        foreach (var it in list) TodoItems.Add(it);
+                        if (SelectedTodoItem != null && !TodoItems.Contains(SelectedTodoItem))
+                            SelectedTodoItem = TodoItems.FirstOrDefault();
+                    });
+                }
+                else
+                {
+                    TodoItems.Clear();
+                    foreach (var it in list) TodoItems.Add(it);
+                    if (SelectedTodoItem != null && !TodoItems.Contains(SelectedTodoItem))
+                        SelectedTodoItem = TodoItems.FirstOrDefault();
+                }
+            }
+            catch { }
+        }
+
         private void OpenInvoiceFinder_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -147,6 +183,10 @@ namespace RecoTool.Windows
                 _canRefresh = !value;
                 OnPropertyChanged(nameof(CanRefresh));
                 OnPropertyChanged(nameof(CanInteract));
+                OnPropertyChanged(nameof(CanEditTodo));
+                OnPropertyChanged(nameof(CanChangeAccount));
+                OnPropertyChanged(nameof(CanChangeStatus));
+                OnPropertyChanged(nameof(CanUseSavedControls));
             }
         }
 
@@ -163,6 +203,10 @@ namespace RecoTool.Windows
                     _isGlobalLockActive = value;
                     OnPropertyChanged(nameof(IsGlobalLockActive));
                     OnPropertyChanged(nameof(CanInteract));
+                    OnPropertyChanged(nameof(CanEditTodo));
+                    OnPropertyChanged(nameof(CanChangeAccount));
+                    OnPropertyChanged(nameof(CanChangeStatus));
+                    OnPropertyChanged(nameof(CanUseSavedControls));
                 }
             }
         }
@@ -247,6 +291,43 @@ namespace RecoTool.Windows
                 ApplyEmbeddedOrientation();
             }
         }
+
+        private ObservableCollection<TodoListItem> _todoItems;
+        private TodoListItem _selectedTodoItem;
+        private bool _isTodoMode;
+
+        public ObservableCollection<TodoListItem> TodoItems
+        {
+            get => _todoItems;
+            set { _todoItems = value; OnPropertyChanged(nameof(TodoItems)); }
+        }
+
+        public TodoListItem SelectedTodoItem
+        {
+            get => _selectedTodoItem;
+            set { _selectedTodoItem = value; OnPropertyChanged(nameof(SelectedTodoItem)); }
+        }
+
+        public bool IsTodoMode
+        {
+            get => _isTodoMode;
+            set
+            {
+                _isTodoMode = value;
+                OnPropertyChanged(nameof(IsTodoMode));
+                OnPropertyChanged(nameof(CanEditTodo));
+                OnPropertyChanged(nameof(CanChangeAccount));
+                OnPropertyChanged(nameof(CanChangeStatus));
+                OnPropertyChanged(nameof(CanUseSavedControls));
+                if (value) SelectedStatus = "Live";
+            }
+        }
+
+        public bool CanEditTodo => IsTodoMode && CanInteract;
+
+        public bool CanChangeAccount => CanInteract && !IsTodoMode;
+        public bool CanChangeStatus => CanInteract && !IsTodoMode;
+        public bool CanUseSavedControls => CanInteract && !IsTodoMode;
 
         // Propriétés et événements IRefreshable définis dans la section dédiée plus bas
 
@@ -380,8 +461,233 @@ namespace RecoTool.Windows
             Accounts = new ObservableCollection<string>();
             Statuses = new ObservableCollection<string>(new[] { "Live", "Archived" });
             SelectedStatus = "Live";
+            TodoItems = new ObservableCollection<TodoListItem>();
+            EditTodoName = string.Empty;
             
-            
+        }
+
+        // ToDo management state
+        private string _editTodoName;
+        public string EditTodoName
+        {
+            get => _editTodoName;
+            set { _editTodoName = value; OnPropertyChanged(nameof(EditTodoName)); }
+        }
+
+        /// <summary>
+        /// Reflect a ToDo item's mapping onto the header selections (filter, view, account).
+        /// </summary>
+        private void ReflectTodoToHeaderSelections(TodoListItem todo)
+        {
+            try
+            {
+                if (todo == null) return;
+                // Filter by name
+                try
+                {
+                    var combo = FindName("SavedFiltersComboBox") as ComboBox;
+                    if (combo != null && SavedFilters != null)
+                    {
+                        var target = SavedFilters.FirstOrDefault(f => string.Equals(f.UFI_Name, todo.TDL_FilterName, StringComparison.OrdinalIgnoreCase));
+                        if (target != null) combo.SelectedItem = target;
+                    }
+                }
+                catch { }
+
+                // View by name
+                try
+                {
+                    var combo = FindName("SavedViewsComboBox") as ComboBox;
+                    if (combo != null && SavedViews != null)
+                    {
+                        var target = SavedViews.FirstOrDefault(v => string.Equals(v.Name, todo.TDL_ViewName, StringComparison.OrdinalIgnoreCase));
+                        if (target != null) combo.SelectedItem = target;
+                    }
+                }
+                catch { }
+
+                // Account
+                try
+                {
+                    var country = _offlineFirstService?.CurrentCountry;
+                    var pivotId = country?.CNT_AmbrePivot;
+                    var recvId = country?.CNT_AmbreReceivable;
+                    if (!string.IsNullOrWhiteSpace(todo.TDL_Account))
+                    {
+                        if (todo.TDL_Account.StartsWith("Pivot", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(pivotId))
+                            SelectedAccount = $"Pivot ({pivotId})";
+                        else if (todo.TDL_Account.StartsWith("Receivable", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(recvId))
+                            SelectedAccount = $"Receivable ({recvId})";
+                        else
+                            SelectedAccount = todo.TDL_Account;
+                    }
+                }
+                catch { }
+            }
+            catch { }
+        }
+
+        private string GetSelectedFilterName()
+        {
+            try
+            {
+                var combo = FindName("SavedFiltersComboBox") as ComboBox;
+                if (combo?.SelectedItem is UserFilter uf) return uf.UFI_Name;
+            }
+            catch { }
+            return null;
+        }
+
+        private string GetSelectedViewName()
+        {
+            try
+            {
+                var combo = FindName("SavedViewsComboBox") as ComboBox;
+                if (combo?.SelectedItem is UserViewPreset vp) return vp.Name;
+            }
+            catch { }
+            return null;
+        }
+
+        private string GetSelectedAccountToken()
+        {
+            try
+            {
+                var v = SelectedAccount;
+                if (string.IsNullOrWhiteSpace(v)) return null;
+                if (v.StartsWith("Pivot", StringComparison.OrdinalIgnoreCase)) return "Pivot";
+                if (v.StartsWith("Receivable", StringComparison.OrdinalIgnoreCase)) return "Receivable";
+                return v;
+            }
+            catch { return null; }
+        }
+
+        private async void TodoAdd_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var name = (EditTodoName ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(name)) return;
+                var refCs = _offlineFirstService?.ReferentialConnectionString ?? RecoTool.Properties.Settings.Default.ReferentialDB;
+                var svc = new UserTodoListService(refCs);
+                try { await svc.EnsureTableAsync().ConfigureAwait(false); } catch { }
+                var cid = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                var item = new TodoListItem
+                {
+                    TDL_Name = name,
+                    TDL_FilterName = GetSelectedFilterName(),
+                    TDL_ViewName = GetSelectedViewName(),
+                    TDL_Account = GetSelectedAccountToken(),
+                    TDL_Order = (TodoItems != null && TodoItems.Any() ? (TodoItems.Max(x => x.TDL_Order ?? 0) + 1) : 1),
+                    TDL_Active = true,
+                    TDL_CountryId = cid
+                };
+                var id = await svc.UpsertAsync(item).ConfigureAwait(false);
+                await LoadTodoListAsync().ConfigureAwait(false);
+                try
+                {
+                    var saved = TodoItems.FirstOrDefault(x => string.Equals(x.TDL_Name, name, StringComparison.OrdinalIgnoreCase));
+                    if (saved != null)
+                    {
+                        SelectedTodoItem = saved;
+                        ReflectTodoToHeaderSelections(saved);
+                    }
+                }
+                catch { }
+            }
+            catch { }
+        }
+
+        private async void TodoSave_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var refCs = _offlineFirstService?.ReferentialConnectionString ?? RecoTool.Properties.Settings.Default.ReferentialDB;
+                var svc = new UserTodoListService(refCs);
+                try { await svc.EnsureTableAsync().ConfigureAwait(false); } catch { }
+                var cid = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                var name = (EditTodoName ?? string.Empty).Trim();
+                if (SelectedTodoItem == null)
+                {
+                    // Behave like Add
+                    if (string.IsNullOrWhiteSpace(name)) return;
+                    var itemNew = new TodoListItem
+                    {
+                        TDL_Name = name,
+                        TDL_FilterName = GetSelectedFilterName(),
+                        TDL_ViewName = GetSelectedViewName(),
+                        TDL_Account = GetSelectedAccountToken(),
+                        TDL_Order = (TodoItems != null && TodoItems.Any() ? (TodoItems.Max(x => x.TDL_Order ?? 0) + 1) : 1),
+                        TDL_Active = true,
+                        TDL_CountryId = cid
+                    };
+                    await svc.UpsertAsync(itemNew).ConfigureAwait(false);
+                }
+                else
+                {
+                    var item = new TodoListItem
+                    {
+                        TDL_id = SelectedTodoItem.TDL_id,
+                        TDL_Name = string.IsNullOrWhiteSpace(name) ? SelectedTodoItem.TDL_Name : name,
+                        TDL_FilterName = GetSelectedFilterName(),
+                        TDL_ViewName = GetSelectedViewName(),
+                        TDL_Account = GetSelectedAccountToken(),
+                        TDL_Order = SelectedTodoItem.TDL_Order,
+                        TDL_Active = true,
+                        TDL_CountryId = cid
+                    };
+                    await svc.UpsertAsync(item).ConfigureAwait(false);
+                }
+                await LoadTodoListAsync().ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    try
+                    {
+                        var saved = TodoItems.FirstOrDefault(x => string.Equals(x.TDL_Name, name, StringComparison.OrdinalIgnoreCase));
+                        if (saved != null)
+                        {
+                            SelectedTodoItem = saved;
+                            ReflectTodoToHeaderSelections(saved);
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        private async void TodoDelete_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var item = SelectedTodoItem;
+                if (item == null) return;
+                var refCs = _offlineFirstService?.ReferentialConnectionString ?? RecoTool.Properties.Settings.Default.ReferentialDB;
+                var svc = new UserTodoListService(refCs);
+                try { await svc.EnsureTableAsync().ConfigureAwait(false); } catch { }
+                if (item.TDL_id > 0)
+                {
+                    await svc.DeleteAsync(item.TDL_id).ConfigureAwait(false);
+                }
+                await LoadTodoListAsync().ConfigureAwait(false);
+                EditTodoName = string.Empty;
+            }
+            catch { }
+        }
+
+        private void TodoExit_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // Exit ToDo mode: re-enable selectors and clear the next-view filter
+                IsTodoMode = false;
+                _currentFilter = null;
+                _currentFilterName = null;
+                // Do not modify already opened views; they keep their state
+                // Optionally clear transient UI fields
+                // EditTodoName remains so the selection is preserved visually
+            }
+            catch { }
         }
 
         
@@ -434,6 +740,8 @@ namespace RecoTool.Windows
                     await LoadSavedFiltersAsync(cancellationToken).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                     await LoadSavedViewsAsync(cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await LoadTodoListAsync(cancellationToken).ConfigureAwait(false);
                 }
                 // Mettre à jour les filtres de haut de page à partir du référentiel pays
                 cancellationToken.ThrowIfCancellationRequested();
@@ -816,7 +1124,117 @@ namespace RecoTool.Windows
             catch (Exception ex) { }
         }
 
+        private async Task ApplyTodoToNextViewAsync(TodoListItem todo)
+        {
+            try
+            {
+                var refCs = _offlineFirstService?.ReferentialConnectionString ?? RecoTool.Properties.Settings.Default.ReferentialDB;
+                var curUser = _offlineFirstService?.CurrentUser ?? Environment.UserName;
+                var filterSvc = new UserFilterService(refCs, curUser);
+                string where = null;
+                try { where = filterSvc.LoadUserFilterWhere(todo?.TDL_FilterName); } catch { }
+                try { where = UserFilterService.SanitizeWhereClause(where); } catch { }
+
+                var country = _offlineFirstService?.CurrentCountry;
+                string accId = null;
+                var token = todo?.TDL_Account?.Trim();
+                if (!string.IsNullOrWhiteSpace(token))
+                {
+                    if (token.StartsWith("Pivot", StringComparison.OrdinalIgnoreCase)) accId = country?.CNT_AmbrePivot;
+                    else if (token.StartsWith("Receivable", StringComparison.OrdinalIgnoreCase)) accId = country?.CNT_AmbreReceivable;
+                    else accId = token;
+                }
+
+                var parts = new List<string>();
+                parts.Add("a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)");
+                if (!string.IsNullOrWhiteSpace(accId))
+                {
+                    var safe = accId?.Replace("'", "''");
+                    parts.Add($"a.Account_ID = '{safe}'");
+                }
+                var pred = RecoTool.Domain.Filters.FilterSqlHelper.ExtractNormalizedPredicate(where);
+                if (!string.IsNullOrWhiteSpace(pred)) parts.Add($"({pred})");
+
+                _currentFilter = "WHERE " + string.Join(" AND ", parts);
+                _currentFilterName = todo?.TDL_Name;
+
+                // Reflect header selections for child views
+                if (!string.IsNullOrWhiteSpace(token))
+                {
+                    if (token.StartsWith("Pivot", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(country?.CNT_AmbrePivot))
+                        SelectedAccount = $"Pivot ({country.CNT_AmbrePivot})";
+                    else if (token.StartsWith("Receivable", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(country?.CNT_AmbreReceivable))
+                        SelectedAccount = $"Receivable ({country.CNT_AmbreReceivable})";
+                    else
+                        SelectedAccount = accId;
+                }
+                SelectedStatus = "Live";
+
+                // Select view preset
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(todo?.TDL_ViewName) && SavedViews != null)
+                    {
+                        var preset = SavedViews.FirstOrDefault(v => string.Equals(v.Name, todo.TDL_ViewName, StringComparison.OrdinalIgnoreCase));
+                        if (preset != null) SelectedSavedView = preset;
+                    }
+                }
+                catch { }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Error applying ToDo: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Enables ToDo mode, applies the provided ToDo, and opens a reconciliation view accordingly.
+        /// Used when navigating from HomePage Todo cards.
+        /// </summary>
+        public async Task OpenViewForTodoAsync(TodoListItem todo)
+        {
+            try
+            {
+                IsTodoMode = true;
+                SelectedStatus = "Live";
+                if (TodoItems == null || TodoItems.Count == 0)
+                {
+                    await LoadTodoListAsync().ConfigureAwait(false);
+                }
+                if (todo != null)
+                {
+                    SelectedTodoItem = todo;
+                    await ApplyTodoToNextViewAsync(todo).ConfigureAwait(false);
+                }
+                await AwaitSafeToOpenViewAsync().ConfigureAwait(false);
+                await AddReconciliationView(false).ConfigureAwait(false);
+            }
+            catch { }
+        }
+
         #region Event Handlers
+
+
+        private async void TodoListComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            try
+            {
+                TodoListItem todo = null;
+                if (e?.AddedItems != null && e.AddedItems.Count > 0) todo = e.AddedItems[0] as TodoListItem;
+                if (todo == null) todo = SelectedTodoItem;
+                if (todo == null) return;
+                // In management context (not in ToDo mode), reflect mapping to header and textbox
+                EditTodoName = todo.TDL_Name;
+                ReflectTodoToHeaderSelections(todo);
+                OnPropertyChanged(nameof(EditTodoName));
+                // When in ToDo mode (coming from HomePage or explicit), applying selection updates next view filter
+                if (IsTodoMode)
+                {
+                    await ApplyTodoToNextViewAsync(todo);
+                }
+            }
+            catch { }
+        }
 
         private async void ReconciliationPage_Loaded(object sender, RoutedEventArgs e)
         {
@@ -1453,7 +1871,7 @@ namespace RecoTool.Windows
                 try { view.ApplySavedFilterSql(_currentFilter); } catch { }
                 if (!string.IsNullOrWhiteSpace(_currentFilterName))
                 {
-                    try { view.SetViewTitle(_currentFilterName); } catch { }
+                    try { view.SetViewTitle(_currentFilterName, true); } catch { }
                     _ = System.Threading.Tasks.Task.Run(async () =>
                     {
                         try
@@ -1476,7 +1894,8 @@ namespace RecoTool.Windows
             }
 
             // Appliquer layout/titre issu de la Saved View sélectionnée (layout-only)
-            if (SelectedSavedView != null && !string.IsNullOrWhiteSpace(SelectedSavedView.Name))
+            // IMPORTANT: ne pas écraser le titre issu d'un ToDo ouvert
+            if (string.IsNullOrWhiteSpace(_currentFilterName) && SelectedSavedView != null && !string.IsNullOrWhiteSpace(SelectedSavedView.Name))
             {
                 try { view.SetViewTitle(SelectedSavedView.Name); } catch { }
                 _ = System.Threading.Tasks.Task.Run(async () =>

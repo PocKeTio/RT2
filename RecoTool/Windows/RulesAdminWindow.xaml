@@ -142,6 +142,13 @@
                                         ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
                 <DataGridCheckBoxColumn Header="IsAmountMatch" Binding="{Binding IsAmountMatch, UpdateSourceTrigger=PropertyChanged}" Width="120"
                                         ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
+                <!-- New DWINGS-derived inputs -->
+                <DataGridCheckBoxColumn Header="MT Acked" Binding="{Binding MTStatusAcked, UpdateSourceTrigger=PropertyChanged}" Width="90"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
+                <DataGridCheckBoxColumn Header="COMM ID EMAIL" Binding="{Binding CommIdEmail, UpdateSourceTrigger=PropertyChanged}" Width="140"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
+                <DataGridCheckBoxColumn Header="BGI Initiated" Binding="{Binding BgiStatusInitiated, UpdateSourceTrigger=PropertyChanged}" Width="120"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
                 <DataGridTemplateColumn Header="CurrentAction" Width="140">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
@@ -278,6 +285,9 @@
                 <DataGridCheckBoxColumn Header="Out.ToRemind" Binding="{Binding OutputToRemind, UpdateSourceTrigger=PropertyChanged}" Width="110"
                                         ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
                 <DataGridTextColumn Header="Out.ToRemindDays" Binding="{Binding OutputToRemindDays, UpdateSourceTrigger=PropertyChanged}" Width="130"/>
+                <!-- New output: set FirstClaimDate to today -->
+                <DataGridCheckBoxColumn Header="Out.FirstClaimToday" Binding="{Binding OutputFirstClaimToday, UpdateSourceTrigger=PropertyChanged}" Width="160"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
                 <DataGridTemplateColumn Header="ApplyTo" Width="100">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>

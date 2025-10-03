@@ -200,6 +200,12 @@ namespace RecoTool.UI.ViewModels
             set { if (CurrentFilter.Status != value) { CurrentFilter.Status = value; OnPropertyChanged(); } }
         }
 
+        public string FilterLastReviewed
+        {
+            get => CurrentFilter.LastReviewed;
+            set { if (CurrentFilter.LastReviewed != value) { CurrentFilter.LastReviewed = value; OnPropertyChanged(); } }
+        }
+
         /// <summary>
         /// Apply filters held in CurrentFilter to the provided dataset.
         /// If excludeTransactionType is true, the TransactionTypeId step is skipped (used to refresh options).
@@ -321,11 +327,44 @@ namespace RecoTool.UI.ViewModels
             // Action Done and Action Date
             if (f.ActionDone.HasValue)
             {
-                if (f.ActionDone.Value) q = q.Where(x => x.ActionStatus == true);
-                else q = q.Where(x => x.ActionStatus == false);
+                if (f.ActionDone.Value) 
+                {
+                    // Done = ActionStatus is true
+                    q = q.Where(x => x.ActionStatus == true);
+                }
+                else 
+                {
+                    // Pending = has Action AND ActionStatus is false (or null)
+                    q = q.Where(x => x.Action.HasValue && (x.ActionStatus == false || !x.ActionStatus.HasValue));
+                }
             }
             if (f.ActionDateFrom.HasValue) q = q.Where(x => x.ActionDate.HasValue && x.ActionDate.Value >= f.ActionDateFrom.Value);
             if (f.ActionDateTo.HasValue) q = q.Where(x => x.ActionDate.HasValue && x.ActionDate.Value <= f.ActionDateTo.Value);
+
+            // Last Reviewed filter (based on ActionStatus = Done and ActionDate)
+            if (!string.IsNullOrWhiteSpace(f.LastReviewed))
+            {
+                var today = DateTime.Today;
+                switch (f.LastReviewed)
+                {
+                    case "Never":
+                        // Not reviewed = no action or action status is Pending
+                        q = q.Where(x => !x.Action.HasValue || x.ActionStatus != true);
+                        break;
+                    case "Today":
+                        // Reviewed today = ActionStatus Done today
+                        q = q.Where(x => x.ActionStatus == true && x.ActionDate.HasValue && x.ActionDate.Value.Date == today);
+                        break;
+                    case "1week":
+                        var oneWeekAgo = today.AddDays(-7);
+                        q = q.Where(x => x.ActionStatus == true && x.ActionDate.HasValue && x.ActionDate.Value.Date >= oneWeekAgo);
+                        break;
+                    case "1month":
+                        var oneMonthAgo = today.AddMonths(-1);
+                        q = q.Where(x => x.ActionStatus == true && x.ActionDate.HasValue && x.ActionDate.Value.Date >= oneMonthAgo);
+                        break;
+                }
+            }
 
             return q.ToList();
         }

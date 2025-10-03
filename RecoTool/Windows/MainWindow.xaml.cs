@@ -1304,6 +1304,39 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
         }
 
         /// <summary>
+        /// Opens the Reconciliation page and immediately sets ToDo mode with the provided ToDo item,
+        /// then opens a view for that ToDo.
+        /// </summary>
+        public async Task OpenReconciliationWithTodoAsync(TodoListItem todo)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(_currentCountryId))
+                {
+                    ShowWarning("Selection required", "Please select a country before accessing reconciliation.");
+                    return;
+                }
+
+                Mouse.OverrideCursor = Cursors.Wait;
+                var reconciliationPage = App.ServiceProvider.GetRequiredService<ReconciliationPage>();
+                try { reconciliationPage.IsLoading = true; } catch { }
+                NavigateToPage(reconciliationPage);
+                UpdateNavigationButtons("Reconciliation");
+                // Allow the page to initialize, then apply ToDo and open a view
+                await WaitForCurrentPageRefreshAsync(TimeSpan.FromSeconds(10));
+                await reconciliationPage.OpenViewForTodoAsync(todo);
+            }
+            catch (Exception ex)
+            {
+                ShowError("Navigation error", $"Unable to open reconciliation page for ToDo: {ex.Message}");
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+        }
+
+        /// <summary>
         /// Import de fichier Ambre
         /// </summary>
         private async void ImportButton_Click(object sender, RoutedEventArgs e)

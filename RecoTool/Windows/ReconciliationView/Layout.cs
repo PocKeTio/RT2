@@ -142,36 +142,36 @@ namespace RecoTool.Windows
             catch { }
         }
 
-        private void ResultsDataGrid_PreviewMouseRightButtonUp(object sender, MouseButtonEventArgs e)
-        {
-            try
-            {
-                var dg = sender as DataGrid;
-                if (dg == null) return;
-                var dep = e.OriginalSource as DependencyObject;
-                var header = VisualTreeHelpers.FindAncestor<DataGridColumnHeader>(dep);
-                if (header != null)
-                {
-                    e.Handled = true;
-                    var cm = new ContextMenu();
-                    foreach (var col in dg.Columns)
-                    {
-                        var mi = new MenuItem { Header = Convert.ToString(col.Header), IsCheckable = true, IsChecked = col.Visibility == Visibility.Visible };
-                        mi.Click += (s, ev) =>
-                        {
-                            try
-                            {
-                                col.Visibility = mi.IsChecked ? Visibility.Visible : Visibility.Collapsed;
-                            }
-                            catch { }
-                        };
-                        cm.Items.Add(mi);
-                    }
-                    cm.IsOpen = true;
-                }
-            }
-            catch { }
-        }
+        //private void ResultsDataGrid_PreviewMouseRightButtonUp(object sender, MouseButtonEventArgs e)
+        //{
+        //    try
+        //    {
+        //        var dg = sender as DataGrid;
+        //        if (dg == null) return;
+        //        var dep = e.OriginalSource as DependencyObject;
+        //        var header = VisualTreeHelpers.FindAncestor<DataGridColumnHeader>(dep);
+        //        if (header != null)
+        //        {
+        //            e.Handled = true;
+        //            var cm = new ContextMenu();
+        //            foreach (var col in dg.Columns)
+        //            {
+        //                var mi = new MenuItem { Header = Convert.ToString(col.Header), IsCheckable = true, IsChecked = col.Visibility == Visibility.Visible };
+        //                mi.Click += (s, ev) =>
+        //                {
+        //                    try
+        //                    {
+        //                        col.Visibility = mi.IsChecked ? Visibility.Visible : Visibility.Collapsed;
+        //                    }
+        //                    catch { }
+        //                };
+        //                cm.Items.Add(mi);
+        //            }
+        //            cm.IsOpen = true;
+        //        }
+        //    }
+        //    catch { }
+        //}
 
         // Public helper to apply a saved grid layout from its JSON representation.
         public void ApplyLayoutJson(string layoutJson)

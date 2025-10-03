@@ -60,14 +60,23 @@ namespace RecoTool.Windows
                 // Always export to XLSX
                 ExportToExcel(path, headers, columns, items);
 
-                UpdateStatusInfo($"Exported {items.Count} rows to {path}");
-                LogAction("Export", $"{items.Count} rows to {path}");
-                // English success message
-                MessageBox.Show("Export completed successfully.", "Export", MessageBoxButton.OK, MessageBoxImage.Information);
+                // Verify file exists before showing success
+                if (System.IO.File.Exists(path))
+                {
+                    UpdateStatusInfo($"Exported {items.Count} rows to {path}");
+                    LogAction("Export", $"{items.Count} rows to {path}");
+                    MessageBox.Show("Export completed successfully.", "Export", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                else
+                {
+                    throw new Exception("Export failed: file was not created. Please check Excel is installed and you have write permissions.");
+                }
             }
             catch (Exception ex)
             {
                 ShowError($"Export error: {ex.Message}");
+                LogAction("ExportError", ex.ToString());
+                System.Diagnostics.Debug.WriteLine($"Export exception details: {ex}");
             }
             finally
             {
@@ -105,6 +114,7 @@ namespace RecoTool.Windows
             Microsoft.Office.Interop.Excel.Worksheet ws = null;
             var CalculationState = Microsoft.Office.Interop.Excel.XlCalculation.xlCalculationAutomatic;
             bool prevScreenUpdating = true, prevEnableEvents = true;
+            bool saveSucceeded = false;
             try
             {
                 app = new Microsoft.Office.Interop.Excel.Application { Visible = false, DisplayAlerts = false };
@@ -185,6 +195,7 @@ namespace RecoTool.Windows
                 // Autofit
                 ws.Columns.AutoFit();
                 wb.SaveAs(filePath, Microsoft.Office.Interop.Excel.XlFileFormat.xlOpenXMLWorkbook);
+                saveSucceeded = true;
             }
             finally
             {
@@ -230,6 +241,12 @@ namespace RecoTool.Windows
 
                 System.GC.Collect();
                 System.GC.WaitForPendingFinalizers();
+            }
+
+            // Verify file was actually created
+            if (!saveSucceeded)
+            {
+                throw new Exception("Failed to save Excel file. Please verify Excel is installed and the path is writable.");
             }
         }
 

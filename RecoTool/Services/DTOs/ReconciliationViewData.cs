@@ -28,6 +28,8 @@ namespace RecoTool.Services.DTOs
                 {
                     _action = value;
                     OnPropertyChanged(nameof(Action));
+                    // Notify dependent properties
+                    OnPropertyChanged(nameof(IsToReview));
                 }
             }
         }
@@ -123,6 +125,10 @@ namespace RecoTool.Services.DTOs
                 {
                     _actionStatus = value;
                     OnPropertyChanged(nameof(ActionStatus));
+                    // Notify dependent properties
+                    OnPropertyChanged(nameof(IsReviewedToday));
+                    OnPropertyChanged(nameof(IsToReview));
+                    OnPropertyChanged(nameof(IsReviewed));
                 }
             }
         }
@@ -136,9 +142,14 @@ namespace RecoTool.Services.DTOs
                 {
                     _actionDate = value;
                     OnPropertyChanged(nameof(ActionDate));
+                    // Notify dependent properties
+                    OnPropertyChanged(nameof(IsReviewedToday));
                 }
             }
         }
+        // DEPRECATED: ReviewDate removed - use ActionStatus/ActionDate instead
+        // ToReview = Action.HasValue && ActionStatus != true
+        // Reviewed = ActionStatus == true
         private int? _incidentType;
         public int? IncidentType
         {
@@ -165,8 +176,32 @@ namespace RecoTool.Services.DTOs
                 }
             }
         }
-        public bool RiskyItem { get; set; }
-        public int? ReasonNonRisky { get; set; }
+        private bool _riskyItem;
+        public bool RiskyItem
+        {
+            get => _riskyItem;
+            set
+            {
+                if (_riskyItem != value)
+                {
+                    _riskyItem = value;
+                    OnPropertyChanged(nameof(RiskyItem));
+                }
+            }
+        }
+        private int? _reasonNonRisky;
+        public int? ReasonNonRisky
+        {
+            get => _reasonNonRisky;
+            set
+            {
+                if (_reasonNonRisky != value)
+                {
+                    _reasonNonRisky = value;
+                    OnPropertyChanged(nameof(ReasonNonRisky));
+                }
+            }
+        }
         // ModifiedBy from T_Reconciliation (avoid collision with BaseEntity.ModifiedBy coming from Ambre)
         public string Reco_ModifiedBy { get; set; }
 
@@ -350,6 +385,21 @@ namespace RecoTool.Services.DTOs
                 }
             }
         }
+
+        /// <summary>
+        /// Indicates if this row was reviewed today (based on ActionDate when status = Done)
+        /// </summary>
+        public bool IsReviewedToday => ActionStatus == true && ActionDate.HasValue && ActionDate.Value.Date == DateTime.Today;
+
+        /// <summary>
+        /// Indicates if this row is "To Review" (has an action but status is Pending)
+        /// </summary>
+        public bool IsToReview => Action.HasValue && (ActionStatus == false || !ActionStatus.HasValue);
+
+        /// <summary>
+        /// Indicates if this row is "Reviewed" (action status is Done)
+        /// </summary>
+        public bool IsReviewed => ActionStatus == true;
     }
 
     #endregion

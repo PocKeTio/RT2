@@ -10,19 +10,45 @@
         </Grid.RowDefinitions>
 
         <DockPanel Grid.Row="0" Margin="10">
-            <TextBlock Text="Receivable with Action = TRIGGER and Status = PENDING" FontWeight="Bold" FontSize="14"/>
+            <TextBlock Text="Receivable with Action = TRIGGER - Fill Payment Reference if empty" FontWeight="Bold" FontSize="14"/>
         </DockPanel>
 
         <DataGrid x:Name="GridReconciliations" Grid.Row="1" Margin="10" AutoGenerateColumns="False"
-                  IsReadOnly="True" SelectionMode="Extended">
+                  IsReadOnly="False" SelectionMode="Extended" CanUserAddRows="False" CanUserDeleteRows="False">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="ID" Binding="{Binding ID}" Width="*" MinWidth="120"/>
-                <DataGridTextColumn Header="DWINGS_GuaranteeID" Binding="{Binding DWINGS_GuaranteeID}" Width="*" MinWidth="120"/>
-                <DataGridTextColumn Header="DWINGS_InvoiceID" Binding="{Binding DWINGS_InvoiceID}" Width="*" MinWidth="120"/>
-                <DataGridTextColumn Header="DWINGS_BGPMT" Binding="{Binding DWINGS_BGPMT}" Width="*" MinWidth="120"/>
-                <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="100"/>
-                <DataGridTextColumn Header="Assignee" Binding="{Binding Assignee}" Width="120"/>
-                <DataGridTextColumn Header="Comments" Binding="{Binding Comments}" Width="200"/>
+                <DataGridTextColumn Header="DWINGS Guarantee" Binding="{Binding DWINGS_GuaranteeID}" Width="150" IsReadOnly="True"/>
+                <DataGridTextColumn Header="DWINGS Invoice ID" Binding="{Binding DWINGS_InvoiceID}" Width="150" IsReadOnly="True"/>
+                <DataGridTextColumn Header="DWINGS BGPMT" Binding="{Binding DWINGS_BGPMT}" Width="120" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Amount" Binding="{Binding Amount, StringFormat=N2}" Width="120" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Currency" Binding="{Binding Currency}" Width="80" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Comments" Binding="{Binding Comments}" Width="200" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Payment Reference" Binding="{Binding PaymentReference, UpdateSourceTrigger=PropertyChanged}" Width="150">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PaymentReference}" Value="">
+                                    <Setter Property="Background" Value="Yellow"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding PaymentReference}" Value="{x:Null}">
+                                    <Setter Property="Background" Value="Yellow"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                    <DataGridTextColumn.EditingElementStyle>
+                        <Style TargetType="TextBox">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PaymentReference}" Value="">
+                                    <Setter Property="Background" Value="Yellow"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding PaymentReference}" Value="{x:Null}">
+                                    <Setter Property="Background" Value="Yellow"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGridTextColumn.EditingElementStyle>
+                </DataGridTextColumn>
+                <DataGridCheckBoxColumn Header="Grouped" Binding="{Binding IsGrouped}" Width="80" IsReadOnly="True"/>
             </DataGrid.Columns>
         </DataGrid>
 

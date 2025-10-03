@@ -134,6 +134,7 @@ namespace RecoTool.Services
                             CREDITOR_PARTY_NAME = TryToStringSafe(rd, "CREDITOR_PARTY_NAME"),
                             MT_STATUS = TryToStringSafe(rd, "MT_STATUS"),
                             ERROR_MESSAGE = TryToStringSafe(rd, "ERROR_MESSAGE"),
+                            COMM_ID_EMAIL = TryToBool(TryGet(rd, "COMM_ID_EMAIL")),
                         });
                     }
                 }
@@ -196,6 +197,27 @@ namespace RecoTool.Services
         {
             if (o == null || o == DBNull.Value) return null;
             try { return Convert.ToDateTime(o, CultureInfo.InvariantCulture); } catch { return null; }
+        }
+
+        private static bool? TryToBool(object o)
+        {
+            if (o == null || o == DBNull.Value) return null;
+            try
+            {
+                if (o is bool b) return b;
+                // Access can store YESNO as -1 (true) / 0 (false)
+                if (o is sbyte sb) return sb != 0;
+                if (o is short s) return s != 0;
+                if (o is int i) return i != 0;
+                if (o is long l) return l != 0;
+                var sVal = Convert.ToString(o)?.Trim();
+                if (string.IsNullOrEmpty(sVal)) return null;
+                if (string.Equals(sVal, "true", StringComparison.OrdinalIgnoreCase)) return true;
+                if (string.Equals(sVal, "false", StringComparison.OrdinalIgnoreCase)) return false;
+                if (int.TryParse(sVal, out var iv)) return iv != 0;
+                return null;
+            }
+            catch { return null; }
         }
 
         private static string TryToStringSafe(DbDataReader rd, string column)

@@ -36,6 +36,10 @@ namespace RecoTool.Models
         // Trigger date
         public DateTime? TriggerDate { get; set; }
 
+        // DEPRECATED: ReviewDate removed - use ActionStatus instead
+        // ToReview = Action.HasValue && ActionStatus != true
+        // Reviewed = ActionStatus == true
+
         // Action workflow status: false => PENDING, true => DONE
         public bool? ActionStatus { get; set; }
         // Date of status modification (set when Action is set or status changes)

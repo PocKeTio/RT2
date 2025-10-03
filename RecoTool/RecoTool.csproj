@@ -79,6 +79,7 @@
     <Compile Include="App.xaml.cs">
       <DependentUpon>App.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Models\TodoListItem.cs" />
     <Compile Include="Services\Ambre\AmbreConfigurationLoader.cs" />
     <Compile Include="Services\Ambre\AmbreDatabaseSynchronizer.cs" />
     <Compile Include="Services\Ambre\AmbreDataProcessor.cs" />
@@ -87,6 +88,7 @@
     <Compile Include="Services\Ambre\AmbreReconciliationUpdater.cs" />
     <Compile Include="Services\Ambre\DwingsReferenceResolver.cs" />
     <Compile Include="Infrastructure\DataAccess\DbConn.cs" />
+    <Compile Include="Services\Analytics\DashboardAnalyticsService.cs" />
     <Compile Include="Services\Rules\RulesEngine.cs" />
     <Compile Include="Services\Rules\TruthRule.cs" />
     <Compile Include="Services\Rules\TruthTableRepository.cs" />
@@ -114,9 +116,10 @@
     <Compile Include="Services\DwingsService.cs" />
     <Compile Include="Services\KpiSnapshotService.cs" />
     <Compile Include="Services\LookupService.cs" />
-    <Compile Include="Services\Rules\ReconciliationRules.cs" />
     <Compile Include="Services\ReferentialService.cs" />
     <Compile Include="Services\Queries\ReconciliationViewQueryBuilder.cs" />
+    <Compile Include="Services\ThemeManager.cs" />
+    <Compile Include="Services\UserTodoListService.cs" />
     <Compile Include="Services\UserViewPreferenceService.cs" />
     <Compile Include="Services\OptionsService.cs" />
     <Compile Include="Services\SyncMonitorService.cs" />
@@ -128,6 +131,10 @@
     <Compile Include="Windows\CommentsDialog.xaml.cs">
       <DependentUpon>CommentsDialog.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Windows\HomePage.Converters.cs" />
+    <Compile Include="Windows\HomePage.Currency.hook.cs" />
+    <Compile Include="Windows\HomePage.Currency.props.cs" />
+    <Compile Include="Windows\HomePage.Todo.cs" />
     <Compile Include="Windows\Interface\IRefreshable.cs" />
     <Compile Include="Windows\InvoiceFinderWindow.xaml.cs">
       <DependentUpon>InvoiceFinderWindow.xaml</DependentUpon>

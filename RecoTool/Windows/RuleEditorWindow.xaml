@@ -216,6 +216,16 @@
 
                                 <Label ToolTip="Yes, No, or — (None) to ignore.">Is First Claim</Label>
                                 <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.IsFirstRequest, UpdateSourceTrigger=PropertyChanged}"/>
+
+                                <!-- New DWINGS-derived inputs -->
+                                <Label ToolTip="Yes, No, or — (None) to ignore.">MT Status = ACKED</Label>
+                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.MTStatusAcked, UpdateSourceTrigger=PropertyChanged}"/>
+
+                                <Label ToolTip="Yes, No, or — (None) to ignore.">COMM ID EMAIL</Label>
+                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.CommIdEmail, UpdateSourceTrigger=PropertyChanged}"/>
+
+                                <Label ToolTip="Yes, No, or — (None) to ignore.">BGI Status = INITIATED</Label>
+                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.BgiStatusInitiated, UpdateSourceTrigger=PropertyChanged}"/>
                             </StackPanel>
 
                             <StackPanel Grid.Column="2" Margin="12,0,0,0">
@@ -310,6 +320,10 @@
 
                                 <Label ToolTip="Number of days until reminder.">To Remind (days)</Label>
                                 <TextBox x:Name="ToRemindDaysBox" Text="{Binding EditedRule.OutputToRemindDays, UpdateSourceTrigger=PropertyChanged}" PreviewTextInput="NumberOnly_PreviewTextInput" DataObject.Pasting="NumberOnly_Pasting" ToolTip="Number of days until reminder."/>
+
+                                <!-- New output: set FirstClaimDate to today when true -->
+                                <Label ToolTip="If Yes, set FirstClaimDate to today (no change if No or —).">First Claim Date = Today</Label>
+                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.OutputFirstClaimToday, UpdateSourceTrigger=PropertyChanged}"/>
                             </StackPanel>
                         </Grid>
                     </Border>

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Data;
@@ -35,12 +36,9 @@ namespace RecoTool.Windows
         private bool _isLoading;
         private bool _canRefresh = true;
         private List<ReconciliationViewData> _reconciliationViewData;
-        private bool _usingSnapshot;
-        private DateTime? _selectedSnapshotDate;
-        private List<DateTime> _availableSnapshotDates;
         private Brush _defaultBackground;
         
-        // Champs pour les propriétés de binding
+        // Champs pour les propriÃ©tÃ©s de binding
         private List<Country> _availableCountries;
         private int _missingInvoicesCount;
         private int _paidButNotReconciledCount;
@@ -55,7 +53,7 @@ namespace RecoTool.Windows
         private string _statusMessage;
         private string _lastUpdateTime;
         
-        // Champs pour les propriétés de graphiques manquantes
+        // Champs pour les propriÃ©tÃ©s de graphiques manquantes
         private ChartValues<double> _receivableChartData;
         private ChartValues<double> _pivotChartData;
         private List<string> _actionLabels;
@@ -66,6 +64,147 @@ namespace RecoTool.Windows
         private List<string> _deletionDelayLabels;
         private SeriesCollection _newDeletedDailySeries;
         private List<string> _newDeletedDailyLabels;
+        // New: Receivable vs Pivot by Currency
+        private SeriesCollection _receivablePivotByCurrencySeries;
+        private List<string> _receivablePivotByCurrencyLabels;
+        // ToDo cards (name + Live count and share of total Live)
+        public sealed class TodoCard
+        {
+            public TodoListItem Item { get; set; }
+            public int Count { get; set; }           // To Review (Action Pending)
+            public int ReviewedCount { get; set; }   // Reviewed (Action Done)
+            public int ActualTotal { get; set; }     // Real total from DB (includes items without action)
+            public double Percent { get; set; }
+            public string AccountLabel { get; set; }
+            public string AmountsText { get; set; }
+            
+            // Total displayed = To Review + Reviewed (items with action only)
+            // Note: ActualTotal may be higher if there are items without action
+            public int TotalCount => Count + ReviewedCount;
+        }
+
+        /// <summary>
+        /// Build a side-by-side column chart of Receivable vs Pivot by Currency (top 10 by total magnitude).
+        /// Avoids summing different currencies together by keeping each currency as its own category.
+        /// </summary>
+        private void UpdateReceivablePivotByCurrencyChart()
+        {
+            try
+            {
+                if (_reconciliationViewData == null || !_reconciliationViewData.Any())
+                {
+                    ReceivablePivotByCurrencySeries = new SeriesCollection();
+                    ReceivablePivotByCurrencyLabels = new List<string>();
+                    return;
+                }
+
+                var currentCountry = _offlineFirstService?.CurrentCountry;
+                if (currentCountry == null)
+                {
+                    ReceivablePivotByCurrencySeries = new SeriesCollection();
+                    ReceivablePivotByCurrencyLabels = new List<string>();
+                    return;
+                }
+
+                var receivableId = currentCountry.CNT_AmbreReceivable;
+                var pivotId = currentCountry.CNT_AmbrePivot;
+
+                var grouped = _reconciliationViewData
+                    .Where(r => !string.IsNullOrWhiteSpace(r.CCY) && r.SignedAmount != 0)
+                    .GroupBy(r => r.CCY.Trim().ToUpperInvariant())
+                    .Select(g => new
+                    {
+                        CCY = g.Key,
+                        RecAmount = g.Where(x => x.Account_ID == receivableId).Sum(x => Math.Abs(x.SignedAmount)),
+                        PivAmount = g.Where(x => x.Account_ID == pivotId).Sum(x => Math.Abs(x.SignedAmount))
+                    })
+                    .OrderByDescending(x => x.RecAmount + x.PivAmount)
+                    .Take(10)
+                    .ToList();
+
+                if (!grouped.Any())
+                {
+                    ReceivablePivotByCurrencySeries = new SeriesCollection();
+                    ReceivablePivotByCurrencyLabels = new List<string>();
+                    return;
+                }
+
+                var labels = grouped.Select(x => x.CCY).ToList();
+                var recValues = new ChartValues<double>(grouped.Select(x => Convert.ToDouble(x.RecAmount)));
+                var pivValues = new ChartValues<double>(grouped.Select(x => Convert.ToDouble(x.PivAmount)));
+
+                var series = new SeriesCollection
+                {
+                    new ColumnSeries { Title = "Receivable", Values = recValues, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N2") },
+                    new ColumnSeries { Title = "Pivot", Values = pivValues, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N2") }
+                };
+
+                ReceivablePivotByCurrencyLabels = labels;
+                ReceivablePivotByCurrencySeries = series;
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Error updating Receivable vs Pivot by Currency: {ex.Message}");
+                ReceivablePivotByCurrencySeries = new SeriesCollection();
+                ReceivablePivotByCurrencyLabels = new List<string>();
+            }
+        }
+        private ObservableCollection<TodoCard> _todoCards;
+        public ObservableCollection<TodoCard> TodoCards
+        {
+            get => _todoCards;
+            set { _todoCards = value; OnPropertyChanged(); }
+        }
+
+        // Analytics properties
+        private ObservableCollection<Services.Analytics.AlertItem> _alertItems;
+        public ObservableCollection<Services.Analytics.AlertItem> AlertItems
+        {
+            get => _alertItems;
+            set { _alertItems = value; OnPropertyChanged(); }
+        }
+
+        private ObservableCollection<Services.Analytics.AssigneeStats> _assigneeLeaderboard;
+        public ObservableCollection<Services.Analytics.AssigneeStats> AssigneeLeaderboard
+        {
+            get => _assigneeLeaderboard;
+            set { _assigneeLeaderboard = value; OnPropertyChanged(); }
+        }
+
+        private Services.Analytics.CompletionEstimate _completionEstimate;
+        public Services.Analytics.CompletionEstimate CompletionEstimate
+        {
+            get => _completionEstimate;
+            set { _completionEstimate = value; OnPropertyChanged(); }
+        }
+
+        private SeriesCollection _reviewTrendSeries;
+        public SeriesCollection ReviewTrendSeries
+        {
+            get => _reviewTrendSeries;
+            set { _reviewTrendSeries = value; OnPropertyChanged(); }
+        }
+
+        private List<string> _reviewTrendLabels;
+        public List<string> ReviewTrendLabels
+        {
+            get => _reviewTrendLabels;
+            set { _reviewTrendLabels = value; OnPropertyChanged(); }
+        }
+
+        private SeriesCollection _matchedRateTrendSeries;
+        public SeriesCollection MatchedRateTrendSeries
+        {
+            get => _matchedRateTrendSeries;
+            set { _matchedRateTrendSeries = value; OnPropertyChanged(); }
+        }
+
+        private List<string> _matchedRateTrendLabels;
+        public List<string> MatchedRateTrendLabels
+        {
+            get => _matchedRateTrendLabels;
+            set { _matchedRateTrendLabels = value; OnPropertyChanged(); }
+        }
 
         public event PropertyChangedEventHandler PropertyChanged;
 
@@ -80,143 +219,29 @@ namespace RecoTool.Windows
             _defaultBackground = MainScrollViewer?.Background;
         }
 
+        private async void OpenTodoCard_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (sender is Button btn && btn.DataContext is TodoCard card && card?.Item != null)
+                {
+                    var win = Window.GetWindow(this) as MainWindow;
+                    if (win == null) return;
+                    await win.OpenReconciliationWithTodoAsync(card.Item);
+                }
+            }
+            catch { }
+        }
+
         private async void UserControl_Loaded(object sender, RoutedEventArgs e)
         {
-            await RefreshSnapshotDatePickerAsync();
+            // Clear cache to ensure fresh data when navigating to dashboard
+            _reconciliationService?.ClearViewCache();
         }
+
 
         /// <summary>
-        /// Load available snapshot dates for current country and restrict DatePicker to only those dates.
-        /// </summary>
-        private async Task RefreshSnapshotDatePickerAsync()
-        {
-            try
-            {
-                if ((_reconciliationService == null && _kpiSnapshotService == null) || string.IsNullOrWhiteSpace(CurrentCountryId) || SnapshotDatePicker == null)
-                    return;
-
-                if (_kpiSnapshotService == null && _offlineFirstService != null && _reconciliationService != null)
-                    _kpiSnapshotService = new KpiSnapshotService(_offlineFirstService, _reconciliationService);
-                var dates = await _kpiSnapshotService.GetKpiSnapshotDatesAsync(CurrentCountryId);
-                _availableSnapshotDates = dates ?? new List<DateTime>();
-
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    // Reset picker config
-                    SnapshotDatePicker.BlackoutDates.Clear();
-
-                    if (_availableSnapshotDates.Count == 0)
-                    {
-                        SnapshotDatePicker.DisplayDateStart = null;
-                        SnapshotDatePicker.DisplayDateEnd = null;
-                        SnapshotDatePicker.IsEnabled = false;
-                        return;
-                    }
-
-                    SnapshotDatePicker.IsEnabled = true;
-
-                    var min = _availableSnapshotDates.Min();
-                    var max = _availableSnapshotDates.Max();
-                    SnapshotDatePicker.DisplayDateStart = min;
-                    SnapshotDatePicker.DisplayDateEnd = max;
-                    // Ensure calendar opens around a valid date
-                    SnapshotDatePicker.DisplayDate = _selectedSnapshotDate ?? max;
-
-                    // Build blackout ranges to exclude all days not present in the allowed set between min and max
-                    var allowed = new HashSet<DateTime>(_availableSnapshotDates.Select(d => d.Date));
-                    DateTime cursor = min.Date;
-                    DateTime? blackoutStart = null;
-                    while (cursor <= max.Date)
-                    {
-                        bool isAllowed = allowed.Contains(cursor);
-                        if (!isAllowed && blackoutStart == null)
-                        {
-                            blackoutStart = cursor;
-                        }
-                        else if (isAllowed && blackoutStart != null)
-                        {
-                            // Close blackout range on previous day
-                            var blackoutEnd = cursor.AddDays(-1);
-                            if (blackoutEnd >= blackoutStart.Value)
-                                SnapshotDatePicker.BlackoutDates.Add(new CalendarDateRange(blackoutStart.Value, blackoutEnd));
-                            blackoutStart = null;
-                        }
-                        cursor = cursor.AddDays(1);
-                    }
-                    if (blackoutStart != null)
-                    {
-                        SnapshotDatePicker.BlackoutDates.Add(new CalendarDateRange(blackoutStart.Value, max.Date));
-                    }
-
-                    // Also blackout outside of [min, max] to prevent navigation selection
-                    if (min.Date > DateTime.MinValue.Date)
-                    {
-                        SnapshotDatePicker.BlackoutDates.Add(new CalendarDateRange(DateTime.MinValue.Date, min.AddDays(-1).Date));
-                    }
-                    if (max.Date < DateTime.MaxValue.Date.AddDays(-2))
-                    {
-                        SnapshotDatePicker.BlackoutDates.Add(new CalendarDateRange(max.AddDays(1).Date, DateTime.MaxValue.Date.AddDays(-1)));
-                    }
-
-                    // If a selected date is not allowed anymore, clear it
-                    if (_selectedSnapshotDate.HasValue && !(_availableSnapshotDates?.Contains(_selectedSnapshotDate.Value.Date) ?? false))
-                    {
-                        _selectedSnapshotDate = null;
-                        SnapshotDatePicker.SelectedDate = null;
-                    }
-                });
-            }
-            catch
-            {
-                // Non-fatal UI constraint
-            }
-        }
-
-        private void SnapshotDatePicker_DateValidationError(object sender, DatePickerDateValidationErrorEventArgs e)
-        {
-            e.ThrowException = false;
-            if (sender is DatePicker dp)
-            {
-                dp.SelectedDate = null;
-                StatusMessage = "Invalid date for snapshot. Please pick a highlighted date.";
-            }
-        }
-
-        private async void SnapshotDatePicker_CalendarOpened(object sender, RoutedEventArgs e)
-        {
-            await RefreshSnapshotDatePickerAsync();
-            // Align display to a valid date
-            if (_availableSnapshotDates != null && _availableSnapshotDates.Count > 0)
-            {
-                var target = _selectedSnapshotDate ?? _availableSnapshotDates.Max();
-                SnapshotDatePicker.DisplayDate = target;
-            }
-        }
-
-        private async void SnapshotDatePicker_SelectedDateChanged(object sender, SelectionChangedEventArgs e)
-        {
-            try
-            {
-                _selectedSnapshotDate = (sender as DatePicker)?.SelectedDate;
-                await RefreshAsync();
-            }
-            catch { }
-        }
-
-        private async void ClearSnapshotDate_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                _selectedSnapshotDate = null;
-                _usingSnapshot = false;
-                if (SnapshotDatePicker != null) SnapshotDatePicker.SelectedDate = null;
-                await RefreshAsync();
-            }
-            catch { }
-        }
-
-        /// <summary>
-        /// Durée moyenne avant suppression (réconciliation) par paliers: 0-14j, 15-30j, 1-3 mois, >3 mois
+        /// DurÃ©e moyenne avant suppression (rÃ©conciliation) par paliers: 0-14j, 15-30j, 1-3 mois, >3 mois
         /// </summary>
         private void UpdateDeletionDelayChart()
         {
@@ -274,7 +299,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Récap quotidien: Nouveau vs Supprimé (Deleted), axe X = jours basé sur DeleteDate
+        /// RÃ©cap quotidien: Nouveau vs SupprimÃ© (Deleted), axe X = jours basÃ© sur DeleteDate
         /// </summary>
         private void UpdateNewDeletedDailyChart()
         {
@@ -334,7 +359,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met à jour le graphique empilé Receivable vs Pivot par Action
+        /// Met Ã  jour le graphique empilÃ© Receivable vs Pivot par Action
         /// </summary>
         private void UpdateReceivablePivotByActionChart()
         {
@@ -412,7 +437,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met à jour le graphique KPI × RiskyItem (stacked columns: Risky, NonRisky, Unknown)
+        /// Met Ã  jour le graphique KPI Ã— RiskyItem (stacked columns: Risky, NonRisky, Unknown)
         /// </summary>
         private void UpdateKpiRiskChart()
         {
@@ -458,14 +483,14 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Error updating KPI × RiskyItem: {ex.Message}");
+                ShowError($"Error updating KPI Ã— RiskyItem: {ex.Message}");
                 KpiRiskSeries = new SeriesCollection();
                 KpiRiskLabels = new List<string>();
             }
         }
 
         /// <summary>
-        /// Constructeur injecté avec les services nécessaires
+        /// Constructeur injectÃ© avec les services nÃ©cessaires
         /// </summary>
         public HomePage(OfflineFirstService offlineFirstService, ReconciliationService reconciliationService)
         {
@@ -480,10 +505,10 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met à jour les services injectés (appelé après changement de country)
+        /// Met Ã  jour les services injectÃ©s (appelÃ© aprÃ¨s changement de country)
         /// </summary>
-        /// <param name="offlineFirstService">Service OfflineFirst actualisé</param>
-        /// <param name="reconciliationService">Service de réconciliation actualisé</param>
+        /// <param name="offlineFirstService">Service OfflineFirst actualisÃ©</param>
+        /// <param name="reconciliationService">Service de rÃ©conciliation actualisÃ©</param>
         public void UpdateServices(OfflineFirstService offlineFirstService, ReconciliationService reconciliationService)
         {
             _offlineFirstService = offlineFirstService;
@@ -491,12 +516,10 @@ namespace RecoTool.Windows
             if (_offlineFirstService != null && _reconciliationService != null)
                 _kpiSnapshotService = new KpiSnapshotService(_offlineFirstService, _reconciliationService);
             DataContext = this;
-            // Reload available snapshot dates when services/country change
-            _ = RefreshSnapshotDatePickerAsync();
         }
 
         /// <summary>
-        /// Initialise toutes les propriétés avec des valeurs par défaut
+        /// Initialise toutes les propriÃ©tÃ©s avec des valeurs par dÃ©faut
         /// </summary>
         private void InitializeProperties()
         {
@@ -514,7 +537,7 @@ namespace RecoTool.Windows
             _statusMessage = "Ready";
             _lastUpdateTime = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
             
-            // Initialiser les nouvelles propriétés de graphiques
+            // Initialiser les nouvelles propriÃ©tÃ©s de graphiques
             _receivableChartData = new ChartValues<double>();
             _pivotChartData = new ChartValues<double>();
             _receivablePivotByActionSeries = new SeriesCollection();
@@ -542,7 +565,7 @@ namespace RecoTool.Windows
             }
         }
 
-        // Propriétés pour le binding XAML
+        // PropriÃ©tÃ©s pour le binding XAML
         public List<Country> AvailableCountries
         {
             get => _availableCountries;
@@ -619,6 +642,52 @@ namespace RecoTool.Windows
             set
             {
                 _pivotAccountsCount = value;
+                OnPropertyChanged();
+            }
+        }
+
+        // Quick Stats properties
+        private int _totalLiveCount;
+        private double _matchedPercentage;
+        private int _totalToReviewCount;
+        private int _reviewedTodayCount;
+
+        public int TotalLiveCount
+        {
+            get => _totalLiveCount;
+            set
+            {
+                _totalLiveCount = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public double MatchedPercentage
+        {
+            get => _matchedPercentage;
+            set
+            {
+                _matchedPercentage = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public int TotalToReviewCount
+        {
+            get => _totalToReviewCount;
+            set
+            {
+                _totalToReviewCount = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public int ReviewedTodayCount
+        {
+            get => _reviewedTodayCount;
+            set
+            {
+                _reviewedTodayCount = value;
                 OnPropertyChanged();
             }
         }
@@ -868,8 +937,6 @@ namespace RecoTool.Windows
             try
             {
                 RefreshStarted?.Invoke(this, EventArgs.Empty);
-                // Keep date picker in sync with DB snapshot dates
-                await RefreshSnapshotDatePickerAsync();
                 await LoadDashboardDataAsync();
             }
             finally
@@ -883,7 +950,7 @@ namespace RecoTool.Windows
         #region Data Loading
 
         /// <summary>
-        /// Charge les données (snapshot si sélectionné, sinon live) et met à jour les KPIs/graphes.
+        /// Charge les donnÃ©es live et met Ã  jour les KPIs/graphes.
         /// </summary>
         private async Task LoadDashboardDataAsync(bool retryIfCountryNotReady = true)
         {
@@ -892,29 +959,11 @@ namespace RecoTool.Windows
                 IsLoading = true;
                 ShowLoadingIndicator(true);
 
-                // S'assurer qu'un pays est prêt avant de charger
+                // S'assurer qu'un pays est prÃªt avant de charger
                 if (!await EnsureCountryReadyAsync(retryIfCountryNotReady))
-                    return; // sortie silencieuse si toujours pas prêt
+                    return; // sortie silencieuse si toujours pas prÃªt
 
-                if (_selectedSnapshotDate.HasValue)
-                {
-                    var loaded = await TryLoadSnapshotAsync(_selectedSnapshotDate.Value, _offlineFirstService.CurrentCountryId);
-                    if (!loaded)
-                    {
-                        // Fallback aux données live
-                        await LoadLiveDashboardAsync();
-                    }
-                    else
-                    {
-                        // Graphes restent live; seules tuiles KPI proviennent du snapshot
-                        UpdateCountryInfo();
-                    }
-                }
-                else
-                {
-                    await LoadLiveDashboardAsync();
-                }
-                ApplyHistoricalBackground();
+                await LoadLiveDashboardAsync();
             }
             catch (Exception ex)
             {
@@ -928,7 +977,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Vérifie que le pays courant est prêt. Optionnellement, effectue une unique attente courte avant nouvel essai.
+        /// VÃ©rifie que le pays courant est prÃªt. Optionnellement, effectue une unique attente courte avant nouvel essai.
         /// </summary>
         private async Task<bool> EnsureCountryReadyAsync(bool allowSingleRetry)
         {
@@ -945,7 +994,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Charge les données live et met à jour KPIs, graphes et infos pays.
+        /// Charge les donnÃ©es live et met Ã  jour KPIs, graphes et infos pays.
         /// </summary>
         private async Task LoadLiveDashboardAsync()
         {
@@ -953,259 +1002,10 @@ namespace RecoTool.Windows
             UpdateKPISummary();
             UpdateCharts();
             UpdateCountryInfo();
+            await LoadTodoCardsAsync();
+            UpdateAnalytics();
         }
 
-        private async Task<bool> TryLoadSnapshotAsync(DateTime date, string countryId)
-        {
-            try
-            {
-                if ((_reconciliationService == null && _kpiSnapshotService == null) || string.IsNullOrWhiteSpace(countryId)) return false;
-                if (_kpiSnapshotService == null && _offlineFirstService != null && _reconciliationService != null)
-                    _kpiSnapshotService = new KpiSnapshotService(_offlineFirstService, _reconciliationService);
-                var table = await _kpiSnapshotService.GetKpiSnapshotAsync(date.Date, countryId);
-
-                if (table == null || table.Rows.Count == 0)
-                {
-                    _usingSnapshot = false;
-                    StatusMessage = $"No snapshot found for {date.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}. Showing live data.";
-                    return false;
-                }
-
-                var row = table.Rows[0];
-                // Mettre à jour les tuiles KPI à partir des colonnes agrégées du snapshot
-                MissingInvoicesCount = SafeGetInt(row, "MissingInvoices");
-                PaidButNotReconciledCount = SafeGetInt(row, "PaidNotReconciled");
-                UnderInvestigationCount = SafeGetInt(row, "UnderInvestigation");
-                ReceivableAccountsCount = SafeGetInt(row, "ReceivableCount");
-                TotalReceivableAmount = SafeGetDecimal(row, "ReceivableAmount");
-                PivotAccountsCount = SafeGetInt(row, "PivotCount");
-                TotalPivotAmount = SafeGetDecimal(row, "PivotAmount");
-
-                // Charger les séries de graphiques depuis le snapshot
-                ApplySnapshotCharts(row);
-
-                _usingSnapshot = true;
-                StatusMessage = $"Snapshot loaded for {date.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}.";
-                LastUpdateTime = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                _usingSnapshot = false;
-                StatusMessage = "Snapshot load error";
-                System.Diagnostics.Debug.WriteLine($"TryLoadSnapshotAsync error: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Utilise les données sérialisées du snapshot pour remplir les graphiques sans recharger la base.
-        /// </summary>
-        private void ApplySnapshotCharts(DataRow row)
-        {
-            try
-            {
-                _reconciliationViewData = new List<ReconciliationViewData>();
-
-                // KPI distribution
-                var kpiChart = FindName("KPIChart") as LiveCharts.Wpf.PieChart;
-                var kpiJson = row["KpiDistributionJson"]?.ToString();
-                if (kpiChart != null && !string.IsNullOrWhiteSpace(kpiJson))
-                {
-                    using var doc = JsonDocument.Parse(kpiJson);
-                    var sc = new SeriesCollection();
-                    foreach (var el in doc.RootElement.EnumerateArray())
-                    {
-                        var name = el.GetProperty("kpi").GetString();
-                        var count = el.GetProperty("count").GetInt32();
-                        sc.Add(new PieSeries
-                        {
-                            Title = $"{name} ({count})",
-                            Values = new ChartValues<int> { count },
-                            LabelPoint = cp => $"{count} ({cp.Participation:P})"
-                        });
-                    }
-                    kpiChart.Series = sc;
-                }
-                else if (kpiChart != null)
-                {
-                    kpiChart.Series = new SeriesCollection();
-                }
-
-                // Currency distribution
-                var ccyJson = row["CurrencyDistributionJson"]?.ToString();
-                if (!string.IsNullOrWhiteSpace(ccyJson))
-                {
-                    using var doc = JsonDocument.Parse(ccyJson);
-                    var sc = new SeriesCollection();
-                    foreach (var el in doc.RootElement.EnumerateArray())
-                    {
-                        var ccy = el.GetProperty("currency").GetString();
-                        var amount = el.GetProperty("amount").GetDouble();
-                        var count = el.GetProperty("count").GetInt32();
-                        sc.Add(new PieSeries
-                        {
-                            Title = $"{ccy} ({count})",
-                            Values = new ChartValues<double> { amount },
-                            LabelPoint = cp => $"{ccy}: {amount:N2} ({cp.Participation:P})"
-                        });
-                    }
-                    CurrencyDistributionSeries = sc;
-                }
-                else
-                {
-                    CurrencyDistributionSeries = new SeriesCollection();
-                }
-
-                // Action distribution
-                var actionJson = row["ActionDistributionJson"]?.ToString();
-                if (!string.IsNullOrWhiteSpace(actionJson))
-                {
-                    using var doc = JsonDocument.Parse(actionJson);
-                    var sc = new SeriesCollection();
-                    var labels = new List<string>();
-                    foreach (var el in doc.RootElement.EnumerateArray())
-                    {
-                        var name = el.GetProperty("action").GetString();
-                        var count = el.GetProperty("count").GetInt32();
-                        labels.Add(name);
-                        sc.Add(new ColumnSeries { Title = name, Values = new ChartValues<int> { count } });
-                    }
-                    ActionLabels = labels;
-                    ActionDistributionSeries = sc;
-                }
-                else
-                {
-                    ActionLabels = new List<string>();
-                    ActionDistributionSeries = new SeriesCollection();
-                }
-
-                // KPI × Risky
-                var riskJson = row["KpiRiskMatrixJson"]?.ToString();
-                if (!string.IsNullOrWhiteSpace(riskJson))
-                {
-                    using var doc = JsonDocument.Parse(riskJson);
-                    var labels = doc.RootElement.GetProperty("kpiLabels").EnumerateArray().Select(e => e.GetString()).ToList();
-                    var values = doc.RootElement.GetProperty("values").EnumerateArray().ToList();
-                    var riskyVals = new ChartValues<int>(values[0].EnumerateArray().Select(e => e.GetInt32()));
-                    var nonRiskyVals = new ChartValues<int>(values[1].EnumerateArray().Select(e => e.GetInt32()));
-                    KpiRiskLabels = labels;
-                    KpiRiskSeries = new SeriesCollection
-                    {
-                        new StackedColumnSeries { Title = "Risky", Values = riskyVals, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N0") },
-                        new StackedColumnSeries { Title = "Non-Risky", Values = nonRiskyVals, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N0") }
-                    };
-                }
-                else
-                {
-                    KpiRiskLabels = new List<string>();
-                    KpiRiskSeries = new SeriesCollection();
-                }
-
-                // Receivable vs Pivot by Action
-                var rpaJson = row["ReceivablePivotByActionJson"]?.ToString();
-                if (!string.IsNullOrWhiteSpace(rpaJson))
-                {
-                    using var doc = JsonDocument.Parse(rpaJson);
-                    var labels = doc.RootElement.GetProperty("labels").EnumerateArray().Select(e => e.GetString()).ToList();
-                    var recv = new ChartValues<int>(doc.RootElement.GetProperty("receivable").EnumerateArray().Select(e => e.GetInt32()));
-                    var piv = new ChartValues<int>(doc.RootElement.GetProperty("pivot").EnumerateArray().Select(e => e.GetInt32()));
-                    ReceivablePivotByActionLabels = labels;
-                    ReceivablePivotByActionSeries = new SeriesCollection
-                    {
-                        new StackedColumnSeries { Title = "Receivable", Values = recv, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N0") },
-                        new StackedColumnSeries { Title = "Pivot", Values = piv, DataLabels = true, LabelPoint = cp => cp.Y.ToString("N0") }
-                    };
-                }
-                else
-                {
-                    ReceivablePivotByActionLabels = new List<string>();
-                    ReceivablePivotByActionSeries = new SeriesCollection();
-                }
-
-                // Deletion delay
-                var delayJson = row["DeletionDelayBucketsJson"]?.ToString();
-                if (!string.IsNullOrWhiteSpace(delayJson))
-                {
-                    using var doc = JsonDocument.Parse(delayJson);
-                    var labels = new List<string>();
-                    var vals = new ChartValues<double>();
-                    foreach (var el in doc.RootElement.EnumerateArray())
-                    {
-                        labels.Add(el.GetProperty("bucket").GetString());
-                        vals.Add(el.GetProperty("avgDays").GetDouble());
-                    }
-                    DeletionDelayLabels = labels;
-                    DeletionDelaySeries = new SeriesCollection
-                    {
-                        new ColumnSeries { Title = "Average duration (days)", Values = vals, DataLabels = true, LabelPoint = cp => (cp.Y > 0 ? cp.Y.ToString("N0") : string.Empty) }
-                    };
-                }
-                else
-                {
-                    DeletionDelayLabels = new List<string>();
-                    DeletionDelaySeries = new SeriesCollection();
-                }
-
-                // Charts not included in snapshot -> reset
-                ReceivableChartData = new ChartValues<double>();
-                PivotChartData = new ChartValues<double>();
-                NewDeletedDailySeries = new SeriesCollection();
-                NewDeletedDailyLabels = new List<string>();
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"ApplySnapshotCharts error: {ex.Message}");
-            }
-        }
-
-        private void ApplyHistoricalBackground()
-        {
-            try
-            {
-                if (MainScrollViewer == null) return;
-                bool isHistorical = _usingSnapshot && _selectedSnapshotDate.HasValue && _selectedSnapshotDate.Value.Date != DateTime.Today.Date;
-                if (isHistorical)
-                {
-                    MainScrollViewer.Background = new SolidColorBrush(Color.FromRgb(0xF2, 0xF2, 0xF2));
-                }
-                else
-                {
-                    MainScrollViewer.Background = _defaultBackground ?? MainScrollViewer.Background;
-                }
-            }
-            catch { }
-        }
-
-        private async void TodaySnapshotDate_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                var today = DateTime.Today.Date;
-                // If today is a snapshot date, select it; else revert to live view
-                if (_availableSnapshotDates != null && _availableSnapshotDates.Any(d => d.Date == today))
-                {
-                    _selectedSnapshotDate = today;
-                    if (SnapshotDatePicker != null)
-                    {
-                        SnapshotDatePicker.SelectedDate = today;
-                        SnapshotDatePicker.DisplayDate = today;
-                    }
-                }
-                else
-                {
-                    _selectedSnapshotDate = null;
-                    _usingSnapshot = false;
-                    if (SnapshotDatePicker != null)
-                    {
-                        SnapshotDatePicker.SelectedDate = null;
-                        SnapshotDatePicker.DisplayDate = today;
-                    }
-                }
-                await RefreshAsync();
-            }
-            catch { }
-        }
 
         private async void ExportDailyKpi_Click(object sender, RoutedEventArgs e)
         {
@@ -1220,7 +1020,7 @@ namespace RecoTool.Windows
                 // Determine range: from first to last available snapshot
                 if (_kpiSnapshotService == null && _offlineFirstService != null && _reconciliationService != null)
                     _kpiSnapshotService = new KpiSnapshotService(_offlineFirstService, _reconciliationService);
-                var dates = _availableSnapshotDates ?? await _kpiSnapshotService.GetKpiSnapshotDatesAsync(CurrentCountryId);
+                var dates = await _kpiSnapshotService.GetKpiSnapshotDatesAsync(CurrentCountryId);
                 if (dates == null || dates.Count == 0)
                 {
                     ShowError("No snapshots to export.");
@@ -1710,7 +1510,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Charge les données réelles depuis la base de données via ReconciliationService
+        /// Charge les donnÃ©es rÃ©elles depuis la base de donnÃ©es via ReconciliationService
         /// </summary>
         private async Task LoadRealDataFromDatabase()
         {
@@ -1723,11 +1523,11 @@ namespace RecoTool.Windows
                     return;
                 }
 
-                // Récupérer uniquement les colonnes nécessaires pour le dashboard
+                // RÃ©cupÃ©rer uniquement les colonnes nÃ©cessaires pour le dashboard
                 var reconciliationViewData = await _reconciliationService.GetReconciliationViewAsync(_offlineFirstService.CurrentCountryId, null, true);
                 _reconciliationViewData = reconciliationViewData ?? new List<ReconciliationViewData>();
 
-                // Analyser la répartition des comptes pour diagnostic
+                // Analyser la rÃ©partition des comptes pour diagnostic
                 AnalyzeAccountDistribution();
 
                 StatusMessage = $"Data loaded: {_reconciliationViewData.Count} rows";
@@ -1787,7 +1587,7 @@ namespace RecoTool.Windows
         #region KPI Updates
 
         /// <summary>
-        /// Met à jour le résumé des KPI avec les données réelles
+        /// Met Ã  jour le rÃ©sumÃ© des KPI avec les donnÃ©es rÃ©elles
         /// </summary>
         private void UpdateKPISummary()
         {
@@ -1798,33 +1598,37 @@ namespace RecoTool.Windows
 
             var totalLines = _reconciliationViewData.Count;
             
-            // Séparer les comptes Receivable et Pivot selon la configuration de la country
+            // SÃ©parer les comptes Receivable et Pivot selon la configuration de la country
             var receivableData = _reconciliationViewData.Where(r => r.Account_ID == currentCountry.CNT_AmbreReceivable).ToList();
             var pivotData = _reconciliationViewData.Where(r => r.Account_ID == currentCountry.CNT_AmbrePivot).ToList();
 
-            // Calcul des KPI réels
+            // Calcul des KPI rÃ©els
             var paidButNotReconciled = _reconciliationViewData.Count(r => r.KPI == (int)KPIType.PaidButNotReconciled);
             var underInvestigation = _reconciliationViewData.Count(r => r.KPI == (int)KPIType.UnderInvestigation);
             var itIssues = _reconciliationViewData.Count(r => r.KPI == (int)KPIType.ITIssues);
             var notClaimed = _reconciliationViewData.Count(r => r.KPI == (int)KPIType.NotClaimed);
 
-            // Mise à jour des propriétés de binding
+            // Mise Ã  jour des propriÃ©tÃ©s de binding
             MissingInvoicesCount = notClaimed;
             PaidButNotReconciledCount = paidButNotReconciled;
             UnderInvestigationCount = underInvestigation;
 
-            // Calcul des montants réels
+            // Calcul des montants rÃ©els
             TotalReceivableAmount = receivableData.Sum(r => r.SignedAmount);
             ReceivableAccountsCount = receivableData.Count;
             TotalPivotAmount = pivotData.Sum(r => r.SignedAmount);
             PivotAccountsCount = pivotData.Count;
 
-            // Mise à jour des TextBlocks pour compatibilité avec l'ancien XAML
-            UpdateTextBlock("TotalLinesText", totalLines.ToString("N0"));
-            UpdateTextBlock("ReconciledText", paidButNotReconciled.ToString("N0"));
-            UpdateTextBlock("PendingText", underInvestigation.ToString("N0"));
-            UpdateTextBlock("IssuesText", itIssues.ToString("N0"));
-            UpdateTextBlock("TotalAmountText", $"{(TotalReceivableAmount + TotalPivotAmount):N2}");
+            // Quick Stats computation
+            TotalLiveCount = totalLines;
+            int matchedCount = _reconciliationViewData.Count(r => !string.IsNullOrWhiteSpace(r.DWINGS_GuaranteeID)
+                                                                || !string.IsNullOrWhiteSpace(r.DWINGS_InvoiceID)
+                                                                || !string.IsNullOrWhiteSpace(r.DWINGS_BGPMT));
+            MatchedPercentage = totalLines > 0 ? (matchedCount * 100.0 / totalLines) : 0.0;
+            // ToReview = has Action but status is Pending (or null)
+            TotalToReviewCount = _reconciliationViewData.Count(r => r.IsToReview);
+            // Reviewed Today = ActionStatus Done today
+            ReviewedTodayCount = _reconciliationViewData.Count(r => r.IsReviewedToday);
             UpdateTextBlock("ReconciledAmountText", $"{receivableData.Where(r => r.KPI == (int)KPIType.PaidButNotReconciled).Sum(r => r.SignedAmount):N2}");
         }
 
@@ -1833,7 +1637,7 @@ namespace RecoTool.Windows
         #region Charts Updates
 
         /// <summary>
-        /// Met à jour les graphiques avec les données réelles
+        /// Met Ã  jour les graphiques avec les donnÃ©es rÃ©elles
         /// </summary>
         private void UpdateCharts()
         {
@@ -1845,12 +1649,76 @@ namespace RecoTool.Windows
             UpdateKpiRiskChart();
             UpdateReceivablePivotMiniCharts();
             UpdateReceivablePivotByActionChart();
+            UpdateReceivablePivotByCurrencyChart();
             UpdateDeletionDelayChart();
             UpdateNewDeletedDailyChart();
         }
 
         /// <summary>
-        /// Met à jour le graphique des KPI
+        /// Updates analytics: alerts, trends, leaderboard, completion estimate
+        /// </summary>
+        private void UpdateAnalytics()
+        {
+            try
+            {
+                if (_reconciliationViewData == null || !_reconciliationViewData.Any())
+                {
+                    AlertItems = new ObservableCollection<Services.Analytics.AlertItem>();
+                    AssigneeLeaderboard = new ObservableCollection<Services.Analytics.AssigneeStats>();
+                    CompletionEstimate = new Services.Analytics.CompletionEstimate();
+                    ReviewTrendSeries = new SeriesCollection();
+                    MatchedRateTrendSeries = new SeriesCollection();
+                    return;
+                }
+
+                // Update Alerts
+                var alerts = Services.Analytics.DashboardAnalyticsService.GetUrgentAlerts(_reconciliationViewData);
+                AlertItems = new ObservableCollection<Services.Analytics.AlertItem>(alerts);
+
+                // Update Assignee Leaderboard
+                var leaderboard = Services.Analytics.DashboardAnalyticsService.GetAssigneeLeaderboard(_reconciliationViewData);
+                AssigneeLeaderboard = new ObservableCollection<Services.Analytics.AssigneeStats>(leaderboard);
+
+                // Update Completion Estimate
+                CompletionEstimate = Services.Analytics.DashboardAnalyticsService.GetCompletionEstimate(_reconciliationViewData);
+
+                // Update Review Trend Chart
+                var reviewTrend = Services.Analytics.DashboardAnalyticsService.GetReviewTrend(_reconciliationViewData, 7);
+                ReviewTrendLabels = reviewTrend.Select(t => t.Label).ToList();
+                ReviewTrendSeries = new SeriesCollection
+                {
+                    new ColumnSeries
+                    {
+                        Title = "Reviews",
+                        Values = new ChartValues<int>(reviewTrend.Select(t => t.Count)),
+                        Fill = new SolidColorBrush(Color.FromRgb(0, 150, 136))
+                    }
+                };
+
+                // Update Matched Rate Trend Chart
+                var matchedTrend = Services.Analytics.DashboardAnalyticsService.GetMatchedRateTrend(_reconciliationViewData, 7);
+                MatchedRateTrendLabels = matchedTrend.Select(t => t.Label).ToList();
+                MatchedRateTrendSeries = new SeriesCollection
+                {
+                    new LineSeries
+                    {
+                        Title = "Matched %",
+                        Values = new ChartValues<double>(matchedTrend.Select(t => t.Percentage)),
+                        Stroke = new SolidColorBrush(Color.FromRgb(33, 150, 243)),
+                        Fill = Brushes.Transparent,
+                        PointGeometry = DefaultGeometries.Circle,
+                        PointGeometrySize = 8
+                    }
+                };
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error updating analytics: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Met Ã  jour le graphique des KPI
         /// </summary>
         private void UpdateKPIChart()
         {
@@ -1890,7 +1758,7 @@ namespace RecoTool.Windows
                     });
                 }
 
-                // Mise à jour du graphique KPI
+                // Mise Ã  jour du graphique KPI
                 var kpiChart = FindName("KPIChart") as LiveCharts.Wpf.PieChart;
                 if (kpiChart != null)
                 {
@@ -1904,7 +1772,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met à jour le graphique des devises
+        /// Met Ã  jour le graphique des devises
         /// </summary>
         private void UpdateCurrencyChart()
         {
@@ -1915,7 +1783,7 @@ namespace RecoTool.Windows
                     return;
                 }
 
-                // Calculer la répartition réelle par devise depuis T_Data_Ambre.CCY
+                // Calculer la rÃ©partition rÃ©elle par devise depuis T_Data_Ambre.CCY
                 var currencyData = _reconciliationViewData
                     .Where(r => !string.IsNullOrEmpty(r.CCY) && r.SignedAmount != 0)
                     .GroupBy(r => r.CCY)
@@ -1947,7 +1815,7 @@ namespace RecoTool.Windows
                     });
                 }
 
-                // Mise à jour de la propriété liée au PieChart
+                // Mise Ã  jour de la propriÃ©tÃ© liÃ©e au PieChart
                 CurrencyDistributionSeries = seriesCollection;
             }
             catch (Exception ex)
@@ -1957,7 +1825,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met à jour le graphique des actions
+        /// Met Ã  jour le graphique des actions
         /// </summary>
         private void UpdateActionChart()
         {
@@ -2040,7 +1908,7 @@ namespace RecoTool.Windows
                     seriesCollection.Add(series);
                 }
 
-                // Mettre à jour les propriétés liées au CartesianChart
+                // Mettre Ã  jour les propriÃ©tÃ©s liÃ©es au CartesianChart
                 ActionLabels = labels;
                 ActionDistributionSeries = seriesCollection;
             }
@@ -2092,7 +1960,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met à jour les mini graphiques (sparklines) Receivable/Pivot (12 derniers mois)
+        /// Met Ã  jour les mini graphiques (sparklines) Receivable/Pivot (12 derniers mois)
         /// </summary>
         private void UpdateReceivablePivotMiniCharts()
         {
@@ -2113,13 +1981,13 @@ namespace RecoTool.Windows
                     return;
                 }
 
-                // Période: 12 derniers mois (inclus le mois courant)
+                // PÃ©riode: 12 derniers mois (inclus le mois courant)
                 var endMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
                 var months = Enumerable.Range(0, 12)
                     .Select(offset => endMonth.AddMonths(-11 + offset))
                     .ToList();
 
-                // Sélection date préférée: Value_Date sinon Operation_Date si dispo dans le type
+                // SÃ©lection date prÃ©fÃ©rÃ©e: Value_Date sinon Operation_Date si dispo dans le type
                 DateTime? GetDate(dynamic r)
                 {
                     try
@@ -2168,7 +2036,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                // Ne pas bloquer le dashboard si la génération des séries échoue
+                // Ne pas bloquer le dashboard si la gÃ©nÃ©ration des sÃ©ries Ã©choue
                 System.Diagnostics.Debug.WriteLine($"Mini charts error: {ex.Message}");
                 ReceivableChartData = new ChartValues<double>();
                 PivotChartData = new ChartValues<double>();
@@ -2176,7 +2044,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Analyse la répartition entre comptes Receivable et Pivot
+        /// Analyse la rÃ©partition entre comptes Receivable et Pivot
         /// </summary>
         private void AnalyzeAccountDistribution()
         {
@@ -2240,7 +2108,7 @@ namespace RecoTool.Windows
         #region Helper Methods
 
         /// <summary>
-        /// Met à jour un TextBlock par son nom
+        /// Met Ã  jour un TextBlock par son nom
         /// </summary>
         private void UpdateTextBlock(string name, string value)
         {
@@ -2260,7 +2128,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met à jour les informations du pays
+        /// Met Ã  jour les informations du pays
         /// </summary>
         private void UpdateCountryInfo()
         {
@@ -2305,9 +2173,9 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Déclenche l'événement PropertyChanged
+        /// DÃ©clenche l'Ã©vÃ©nement PropertyChanged
         /// </summary>
-        /// <param name="propertyName">Nom de la propriété modifiée</param>
+        /// <param name="propertyName">Nom de la propriÃ©tÃ© modifiÃ©e</param>
         protected virtual void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
@@ -2318,17 +2186,17 @@ namespace RecoTool.Windows
         #region Event Handlers
 
         /// <summary>
-        /// Ouvre la fenêtre d'import Ambre
+        /// Ouvre la fenÃªtre d'import Ambre
         /// </summary>
         private void ImportAmbre_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                // Utiliser le DI container pour obtenir ImportAmbreWindow avec toutes ses dépendances
+                // Utiliser le DI container pour obtenir ImportAmbreWindow avec toutes ses dÃ©pendances
                 var importWindow = App.ServiceProvider.GetRequiredService<ImportAmbreWindow>();
                 importWindow.ShowDialog();
                 
-                // Actualiser les données après import
+                // Actualiser les donnÃ©es aprÃ¨s import
                 _ = RefreshAsync();
             }
             catch (Exception ex)
@@ -2338,7 +2206,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Ouvre la fenêtre de rapports
+        /// Ouvre la fenÃªtre de rapports
         /// </summary>
         private void OpenReports_Click(object sender, RoutedEventArgs e)
         {
@@ -2356,3 +2224,5 @@ namespace RecoTool.Windows
         #endregion
     }
 }
+
+

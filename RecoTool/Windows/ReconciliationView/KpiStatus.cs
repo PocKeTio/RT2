@@ -18,6 +18,8 @@ namespace RecoTool.Windows
                                            || !string.IsNullOrWhiteSpace(a.DWINGS_InvoiceID)
                                            || !string.IsNullOrWhiteSpace(a.DWINGS_BGPMT));
                 int unmatched = total - matched;
+                // ToReview = has Action but status is Pending
+                int toReview = list.Count(a => a.IsToReview);
 
                 decimal totalAmt = list.Sum(a => a.SignedAmount);
                 decimal matchedAmt = list.Where(a => !string.IsNullOrWhiteSpace(a.DWINGS_GuaranteeID)
@@ -30,8 +32,7 @@ namespace RecoTool.Windows
                 if (KpiMatchedCountText != null) KpiMatchedCountText.Text = matched.ToString();
                 if (KpiUnmatchedCountText != null) KpiUnmatchedCountText.Text = unmatched.ToString();
                 if (KpiTotalAmountText != null) KpiTotalAmountText.Text = totalAmt.ToString("N2");
-                if (KpiMatchedAmountText != null) KpiMatchedAmountText.Text = matchedAmt.ToString("N2");
-                if (KpiUnmatchedAmountText != null) KpiUnmatchedAmountText.Text = unmatchedAmt.ToString("N2");
+                if (KpiToReviewCountText != null) KpiToReviewCountText.Text = toReview.ToString(CultureInfo.InvariantCulture);
             }
             catch (Exception ex)
             {

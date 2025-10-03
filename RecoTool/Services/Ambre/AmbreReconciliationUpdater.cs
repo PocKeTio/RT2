@@ -10,6 +10,7 @@ using RecoTool.Models;
 using RecoTool.Services.DTOs;
 using RecoTool.Services;
 using RecoTool.Services.Rules;
+using RecoTool.Infrastructure.Logging;
 
 namespace RecoTool.Services.AmbreImport
 {
@@ -251,6 +252,28 @@ namespace RecoTool.Services.AmbreImport
                 ? (int?)(today - reconciliation.LastClaimDate.Value.Date).TotalDays
                 : null;
 
+            // Resolve DWINGS invoice to compute new inputs (best-effort)
+            bool? mtAcked = null;
+            bool? hasCommEmail = null;
+            bool? bgiInitiated = null;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(reconciliation?.DWINGS_InvoiceID))
+                {
+                    var invoices = _reconciliationService.GetDwingsInvoicesAsync().GetAwaiter().GetResult();
+                    var inv = invoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, reconciliation.DWINGS_InvoiceID, StringComparison.OrdinalIgnoreCase));
+                    if (inv != null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(inv.MT_STATUS))
+                            mtAcked = string.Equals(inv.MT_STATUS, "ACKED", StringComparison.OrdinalIgnoreCase);
+                        hasCommEmail = inv.COMM_ID_EMAIL;
+                        if (!string.IsNullOrWhiteSpace(inv.T_INVOICE_STATUS))
+                            bgiInitiated = string.Equals(inv.T_INVOICE_STATUS, "INITIATED", StringComparison.OrdinalIgnoreCase);
+                    }
+                }
+            }
+            catch { }
+
             return new RuleContext
             {
                 CountryId = countryId,
@@ -271,7 +294,11 @@ namespace RecoTool.Services.AmbreImport
                 HasManualMatch = hasManualMatch,
                 IsFirstRequest = isFirstRequest,
                 DaysSinceReminder = daysSinceReminder,
-                CurrentActionId = reconciliation?.Action
+                CurrentActionId = reconciliation?.Action,
+                // New DWINGS-derived
+                IsMtAcked = mtAcked,
+                HasCommIdEmail = hasCommEmail,
+                IsBgiInitiated = bgiInitiated
             };
         }
 
@@ -282,7 +309,7 @@ namespace RecoTool.Services.AmbreImport
                 if (staged == null || staged.Count == 0) return;
 
                 // First pass: apply SELF outputs immediately; gather counterpart intents by BGI
-                var counterpartIntents = new List<(string Bgi, bool TargetIsPivot, int? ActionId, int? KpiId, int? IncidentTypeId, bool? RiskyItem, int? ReasonNonRiskyId, bool? ToRemind, int? ToRemindDays)>();
+                var counterpartIntents = new List<(string Bgi, bool TargetIsPivot, string RuleId, int? ActionId, int? KpiId, int? IncidentTypeId, bool? RiskyItem, int? ReasonNonRiskyId, bool? ToRemind, int? ToRemindDays)>();
 
                 foreach (var s in staged)
                 {
@@ -309,6 +336,10 @@ namespace RecoTool.Services.AmbreImport
                                 var days = res.NewToRemindDaysSelf.Value;
                                 try { s.Reconciliation.ToRemindDate = DateTime.Today.AddDays(days); } catch { }
                             }
+                            if (res.NewFirstClaimTodaySelf == true)
+                            {
+                                try { s.Reconciliation.FirstClaimDate = DateTime.Today; } catch { }
+                            }
                         }
                         if (!string.IsNullOrWhiteSpace(res.UserMessage))
                         {
@@ -328,6 +359,23 @@ namespace RecoTool.Services.AmbreImport
                             }
                             catch { }
                         }
+
+                        // Log to file for import (SELF)
+                        try
+                        {
+                            var outs = new System.Collections.Generic.List<string>();
+                            if (res.NewActionIdSelf.HasValue) outs.Add($"Action={res.NewActionIdSelf.Value}");
+                            if (res.NewKpiIdSelf.HasValue) outs.Add($"KPI={res.NewKpiIdSelf.Value}");
+                            if (res.NewIncidentTypeIdSelf.HasValue) outs.Add($"IncidentType={res.NewIncidentTypeIdSelf.Value}");
+                            if (res.NewRiskyItemSelf.HasValue) outs.Add($"RiskyItem={res.NewRiskyItemSelf.Value}");
+                            if (res.NewReasonNonRiskyIdSelf.HasValue) outs.Add($"ReasonNonRisky={res.NewReasonNonRiskyIdSelf.Value}");
+                            if (res.NewToRemindSelf.HasValue) outs.Add($"ToRemind={res.NewToRemindSelf.Value}");
+                            if (res.NewToRemindDaysSelf.HasValue) outs.Add($"ToRemindDays={res.NewToRemindDaysSelf.Value}");
+                            if (res.NewFirstClaimTodaySelf == true) outs.Add("FirstClaimDate=Today");
+                            var outsStr = string.Join("; ", outs);
+                            LogHelper.WriteRuleApplied("import", countryId, s.Reconciliation?.ID, res.Rule.RuleId, outsStr, res.UserMessage);
+                        }
+                        catch { }
                     }
 
                     // Counterpart application intents
@@ -339,6 +387,7 @@ namespace RecoTool.Services.AmbreImport
                         counterpartIntents.Add((
                             s.Bgi.Trim().ToUpperInvariant(),
                             targetIsPivot,
+                            res.Rule.RuleId,
                             res.Rule.OutputActionId,
                             res.Rule.OutputKpiId,
                             res.Rule.OutputIncidentTypeId,
@@ -375,6 +424,22 @@ namespace RecoTool.Services.AmbreImport
                             {
                                 try { row.Reconciliation.ToRemindDate = DateTime.Today.AddDays(intent.ToRemindDays.Value); } catch { }
                             }
+
+                            // Log counterpart application
+                            try
+                            {
+                                var outs = new System.Collections.Generic.List<string>();
+                                if (intent.ActionId.HasValue) outs.Add($"Action={intent.ActionId.Value}");
+                                if (intent.KpiId.HasValue) outs.Add($"KPI={intent.KpiId.Value}");
+                                if (intent.IncidentTypeId.HasValue) outs.Add($"IncidentType={intent.IncidentTypeId.Value}");
+                                if (intent.RiskyItem.HasValue) outs.Add($"RiskyItem={intent.RiskyItem.Value}");
+                                if (intent.ReasonNonRiskyId.HasValue) outs.Add($"ReasonNonRisky={intent.ReasonNonRiskyId.Value}");
+                                if (intent.ToRemind.HasValue) outs.Add($"ToRemind={intent.ToRemind.Value}");
+                                if (intent.ToRemindDays.HasValue) outs.Add($"ToRemindDays={intent.ToRemindDays.Value}");
+                                var outsStr = string.Join("; ", outs);
+                                LogHelper.WriteRuleApplied("import", countryId, row.Reconciliation?.ID, intent.RuleId, outsStr, "Counterpart application");
+                            }
+                            catch { }
                         }
                     }
                 }

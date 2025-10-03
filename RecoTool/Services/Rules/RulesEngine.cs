@@ -72,6 +72,7 @@ namespace RecoTool.Services.Rules
                     NewReasonNonRiskyIdSelf = r.OutputReasonNonRiskyId,
                     NewToRemindSelf = r.OutputToRemind,
                     NewToRemindDaysSelf = r.OutputToRemindDays,
+                    NewFirstClaimTodaySelf = r.OutputFirstClaimToday,
                     RequiresUserConfirm = !string.IsNullOrWhiteSpace(r.Message),
                     UserMessage = r.Message
                 };
@@ -102,7 +103,11 @@ namespace RecoTool.Services.Rules
                 HasManualMatch = ctx.HasManualMatch,
                 IsFirstRequest = ctx.IsFirstRequest,
                 DaysSinceReminder = ctx.DaysSinceReminder,
-                CurrentActionId = ctx.CurrentActionId
+                CurrentActionId = ctx.CurrentActionId,
+                // new DWINGS-derived inputs
+                IsMtAcked = ctx.IsMtAcked,
+                HasCommIdEmail = ctx.HasCommIdEmail,
+                IsBgiInitiated = ctx.IsBgiInitiated
             };
             return n;
         }
@@ -179,6 +184,27 @@ namespace RecoTool.Services.Rules
             {
                 if (string.IsNullOrWhiteSpace(c.Sign)) return false;
                 if (!r.Sign.Equals(c.Sign, StringComparison.OrdinalIgnoreCase)) return false;
+            }
+
+            // DWINGS: MT status acked
+            if (r.MTStatusAcked.HasValue)
+            {
+                if (!c.IsMtAcked.HasValue) return false;
+                if (c.IsMtAcked.Value != r.MTStatusAcked.Value) return false;
+            }
+
+            // DWINGS: COMM_ID_EMAIL flag
+            if (r.CommIdEmail.HasValue)
+            {
+                if (!c.HasCommIdEmail.HasValue) return false;
+                if (c.HasCommIdEmail.Value != r.CommIdEmail.Value) return false;
+            }
+
+            // DWINGS: BGI status initiated
+            if (r.BgiStatusInitiated.HasValue)
+            {
+                if (!c.IsBgiInitiated.HasValue) return false;
+                if (c.IsBgiInitiated.Value != r.BgiStatusInitiated.Value) return false;
             }
 
             // TriggerDateIsNull

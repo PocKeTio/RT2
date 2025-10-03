@@ -40,5 +40,6 @@ namespace RecoTool.Domain.Filters
         public DateTime? ActionDateFrom { get; set; }
         public DateTime? ActionDateTo { get; set; }
         public DateTime? DeletedDate { get; set; }
+        public string LastReviewed { get; set; } // Never | Today | 1week | 1month
     }
 }

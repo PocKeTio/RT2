@@ -25,6 +25,7 @@ using RecoTool.Services.Queries;
 using RecoTool.Helpers;
 using RecoTool.Services.Rules;
 using RecoTool.Services.Helpers;
+using RecoTool.Infrastructure.Logging;
 
 namespace RecoTool.Services
 {
@@ -40,6 +41,76 @@ namespace RecoTool.Services
         private readonly OfflineFirstService _offlineFirstService;
         private DwingsService _dwingsService;
         private RulesEngine _rulesEngine;
+
+        #region Events
+        public sealed class RuleAppliedEventArgs : EventArgs
+        {
+            public string Origin { get; set; } // import | edit | run-now
+            public string CountryId { get; set; }
+            public string ReconciliationId { get; set; }
+            public string RuleId { get; set; }
+            public string Outputs { get; set; }
+            public string Message { get; set; }
+        }
+
+        /// <summary>
+        /// Returns total absolute amounts by currency for Live rows matching the provided backend filter.
+        /// Uses the same base query as GetReconciliationCountAsync and groups by CCY.
+        /// </summary>
+        public async Task<Dictionary<string, double>> GetCurrencySumsAsync(string countryId, string filterSql = null)
+        {
+            try
+            {
+                string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
+                string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
+                string dwEsc = string.IsNullOrEmpty(dwPath) ? null : dwPath.Replace("'", "''");
+                string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
+
+                // Detect duplicates-only flag from optional JSON header (ignored for sums)
+                // Build base query
+                string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql, dashboardOnly: false);
+
+                // Always enforce Live scope
+                query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
+
+                var predicate = FilterSqlHelper.ExtractNormalizedPredicate(filterSql);
+                if (!string.IsNullOrEmpty(predicate))
+                {
+                    query += $" AND ({predicate})";
+                }
+
+                var sumsSql = $"SELECT CCY, SUM(ABS(SignedAmount)) AS Amount FROM ({query}) AS q GROUP BY CCY";
+
+                var result = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                using (var connection = new OleDbConnection(_connectionString))
+                {
+                    await connection.OpenAsync().ConfigureAwait(false);
+                    using (var cmd = new OleDbCommand(sumsSql, connection))
+                    using (var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
+                    {
+                        while (await reader.ReadAsync().ConfigureAwait(false))
+                        {
+                            string ccy = reader.IsDBNull(0) ? null : Convert.ToString(reader[0]);
+                            if (string.IsNullOrWhiteSpace(ccy)) continue;
+                            double amount = 0;
+                            try { amount = reader.IsDBNull(1) ? 0 : Convert.ToDouble(reader[1]); } catch { amount = 0; }
+                            if (result.ContainsKey(ccy)) result[ccy] += amount; else result[ccy] = amount;
+                        }
+                    }
+                }
+                return result;
+            }
+            catch
+            {
+                return new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+        public event EventHandler<RuleAppliedEventArgs> RuleApplied;
+        private void RaiseRuleApplied(string origin, string countryId, string recoId, string ruleId, string outputs, string message)
+        {
+            try { RuleApplied?.Invoke(this, new RuleAppliedEventArgs { Origin = origin, CountryId = countryId, ReconciliationId = recoId, RuleId = ruleId, Outputs = outputs, Message = message }); } catch { }
+        }
+        #endregion
 
         public ReconciliationService(string connectionString, string currentUser, IEnumerable<Country> countries)
         {
@@ -214,6 +285,22 @@ namespace RecoTool.Services
         // JSON filter preset is defined in Domain/Filters/FilterPreset
 
         /// <summary>
+        /// Clears the reconciliation view cache to force fresh data reload
+        /// </summary>
+        public void ClearViewCache()
+        {
+            try
+            {
+                _recoViewCache.Clear();
+                System.Diagnostics.Debug.WriteLine("ReconciliationService: View cache cleared");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"ReconciliationService: Error clearing cache: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Récupère les données jointes Ambre + Réconciliation
         /// </summary>
         public async Task<List<ReconciliationViewData>> GetReconciliationViewAsync(string countryId, string filterSql = null, bool dashboardOnly = false)
@@ -282,11 +369,17 @@ namespace RecoTool.Services
                         row.IsNewlyAdded = true;
                     }
                     // Updated if reconciliation LastModified is today and differs from CreationDate
+                    // BUT only if modified by SYSTEM/AUTO (not by user manual edit)
                     if (row.Reco_LastModified.HasValue && row.Reco_LastModified.Value.Date == today)
                     {
                         if (!row.Reco_CreationDate.HasValue || row.Reco_LastModified.Value > row.Reco_CreationDate.Value)
                         {
-                            row.IsUpdated = true;
+                            // Only mark as Updated if ModifiedBy is empty/null (import/rule) or equals current user during import
+                            // User manual edits should NOT trigger the "U" indicator
+                            // The "U" should only appear for automatic changes (import, rules)
+                            // For now, we rely on the SyncAndTimers.cs logic which sets IsUpdated after import
+                            // So we don't set it here to avoid showing "U" for user edits
+                            // row.IsUpdated = true;  // REMOVED - handled by SyncAndTimers after import
                         }
                     }
                 }
@@ -461,6 +554,60 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Returns the number of Live reconciliation rows matching the provided backend filter for the given country.
+        /// Live means a.DeleteDate IS NULL and r.DeleteDate IS NULL.
+        /// The filterSql may optionally include a JSON preset header; only the predicate is applied.
+        /// </summary>
+        public async Task<int> GetReconciliationCountAsync(string countryId, string filterSql = null)
+        {
+            try
+            {
+                string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
+                string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
+                string dwEsc = string.IsNullOrEmpty(dwPath) ? null : dwPath.Replace("'", "''");
+                string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
+
+                // Detect duplicates-only flag from optional JSON header
+                bool dupOnly = FilterSqlHelper.TryExtractPotentialDuplicatesFlag(filterSql);
+
+                // Base SELECT ... WHERE 1=1 with joins and dup subquery
+                string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql, dashboardOnly: false);
+
+                // Always enforce Live scope
+                query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
+
+                var predicate = FilterSqlHelper.ExtractNormalizedPredicate(filterSql);
+                if (!string.IsNullOrEmpty(predicate))
+                {
+                    query += $" AND ({predicate})";
+                }
+
+                if (dupOnly)
+                {
+                    query += " AND (dup.DupCount) > 1";
+                }
+
+                var countSql = $"SELECT COUNT(*) FROM ({query}) AS q";
+
+                using (var connection = new OleDbConnection(_connectionString))
+                {
+                    await connection.OpenAsync().ConfigureAwait(false);
+                    using (var cmd = new OleDbCommand(countSql, connection))
+                    {
+                        var obj = await cmd.ExecuteScalarAsync().ConfigureAwait(false);
+                        if (obj == null || obj == DBNull.Value) return 0;
+                        int n;
+                        return int.TryParse(Convert.ToString(obj), out n) ? n : 0;
+                    }
+                }
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        /// <summary>
         /// Compute the automatic Action to apply after an AMBRE import for a reconciliation item using the truth-table rules.
         /// IMPORTANT: this must NOT override user-forced actions; call this only when r.Action is null.
         /// </summary>
@@ -573,7 +720,7 @@ namespace RecoTool.Services
                             var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Edit).ConfigureAwait(false);
                             if (res != null && res.Rule != null && res.Rule.AutoApply)
                             {
-                                if (res.NewActionIdSelf.HasValue) r.Action = res.NewActionIdSelf.Value;
+                                if (res.NewActionIdSelf.HasValue) { r.Action = res.NewActionIdSelf.Value; EnsureActionDefaults(r); }
                                 if (res.NewKpiIdSelf.HasValue) r.KPI = res.NewKpiIdSelf.Value;
                                 if (res.NewIncidentTypeIdSelf.HasValue) r.IncidentType = res.NewIncidentTypeIdSelf.Value;
                                 if (res.NewRiskyItemSelf.HasValue) r.RiskyItem = res.NewRiskyItemSelf.Value;
@@ -582,6 +729,10 @@ namespace RecoTool.Services
                                 if (res.NewToRemindDaysSelf.HasValue)
                                 {
                                     try { r.ToRemindDate = DateTime.Today.AddDays(res.NewToRemindDaysSelf.Value); } catch { }
+                                }
+                                if (res.NewFirstClaimTodaySelf == true)
+                                {
+                                    try { r.FirstClaimDate = DateTime.Today; } catch { }
                                 }
 
                                 if (!string.IsNullOrWhiteSpace(res.UserMessage))
@@ -597,6 +748,24 @@ namespace RecoTool.Services
                                     }
                                     catch { }
                                 }
+
+                                // File log + UI event
+                                try
+                                {
+                                    var outs = new List<string>();
+                                    if (res.NewActionIdSelf.HasValue) outs.Add($"Action={res.NewActionIdSelf.Value}");
+                                    if (res.NewKpiIdSelf.HasValue) outs.Add($"KPI={res.NewKpiIdSelf.Value}");
+                                    if (res.NewIncidentTypeIdSelf.HasValue) outs.Add($"IncidentType={res.NewIncidentTypeIdSelf.Value}");
+                                    if (res.NewRiskyItemSelf.HasValue) outs.Add($"RiskyItem={res.NewRiskyItemSelf.Value}");
+                                    if (res.NewReasonNonRiskyIdSelf.HasValue) outs.Add($"ReasonNonRisky={res.NewReasonNonRiskyIdSelf.Value}");
+                                    if (res.NewToRemindSelf.HasValue) outs.Add($"ToRemind={res.NewToRemindSelf.Value}");
+                                    if (res.NewToRemindDaysSelf.HasValue) outs.Add($"ToRemindDays={res.NewToRemindDaysSelf.Value}");
+                                    if (res.NewFirstClaimTodaySelf == true) outs.Add("FirstClaimDate=Today");
+                                    var outsStr = string.Join("; ", outs);
+                                    LogHelper.WriteRuleApplied("run-now", currentCountryId, r.ID, res.Rule.RuleId, outsStr, res.UserMessage);
+                                    RaiseRuleApplied("run-now", currentCountryId, r.ID, res.Rule.RuleId, outsStr, res.UserMessage);
+                                }
+                                catch { }
                             }
                         }
                     }
@@ -620,6 +789,26 @@ namespace RecoTool.Services
             if (upper.Contains("ISSUANCE")) return "ISSUANCE";
             if (upper.Contains("ADVISING")) return "ADVISING";
             return null;
+        }
+        private void EnsureActionDefaults(Reconciliation r)
+        {
+            try
+            {
+                if (r == null) return;
+                var all = _offlineFirstService?.UserFields;
+                bool isNa = !r.Action.HasValue || UserFieldUpdateService.IsActionNA(r.Action, all);
+                if (isNa)
+                {
+                    r.ActionStatus = null;
+                    r.ActionDate = null;
+                }
+                else
+                {
+                    if (!r.ActionStatus.HasValue) r.ActionStatus = false; // PENDING
+                    if (!r.ActionDate.HasValue) r.ActionDate = DateTime.Now;
+                }
+            }
+            catch { }
         }
         #endregion
 
@@ -688,7 +877,7 @@ namespace RecoTool.Services
                     if (res?.Rule == null) { updates.Add(reconciliation); continue; }
                     if (!res.Rule.AutoApply) { updates.Add(reconciliation); continue; }
 
-                    if (res.NewActionIdSelf.HasValue) reconciliation.Action = res.NewActionIdSelf.Value;
+                    if (res.NewActionIdSelf.HasValue) { reconciliation.Action = res.NewActionIdSelf.Value; EnsureActionDefaults(reconciliation); }
                     if (res.NewKpiIdSelf.HasValue) reconciliation.KPI = res.NewKpiIdSelf.Value;
                     if (res.NewIncidentTypeIdSelf.HasValue) reconciliation.IncidentType = res.NewIncidentTypeIdSelf.Value;
                     if (res.NewRiskyItemSelf.HasValue) reconciliation.RiskyItem = res.NewRiskyItemSelf.Value;
@@ -822,7 +1011,7 @@ namespace RecoTool.Services
                     var res = await _rulesEngine.EvaluateAsync(ctx, Services.Rules.RuleScope.Import).ConfigureAwait(false);
                     if (res?.Rule != null && res.Rule.AutoApply)
                     {
-                        if (res.NewActionIdSelf.HasValue) receivableReco.Action = res.NewActionIdSelf.Value;
+                        if (res.NewActionIdSelf.HasValue) { receivableReco.Action = res.NewActionIdSelf.Value; EnsureActionDefaults(receivableReco); }
                         if (res.NewKpiIdSelf.HasValue) receivableReco.KPI = res.NewKpiIdSelf.Value;
                         if (res.NewIncidentTypeIdSelf.HasValue) receivableReco.IncidentType = res.NewIncidentTypeIdSelf.Value;
                         if (res.NewRiskyItemSelf.HasValue) receivableReco.RiskyItem = res.NewRiskyItemSelf.Value;
@@ -884,7 +1073,7 @@ namespace RecoTool.Services
                     var res = await _rulesEngine.EvaluateAsync(ctx, Services.Rules.RuleScope.Import).ConfigureAwait(false);
                     if (res?.Rule != null && res.Rule.AutoApply)
                     {
-                        if (res.NewActionIdSelf.HasValue) pivotLine.reco.Action = res.NewActionIdSelf.Value;
+                        if (res.NewActionIdSelf.HasValue) { pivotLine.reco.Action = res.NewActionIdSelf.Value; EnsureActionDefaults(pivotLine.reco); }
                         if (res.NewKpiIdSelf.HasValue) pivotLine.reco.KPI = res.NewKpiIdSelf.Value;
                         if (res.NewIncidentTypeIdSelf.HasValue) pivotLine.reco.IncidentType = res.NewIncidentTypeIdSelf.Value;
                         if (res.NewRiskyItemSelf.HasValue) pivotLine.reco.RiskyItem = res.NewRiskyItemSelf.Value;
@@ -938,6 +1127,40 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Récupère une réconciliation par ID (sans créer si inexistante)
+        /// </summary>
+        public async Task<Reconciliation> GetReconciliationByIdAsync(string countryId, string id)
+        {
+            var query = "SELECT * FROM T_Reconciliation WHERE ID = ? AND DeleteDate IS NULL";
+            var existing = await ExecuteQueryAsync<Reconciliation>(query, _connectionString, id).ConfigureAwait(false);
+            return existing.FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Évalue les règles en mode Edit pour une ligne sans appliquer les modifications.
+        /// Sert à afficher une confirmation UI avant l'application automatique.
+        /// </summary>
+        public async Task<RuleEvaluationResult> PreviewRulesForEditAsync(string reconciliationId)
+        {
+            try
+            {
+                var currentCountryId = _offlineFirstService?.CurrentCountryId;
+                if (string.IsNullOrWhiteSpace(currentCountryId) || _rulesEngine == null) return null;
+                if (_countries == null || !_countries.TryGetValue(currentCountryId, out var countryCtx) || countryCtx == null) return null;
+
+                var amb = await GetAmbreRowByIdAsync(currentCountryId, reconciliationId).ConfigureAwait(false);
+                var r = await GetOrCreateReconciliationAsync(reconciliationId).ConfigureAwait(false);
+                if (amb == null || r == null) return null;
+
+                bool isPivot = amb.IsPivotAccount(countryCtx.CNT_AmbrePivot);
+                var ctx = BuildRuleContext(amb, r, countryCtx, currentCountryId, isPivot);
+                var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Edit).ConfigureAwait(false);
+                return res;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
         /// Sauvegarde une réconciliation
         /// </summary>
         public async Task<bool> SaveReconciliationAsync(Reconciliation reconciliation)
@@ -946,9 +1169,17 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Sauvegarde une réconciliation avec option pour appliquer (ou non) les règles côté édition.
+        /// </summary>
+        public async Task<bool> SaveReconciliationAsync(Reconciliation reconciliation, bool applyRulesOnEdit)
+        {
+            return await SaveReconciliationsAsync(new[] { reconciliation }, applyRulesOnEdit);
+        }
+
+        /// <summary>
         /// Sauvegarde plusieurs réconciliations en batch
         /// </summary>
-        public async Task<bool> SaveReconciliationsAsync(IEnumerable<Reconciliation> reconciliations)
+        public async Task<bool> SaveReconciliationsAsync(IEnumerable<Reconciliation> reconciliations, bool applyRulesOnEdit = true)
         {
             try
             {
@@ -963,53 +1194,77 @@ namespace RecoTool.Services
                             var updatedRows = new List<Reconciliation>();
                             foreach (var reconciliation in reconciliations)
                             {
-                                // Evaluate truth-table rules on edit (self updates + user message). Counterpart updates are planned separately.
-                                try
+                                if (applyRulesOnEdit)
                                 {
-                                    var currentCountryId = _offlineFirstService?.CurrentCountryId;
-                                    if (!string.IsNullOrWhiteSpace(currentCountryId) && _rulesEngine != null)
+                                    // Evaluate truth-table rules on edit (self updates + user message). Counterpart updates are planned separately.
+                                    try
                                     {
-                                        Country countryCtx = null;
-                                        if (_countries != null && _countries.TryGetValue(currentCountryId, out var c)) countryCtx = c;
-                                        if (countryCtx != null)
+                                        var currentCountryId = _offlineFirstService?.CurrentCountryId;
+                                        if (!string.IsNullOrWhiteSpace(currentCountryId) && _rulesEngine != null)
                                         {
-                                            var amb = await GetAmbreRowByIdAsync(currentCountryId, reconciliation.ID).ConfigureAwait(false);
-                                            if (amb != null)
+                                            Country countryCtx = null;
+                                            if (_countries != null && _countries.TryGetValue(currentCountryId, out var c)) countryCtx = c;
+                                            if (countryCtx != null)
                                             {
-                                                bool isPivot = amb.IsPivotAccount(countryCtx.CNT_AmbrePivot);
-                                                var ctx = BuildRuleContext(amb, reconciliation, countryCtx, currentCountryId, isPivot);
-                                                var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Edit).ConfigureAwait(false);
-                                                if (res != null && res.Rule != null)
+                                                var amb = await GetAmbreRowByIdAsync(currentCountryId, reconciliation.ID).ConfigureAwait(false);
+                                                if (amb != null)
                                                 {
-                                                    if (res.Rule.AutoApply)
+                                                    bool isPivot = amb.IsPivotAccount(countryCtx.CNT_AmbrePivot);
+                                                    var ctx = BuildRuleContext(amb, reconciliation, countryCtx, currentCountryId, isPivot);
+                                                    var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Edit).ConfigureAwait(false);
+                                                    if (res != null && res.Rule != null)
                                                     {
-                                                        if (res.NewActionIdSelf.HasValue && !reconciliation.Action.HasValue)
-                                                            reconciliation.Action = res.NewActionIdSelf.Value;
-                                                        if (res.NewKpiIdSelf.HasValue && !reconciliation.KPI.HasValue)
-                                                            reconciliation.KPI = res.NewKpiIdSelf.Value;
-                                                        if (res.NewIncidentTypeIdSelf.HasValue && !reconciliation.IncidentType.HasValue)
-                                                            reconciliation.IncidentType = res.NewIncidentTypeIdSelf.Value;
-                                                        if (res.NewRiskyItemSelf.HasValue && !reconciliation.RiskyItem.HasValue)
-                                                            reconciliation.RiskyItem = res.NewRiskyItemSelf.Value;
-                                                        if (res.NewReasonNonRiskyIdSelf.HasValue && !reconciliation.ReasonNonRisky.HasValue)
-                                                            reconciliation.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value;
-                                                        if (res.NewToRemindSelf.HasValue)
-                                                            reconciliation.ToRemind = res.NewToRemindSelf.Value;
-                                                        if (res.NewToRemindDaysSelf.HasValue)
+                                                        if (res.Rule.AutoApply)
                                                         {
-                                                            try { reconciliation.ToRemindDate = DateTime.Today.AddDays(res.NewToRemindDaysSelf.Value); } catch { }
+                                                            if (res.NewActionIdSelf.HasValue && !reconciliation.Action.HasValue)
+                                                            {
+                                                                reconciliation.Action = res.NewActionIdSelf.Value;
+                                                                EnsureActionDefaults(reconciliation);
+                                                            }
+                                                            if (res.NewKpiIdSelf.HasValue && !reconciliation.KPI.HasValue)
+                                                                reconciliation.KPI = res.NewKpiIdSelf.Value;
+                                                            if (res.NewIncidentTypeIdSelf.HasValue && !reconciliation.IncidentType.HasValue)
+                                                                reconciliation.IncidentType = res.NewIncidentTypeIdSelf.Value;
+                                                            if (res.NewRiskyItemSelf.HasValue && !reconciliation.RiskyItem.HasValue)
+                                                                reconciliation.RiskyItem = res.NewRiskyItemSelf.Value;
+                                                            if (res.NewReasonNonRiskyIdSelf.HasValue && !reconciliation.ReasonNonRisky.HasValue)
+                                                                reconciliation.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value;
+                                                            if (res.NewToRemindSelf.HasValue)
+                                                                reconciliation.ToRemind = res.NewToRemindSelf.Value;
+                                                            if (res.NewToRemindDaysSelf.HasValue)
+                                                            {
+                                                                try { reconciliation.ToRemindDate = DateTime.Today.AddDays(res.NewToRemindDaysSelf.Value); } catch { }
+                                                            }
                                                         }
-                                                    }
-                                                    if (!string.IsNullOrWhiteSpace(res.UserMessage))
-                                                    {
+                                                        if (!string.IsNullOrWhiteSpace(res.UserMessage))
+                                                        {
+                                                            try
+                                                            {
+                                                                var prefix = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {_currentUser}: ";
+                                                                var msg = prefix + $"[Rule {res.Rule.RuleId ?? "(unnamed)"}] {res.UserMessage}";
+                                                                if (string.IsNullOrWhiteSpace(reconciliation.Comments))
+                                                                    reconciliation.Comments = msg;
+                                                                else if (!reconciliation.Comments.Contains(msg))
+                                                                    reconciliation.Comments = msg + Environment.NewLine + reconciliation.Comments;
+                                                            }
+                                                            catch { }
+                                                        }
+
+                                                        // Log to file and raise UI event for edit path (even if fields were already set)
                                                         try
                                                         {
-                                                            var prefix = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {_currentUser}: ";
-                                                            var msg = prefix + $"[Rule {res.Rule.RuleId ?? "(unnamed)"}] {res.UserMessage}";
-                                                            if (string.IsNullOrWhiteSpace(reconciliation.Comments))
-                                                                reconciliation.Comments = msg;
-                                                            else if (!reconciliation.Comments.Contains(msg))
-                                                                reconciliation.Comments = msg + Environment.NewLine + reconciliation.Comments;
+                                                            var outs = new List<string>();
+                                                            if (res.NewActionIdSelf.HasValue) outs.Add($"Action={res.NewActionIdSelf.Value}");
+                                                            if (res.NewKpiIdSelf.HasValue) outs.Add($"KPI={res.NewKpiIdSelf.Value}");
+                                                            if (res.NewIncidentTypeIdSelf.HasValue) outs.Add($"IncidentType={res.NewIncidentTypeIdSelf.Value}");
+                                                            if (res.NewRiskyItemSelf.HasValue) outs.Add($"RiskyItem={res.NewRiskyItemSelf.Value}");
+                                                            if (res.NewReasonNonRiskyIdSelf.HasValue) outs.Add($"ReasonNonRisky={res.NewReasonNonRiskyIdSelf.Value}");
+                                                            if (res.NewToRemindSelf.HasValue) outs.Add($"ToRemind={res.NewToRemindSelf.Value}");
+                                                            if (res.NewToRemindDaysSelf.HasValue) outs.Add($"ToRemindDays={res.NewToRemindDaysSelf.Value}");
+                                                            if (res.NewFirstClaimTodaySelf == true) outs.Add("FirstClaimDate=Today");
+                                                            var outsStr = string.Join("; ", outs);
+                                                            LogHelper.WriteRuleApplied("edit", currentCountryId, reconciliation.ID, res.Rule.RuleId, outsStr, res.UserMessage);
+                                                            RaiseRuleApplied("edit", currentCountryId, reconciliation.ID, res.Rule.RuleId, outsStr, res.UserMessage);
                                                         }
                                                         catch { }
                                                     }
@@ -1017,8 +1272,8 @@ namespace RecoTool.Services
                                             }
                                         }
                                     }
+                                    catch { /* do not block user saves on rules engine errors */ }
                                 }
-                                catch { /* do not block user saves on rules engine errors */ }
 
                                 var op = await SaveSingleReconciliationAsync(connection, transaction, reconciliation).ConfigureAwait(false);
                                 if (!string.Equals(op, "NOOP", StringComparison.OrdinalIgnoreCase))
@@ -1127,6 +1382,7 @@ namespace RecoTool.Services
                     row.MbawData = r.MbawData;
                     row.SpiritData = r.SpiritData;
                     row.TriggerDate = r.TriggerDate;
+                    // row.ReviewDate = r.ReviewDate; // DEPRECATED
                 }
             }
         }
@@ -1201,6 +1457,7 @@ namespace RecoTool.Services
                             if (!Equal(DbVal(20), (object)reconciliation.MbawData)) changed.Add("MbawData");
                             if (!Equal(DbVal(21), (object)reconciliation.SpiritData)) changed.Add("SpiritData");
                             if (!Equal(DbVal(22), reconciliation.TriggerDate.HasValue ? (object)reconciliation.TriggerDate.Value : null)) changed.Add("TriggerDate");
+                            // if (!Equal(DbVal(23), reconciliation.ReviewDate.HasValue ? (object)reconciliation.ReviewDate.Value : null)) changed.Add("ReviewDate"); // DEPRECATED
 
                             if (changed.Count == 0)
                             {
@@ -1348,6 +1605,13 @@ namespace RecoTool.Services
                                         p.Value = reconciliation.TriggerDate.HasValue ? (object)reconciliation.TriggerDate.Value : DBNull.Value;
                                         break;
                                     }
+                                // DEPRECATED: ReviewDate removed
+                                // case "ReviewDate":
+                                //     {
+                                //         var p = cmd.Parameters.Add("@ReviewDate", OleDbType.Date);
+                                //         p.Value = reconciliation.ReviewDate.HasValue ? (object)reconciliation.ReviewDate.Value : DBNull.Value;
+                                //         break;
+                                //     }
                             }
                         }
 
@@ -1456,6 +1720,9 @@ namespace RecoTool.Services
             pReason.Value = reconciliation.ReasonNonRisky.HasValue ? (object)reconciliation.ReasonNonRisky.Value : DBNull.Value;
             var pTrigDate = cmd.Parameters.Add("@TriggerDate", OleDbType.Date);
             pTrigDate.Value = reconciliation.TriggerDate.HasValue ? (object)reconciliation.TriggerDate.Value : DBNull.Value;
+            // DEPRECATED: ReviewDate removed
+            // var pReview = cmd.Parameters.Add("@ReviewDate", OleDbType.Date);
+            // pReview.Value = reconciliation.ReviewDate.HasValue ? (object)reconciliation.ReviewDate.Value : DBNull.Value;
 
             if (isInsert)
             {
@@ -1715,6 +1982,28 @@ namespace RecoTool.Services
                 ? (int?)(today - r.LastClaimDate.Value.Date).TotalDays
                 : null;
 
+            // Resolve DWINGS invoice to compute new inputs (best-effort, from cache)
+            bool? mtAcked = null;
+            bool? hasCommEmail = null;
+            bool? bgiInitiated = null;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(r?.DWINGS_InvoiceID))
+                {
+                    var invoices = GetDwingsInvoicesAsync().GetAwaiter().GetResult();
+                    var inv = invoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, r.DWINGS_InvoiceID, StringComparison.OrdinalIgnoreCase));
+                    if (inv != null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(inv.MT_STATUS))
+                            mtAcked = string.Equals(inv.MT_STATUS, "ACKED", StringComparison.OrdinalIgnoreCase);
+                        hasCommEmail = inv.COMM_ID_EMAIL;
+                        if (!string.IsNullOrWhiteSpace(inv.T_INVOICE_STATUS))
+                            bgiInitiated = string.Equals(inv.T_INVOICE_STATUS, "INITIATED", StringComparison.OrdinalIgnoreCase);
+                    }
+                }
+            }
+            catch { }
+
             return new RuleContext
             {
                 CountryId = countryId,
@@ -1735,7 +2024,11 @@ namespace RecoTool.Services
                 HasManualMatch = hasManualMatch,
                 IsFirstRequest = isFirstRequest,
                 DaysSinceReminder = daysSinceReminder,
-                CurrentActionId = r?.Action
+                CurrentActionId = r?.Action,
+                // New DWINGS-derived
+                IsMtAcked = mtAcked,
+                HasCommIdEmail = hasCommEmail,
+                IsBgiInitiated = bgiInitiated
             };
         }
 

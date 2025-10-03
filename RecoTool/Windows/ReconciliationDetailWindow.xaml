@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:RecoTool.UI.Views.Windows"
         mc:Ignorable="d"
-        Title="Reconciliation Detail" Height="700" Width="1000"
+        Title="Reconciliation Detail" Height="721" Width="1074"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource BNPBackground}"
         Loaded="Window_Loaded"
@@ -13,52 +13,83 @@
     <Window.Resources>
         <!-- Shadow Effects -->
         <DropShadowEffect x:Key="StandardShadow" Direction="270" BlurRadius="10" ShadowDepth="3" Opacity="0.2" />
-        <DropShadowEffect x:Key="LightShadow" Direction="270" BlurRadius="5" ShadowDepth="2" Opacity="0.2" />
-        
+        <DropShadowEffect x:Key="LightShadow" Direction="270" BlurRadius="5" ShadowDepth="2" Opacity="0.15" />
+        <DropShadowEffect x:Key="CardShadow" Direction="270" BlurRadius="8" ShadowDepth="2" Opacity="0.12" />
+
+        <!-- Modern Card Style -->
+        <Style x:Key="CardStyle" TargetType="Border">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="16"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+            <Setter Property="Effect" Value="{StaticResource CardShadow}"/>
+            <Setter Property="BorderBrush" Value="#E0E0E0"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+
+        <!-- Section Header Style -->
+        <Style x:Key="SectionHeaderStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#333333"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+
         <!-- ComboBox Style -->
         <Style x:Key="ModernComboBoxStyle" TargetType="ComboBox">
-            <Setter Property="Height" Value="30" />
-            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="10,6" />
             <Setter Property="Background" Value="White" />
             <Setter Property="BorderBrush" Value="#DDDDDD" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
-        
+
         <!-- TextBox Style -->
         <Style x:Key="ModernTextBoxStyle" TargetType="TextBox">
-            <Setter Property="Height" Value="30" />
-            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="10,6" />
             <Setter Property="Background" Value="White" />
             <Setter Property="BorderBrush" Value="#DDDDDD" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
-        
+
         <!-- DatePicker Style -->
         <Style x:Key="ModernDatePickerStyle" TargetType="DatePicker">
-            <Setter Property="Height" Value="30" />
-            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="10,6" />
             <Setter Property="Background" Value="White" />
             <Setter Property="BorderBrush" Value="#DDDDDD" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
-        
+
         <!-- Label Style -->
         <Style x:Key="FieldLabelStyle" TargetType="TextBlock">
-            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="#666666"/>
             <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="Margin" Value="0,0,10,0" />
+            <Setter Property="Margin" Value="0,0,12,0" />
         </Style>
-        
+
         <!-- Value TextBlock Style -->
         <Style x:Key="FieldValueStyle" TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="#222222"/>
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
+
+        <!-- Badge Style -->
+        <Style x:Key="BadgeStyle" TargetType="Border">
+            <Setter Property="CornerRadius" Value="12"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+        </Style>
     </Window.Resources>
-    
+
     <Border BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Margin="10">
         <Grid>
             <Grid.RowDefinitions>
@@ -68,13 +99,44 @@
             </Grid.RowDefinitions>
 
             <!-- Header -->
-            <Border Grid.Row="0" Background="{DynamicResource BNPMainGreenBrush}" Padding="15,10" CornerRadius="8,8,0,0">
-                <StackPanel Orientation="Horizontal">
-                    <Border Background="#FFFFFF" CornerRadius="50" Width="32" Height="32" Margin="0,0,12,0">
-                        <TextBlock x:Name="HeaderIcon" Text="&#xE8EC;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="{DynamicResource BNPMainGreenBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                    <TextBlock x:Name="HeaderText" Text="Reconciliation Detail" FontSize="18" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
-                </StackPanel>
+            <Border Grid.Row="0" Background="{DynamicResource BNPMainGreenBrush}" Padding="20,14" CornerRadius="8,8,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Left: Icon + Title -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal">
+                        <Border Background="#FFFFFF" CornerRadius="50" Width="36" Height="36" Margin="0,0,14,0">
+                            <TextBlock x:Name="HeaderIcon" Text="&#xE8EC;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="{DynamicResource BNPMainGreenBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock x:Name="HeaderText" Text="Reconciliation Detail" FontSize="18" FontWeight="Bold" Foreground="White"/>
+                            <TextBlock x:Name="HeaderSubtext" Text="ID: Loading..." FontSize="11" Foreground="#E0F2E9" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Right: Status Badges -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <!-- Action Status Badge -->
+                        <Border x:Name="ActionStatusBadge" CornerRadius="14" Background="#FFF3E0" Padding="12,6" Margin="0,0,8,0" Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE9F5;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#F57C00" Margin="0,0,6,0"/>
+                                <TextBlock x:Name="ActionStatusText" Text="PENDING" FontSize="11" FontWeight="SemiBold" Foreground="#F57C00"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Match Status Badge -->
+                        <Border x:Name="MatchStatusBadge" CornerRadius="14" Background="#FFEBEE" Padding="12,6" Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#C62828" Margin="0,0,6,0"/>
+                                <TextBlock Text="NOT MATCHED" FontSize="11" FontWeight="SemiBold" Foreground="#C62828"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Grid>
             </Border>
 
             <!-- Content -->
@@ -83,21 +145,36 @@
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                
+
                 <!-- Section supérieure : Détails de l'opération -->
-                <Border Grid.Row="0" Background="White" Margin="0,0,0,5" Padding="15">
+                <Border Grid.Row="0" Background="#F8F9FA" Margin="0,0,0,5" Padding="20">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        
+
                         <!-- Titre de la section -->
-                        <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,10">
-                            <TextBlock Text="Operation Details" FontWeight="Bold" FontSize="16" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-                            <TextBlock x:Name="AccountTypeText" Text="Account Type: Receivable" HorizontalAlignment="Right" FontWeight="SemiBold"/>
-                        </DockPanel>
-                        
+                        <Grid Grid.Row="0" Margin="0,0,0,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                <TextBlock Text="&#xE8EA;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="{DynamicResource BNPMainGreenBrush}" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="Operation Details" FontWeight="Bold" FontSize="18" Foreground="#222222" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <Border Grid.Column="2" x:Name="AccountTypeBadge" CornerRadius="16" Background="#E8F5E9" Padding="14,6">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#2E7D32" Margin="0,0,6,0"/>
+                                    <TextBlock x:Name="AccountTypeText" Text="Receivable" FontSize="12" FontWeight="SemiBold" Foreground="#2E7D32"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
                         <!-- Contenu des détails -->
                         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                             <Grid>
@@ -105,346 +182,394 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                
+
                                 <!-- Colonne de gauche -->
-                                <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                                <StackPanel Grid.Column="0" Margin="0,0,12,0">
                                     <!-- Informations générales -->
-                                    <GroupBox Header="General Information" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="120"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                            </Grid.RowDefinitions>
-                                            
-                                            <!-- Date d'opération -->
-                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="OperationDateValue" Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                            
-                                            <!-- Description -->
-                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Description:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="DescriptionValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                            
-                                            <!-- Montant -->
-                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Amount:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="AmountValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                            
-                                            <!-- Devise -->
-                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Currency:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="CurrencyValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                            
-                                            <!-- Status -->
-                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Status:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="StatusValue" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                            
-                                            <!-- Référence -->
-                                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Reference:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="ReferenceValue" Grid.Row="5" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                    <Border Style="{StaticResource CardStyle}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                                <TextBlock Text="&#xE8F4;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#1976D2" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="General Information" Style="{StaticResource SectionHeaderStyle}" Margin="0"/>
+                                            </StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="120"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
 
-                                            <!-- Country -->
-                                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Country:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="CountryValue" Grid.Row="6" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                                <!-- Date d'opération -->
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="OperationDateValue" Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
 
-                                            <!-- Account -->
-                                            <TextBlock Grid.Row="7" Grid.Column="0" Text="Account:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="AccountIdValue" Grid.Row="7" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                                <!-- Description -->
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Description:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="DescriptionValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
 
-                                            <!-- Event -->
-                                            <TextBlock Grid.Row="8" Grid.Column="0" Text="Event Num:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="EventNumValue" Grid.Row="8" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                        </Grid>
-                                    </GroupBox>
-                                    
+                                                <!-- Montant -->
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Amount:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="AmountValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <!-- Devise -->
+                                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Currency:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="CurrencyValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <!-- Status -->
+                                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Status:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="StatusValue" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <!-- Référence -->
+                                                <TextBlock Grid.Row="5" Grid.Column="0" Text="Reference:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="ReferenceValue" Grid.Row="5" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <!-- Country -->
+                                                <TextBlock Grid.Row="6" Grid.Column="0" Text="Country:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="CountryValue" Grid.Row="6" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <!-- Account -->
+                                                <TextBlock Grid.Row="7" Grid.Column="0" Text="Account:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="AccountIdValue" Grid.Row="7" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <!-- Event -->
+                                                <TextBlock Grid.Row="8" Grid.Column="0" Text="Event Num:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="EventNumValue" Grid.Row="8" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
                                     <!-- Informations financières -->
-                                    <GroupBox Header="Financial Information" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="120"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                            </Grid.RowDefinitions>
-                                            
-                                            <!-- Montant en EUR -->
-                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Amount EUR:" Style="{StaticResource FieldLabelStyle}"/>
-                                            <TextBlock x:Name="AmountInEURValue" Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValueStyle}"/>
-                                            
-                                            <!-- Montant en KEUR -->
-                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Amount KEUR:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="AmountInKEURValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                            
-                                            <!-- Taux de change -->
-                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Exchange Rate:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="FXRateValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                            
-                                            <!-- Date de valeur -->
-                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Value Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="ValueDateValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                            
-                                            <!-- Type de transaction -->
-                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Type:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="TransactionTypeValue" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                        </Grid>
-                                    </GroupBox>
-                                </StackPanel>
-                                
-                                <!-- Colonne de droite -->
-                                <StackPanel Grid.Column="1" Margin="10,0,0,0">
-                                    <!-- Informations client -->
-                                    <GroupBox Header="Client Information" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="120"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                            </Grid.RowDefinitions>
-                                            
-                                            <!-- Nom du débiteur -->
-                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Client/Bank:" Style="{StaticResource FieldLabelStyle}"/>
-                                            <TextBlock x:Name="DebtorNameValue" Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValueStyle}"/>
-                                            
-                                            <!-- Facture -->
-                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Invoice:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="InvoiceValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                    <Border Style="{StaticResource CardStyle}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                                <TextBlock Text="&#xE7EF;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#388E3C" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="Financial Information" Style="{StaticResource SectionHeaderStyle}" Margin="0"/>
+                                            </StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="120"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
 
-                                            <!-- Groupe -->
-                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Group:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="GroupNameValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                                <!-- Montant en EUR -->
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Amount EUR:" Style="{StaticResource FieldLabelStyle}"/>
+                                                <TextBlock x:Name="AmountInEURValue" Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValueStyle}"/>
 
-                                            <!-- Swift Code (from Ambre) -->
-                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Swift Code:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="SwiftCodeValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                                <!-- Montant en KEUR -->
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Amount KEUR:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="AmountInKEURValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
 
-                                            <!-- DWINGS IDs (display) -->
-                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="DWINGS IDs:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="DwingsIdsValue" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                        </Grid>
-                                    </GroupBox>
+                                                <!-- Taux de change -->
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Exchange Rate:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="FXRateValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
 
-                                    <!-- DWINGS Guarantee Details -->
-                                    <GroupBox Header="DWINGS Guarantee" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="140"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                            </Grid.RowDefinitions>
+                                                <!-- Date de valeur -->
+                                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Value Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="ValueDateValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
 
-                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Nature:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="GNatureValue" Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-
-                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Status:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="GStatusValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-
-                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Issue Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="GIssueDateValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-
-                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Party ID:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="GPartyIdValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-
-                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Name:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="GName1Value" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                        </Grid>
-                                    </GroupBox>
-
-                                    <!-- DWINGS Invoice Details -->
-                                    <GroupBox Header="DWINGS Invoice" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="160"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                            </Grid.RowDefinitions>
-
-                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Requested Amount:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="IRequestedAmountValue" Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-
-                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Billing Currency:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="IBillingCurrencyValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-
-                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Start Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="IStartDateValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-
-                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="End Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="IEndDateValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-
-                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Status:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="IStatusValue" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-
-                                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Business Case Ref:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
-                                            <TextBlock x:Name="IBusinessCaseRefValue" Grid.Row="5" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
-                                        </Grid>
-                                    </GroupBox>
-
-                                    <!-- Additional Data (MbawData, SpiritData) -->
-                                    <GroupBox Header="Additional Data" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="140"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                            </Grid.RowDefinitions>
-
-                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Mbaw Data:" Style="{StaticResource FieldLabelStyle}" VerticalAlignment="Top"/>
-                                            <TextBox x:Name="MbawDataTextBox" Grid.Row="0" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="80"/>
-
-                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Spirit Data:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0" VerticalAlignment="Top"/>
-                                            <TextBox x:Name="SpiritDataTextBox" Grid.Row="1" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="80" Margin="0,10,0,0"/>
-                                        </Grid>
-                                    </GroupBox>
+                                                <!-- Type de transaction -->
+                                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Type:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="TransactionTypeValue" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
 
                                     <!-- Informations utilisateur (modifiables) -->
-                                    <GroupBox Header="User Information" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="120"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                            </Grid.RowDefinitions>
+                                    <Border Style="{StaticResource CardStyle}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                                <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#00796B" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="User Information" Style="{StaticResource SectionHeaderStyle}" Margin="0"/>
+                                            </StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="120"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
 
-                                            <!-- Action -->
-                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Action:" Style="{StaticResource FieldLabelStyle}"/>
-                                            <ComboBox x:Name="ActionComboBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}"
+                                                <!-- Action -->
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Action:" Style="{StaticResource FieldLabelStyle}"/>
+                                                <ComboBox x:Name="ActionComboBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}"
                                                       ItemsSource="{Binding ActionOptions}" DisplayMemberPath="Content" SelectedValuePath="Id"
                                                       SelectedValue="{Binding SelectedActionId, Mode=TwoWay}"/>
 
-                                            <!-- KPI -->
-                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="KPI:" Style="{StaticResource FieldLabelStyle}"/>
-                                            <ComboBox x:Name="KPIComboBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}"
+                                                <!-- KPI -->
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="KPI:" Style="{StaticResource FieldLabelStyle}"/>
+                                                <ComboBox x:Name="KPIComboBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}"
                                                       ItemsSource="{Binding KPIOptions}" DisplayMemberPath="Content" SelectedValuePath="Id"
                                                       SelectedValue="{Binding SelectedKPIId, Mode=TwoWay}"/>
 
-                                            <!-- Incident Type -->
-                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Incident Type:" Style="{StaticResource FieldLabelStyle}"/>
-                                            <ComboBox x:Name="IncidentTypeComboBox" Grid.Row="2" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}"
+                                                <!-- Incident Type -->
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Incident Type:" Style="{StaticResource FieldLabelStyle}"/>
+                                                <ComboBox x:Name="IncidentTypeComboBox" Grid.Row="2" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}"
                                                       ItemsSource="{Binding IncidentTypeOptions}" DisplayMemberPath="Content" SelectedValuePath="Id"
                                                       SelectedValue="{Binding SelectedIncidentTypeId, Mode=TwoWay}"/>
 
-                                            <!-- Assignee (placeholder static list) -->
-                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Assignee:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <ComboBox x:Name="AssigneeComboBox" Grid.Row="3" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}" Margin="0,10,0,0">
-                                                <ComboBoxItem>Not Assigned</ComboBoxItem>
-                                                <ComboBoxItem>John Doe</ComboBoxItem>
-                                                <ComboBoxItem>Jane Smith</ComboBoxItem>
-                                                <ComboBoxItem>Robert Johnson</ComboBoxItem>
-                                                <ComboBoxItem>Emily Davis</ComboBoxItem>
-                                            </ComboBox>
+                                                <!-- Assignee (placeholder static list) -->
+                                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Assignee:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                                <ComboBox x:Name="AssigneeComboBox" Grid.Row="3" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}" Margin="0,10,0,0">
+                                                    <ComboBoxItem>Not Assigned</ComboBoxItem>
+                                                    <ComboBoxItem>John Doe</ComboBoxItem>
+                                                    <ComboBoxItem>Jane Smith</ComboBoxItem>
+                                                    <ComboBoxItem>Robert Johnson</ComboBoxItem>
+                                                    <ComboBoxItem>Emily Davis</ComboBoxItem>
+                                                </ComboBox>
 
-                                            <!-- Reminder -->
-                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Reminder:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,0">
-                                                <CheckBox x:Name="ToRemindCheckBox" Content="To Remind" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                                                <DatePicker x:Name="ReminderDatePicker" Style="{StaticResource ModernDatePickerStyle}" Width="160"/>
+                                                <!-- Reminder -->
+                                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Reminder:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                                <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,0">
+                                                    <CheckBox x:Name="ToRemindCheckBox" Content="To Remind" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                                    <DatePicker x:Name="ReminderDatePicker" Style="{StaticResource ModernDatePickerStyle}" Width="160"/>
+                                                </StackPanel>
+
+                                                <!-- ACK -->
+                                                <TextBlock Grid.Row="5" Grid.Column="0" Text="ACK:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                                <CheckBox x:Name="AckCheckBox" Grid.Row="5" Grid.Column="1" VerticalAlignment="Center" Margin="0,10,0,0"/>
+
+                                                <!-- Comment -->
+                                                <TextBlock Grid.Row="6" Grid.Column="0" Text="Comment:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0" VerticalAlignment="Top"/>
+                                                <TextBox x:Name="CommentTextBox" Grid.Row="6" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="60" Margin="0,10,0,0"/>
+
+                                                <!-- Swift Code (editable) -->
+                                                <TextBlock Grid.Row="7" Grid.Column="0" Text="Swift Code:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                                <TextBox x:Name="SwiftCodeTextBox" Grid.Row="7" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,10,0,0"/>
+
+                                                <!-- Payment Ref -->
+                                                <TextBlock Grid.Row="8" Grid.Column="0" Text="Payment Ref:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                                <TextBox x:Name="PaymentRefTextBox" Grid.Row="8" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,10,0,0"/>
+
+                                                <!-- Internal Ref -->
+                                                <TextBlock Grid.Row="9" Grid.Column="0" Text="Internal Ref:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                                <TextBox x:Name="InternalRefTextBox" Grid.Row="9" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,10,0,0"/>
+
+                                                <!-- Trigger Date -->
+                                                <TextBlock Grid.Row="10" Grid.Column="0" Text="Trigger Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                                <DatePicker x:Name="TriggerDatePicker" Grid.Row="10" Grid.Column="1" Style="{StaticResource ModernDatePickerStyle}" Margin="0,10,0,0"/>
+
+                                                <!-- Action Done -->
+                                                <TextBlock Grid.Row="11" Grid.Column="0" Text="Action Done:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                                <CheckBox x:Name="ActionDoneCheckBox" Grid.Row="11" Grid.Column="1" VerticalAlignment="Center" Margin="0,10,0,0"/>
+
+                                                <!-- Action Date -->
+                                                <TextBlock Grid.Row="12" Grid.Column="0" Text="Action Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                                <DatePicker x:Name="ActionDatePicker" Grid.Row="12" Grid.Column="1" Style="{StaticResource ModernDatePickerStyle}" Margin="0,10,0,0"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- Colonne de droite -->
+                                <StackPanel Grid.Column="1" Margin="12,0,0,0">
+                                    <!-- Informations client -->
+                                    <Border Style="{StaticResource CardStyle}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                                <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#7B1FA2" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="Client Information" Style="{StaticResource SectionHeaderStyle}" Margin="0"/>
                                             </StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="120"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
 
-                                            <!-- ACK -->
-                                            <TextBlock Grid.Row="5" Grid.Column="0" Text="ACK:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <CheckBox x:Name="AckCheckBox" Grid.Row="5" Grid.Column="1" VerticalAlignment="Center" Margin="0,10,0,0"/>
+                                                <!-- Nom du débiteur -->
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Client/Bank:" Style="{StaticResource FieldLabelStyle}"/>
+                                                <TextBlock x:Name="DebtorNameValue" Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValueStyle}"/>
 
-                                            <!-- Comment -->
-                                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Comment:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0" VerticalAlignment="Top"/>
-                                            <TextBox x:Name="CommentTextBox" Grid.Row="6" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="60" Margin="0,10,0,0"/>
+                                                <!-- Facture -->
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Invoice:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="InvoiceValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
 
-                                            <!-- Swift Code (editable) -->
-                                            <TextBlock Grid.Row="7" Grid.Column="0" Text="Swift Code:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <TextBox x:Name="SwiftCodeTextBox" Grid.Row="7" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,10,0,0"/>
+                                                <!-- Groupe -->
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Group:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="GroupNameValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
 
-                                            <!-- Payment Ref -->
-                                            <TextBlock Grid.Row="8" Grid.Column="0" Text="Payment Ref:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <TextBox x:Name="PaymentRefTextBox" Grid.Row="8" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,10,0,0"/>
+                                                <!-- Swift Code (from Ambre) -->
+                                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Swift Code:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="SwiftCodeValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
 
-                                            <!-- Internal Ref -->
-                                            <TextBlock Grid.Row="9" Grid.Column="0" Text="Internal Ref:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <TextBox x:Name="InternalRefTextBox" Grid.Row="9" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,10,0,0"/>
+                                                <!-- DWINGS IDs (display) -->
+                                                <TextBlock Grid.Row="4" Grid.Column="0" Text="DWINGS IDs:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="DwingsIdsValue" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
 
-                                            <!-- Trigger Date -->
-                                            <TextBlock Grid.Row="10" Grid.Column="0" Text="Trigger Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <DatePicker x:Name="TriggerDatePicker" Grid.Row="10" Grid.Column="1" Style="{StaticResource ModernDatePickerStyle}" Margin="0,10,0,0"/>
+                                    <!-- DWINGS Guarantee Details -->
+                                    <Border Style="{StaticResource CardStyle}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                                <TextBlock Text="&#xE8D7;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#F57C00" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="DWINGS Guarantee" Style="{StaticResource SectionHeaderStyle}" Margin="0"/>
+                                            </StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="140"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
 
-                                            <!-- Action Done -->
-                                            <TextBlock Grid.Row="11" Grid.Column="0" Text="Action Done:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <CheckBox x:Name="ActionDoneCheckBox" Grid.Row="11" Grid.Column="1" VerticalAlignment="Center" Margin="0,10,0,0"/>
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Nature:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="GNatureValue" Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
 
-                                            <!-- Action Date -->
-                                            <TextBlock Grid.Row="12" Grid.Column="0" Text="Action Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <DatePicker x:Name="ActionDatePicker" Grid.Row="12" Grid.Column="1" Style="{StaticResource ModernDatePickerStyle}" Margin="0,10,0,0"/>
-                                        </Grid>
-                                    </GroupBox>
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Status:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="GStatusValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Issue Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="GIssueDateValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Party ID:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="GPartyIdValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Name:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="GName1Value" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- DWINGS Invoice Details -->
+                                    <Border Style="{StaticResource CardStyle}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                                <TextBlock Text="&#xE8A5;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#0288D1" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="DWINGS Invoice" Style="{StaticResource SectionHeaderStyle}" Margin="0"/>
+                                            </StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="160"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Requested Amount:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="IRequestedAmountValue" Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Billing Currency:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="IBillingCurrencyValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Start Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="IStartDateValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <TextBlock Grid.Row="3" Grid.Column="0" Text="End Date:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="IEndDateValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Status:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="IStatusValue" Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+
+                                                <TextBlock Grid.Row="5" Grid.Column="0" Text="Business Case Ref:" Style="{StaticResource FieldLabelStyle}" Margin="0,5,10,0"/>
+                                                <TextBlock x:Name="IBusinessCaseRefValue" Grid.Row="5" Grid.Column="1" Style="{StaticResource FieldValueStyle}" Margin="0,5,0,0"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- Additional Data (MbawData, SpiritData) -->
+                                    <Border Style="{StaticResource CardStyle}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                                <TextBlock Text="&#xE8FD;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#616161" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="Additional Data" Style="{StaticResource SectionHeaderStyle}" Margin="0"/>
+                                            </StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="140"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Mbaw Data:" Style="{StaticResource FieldLabelStyle}" VerticalAlignment="Top"/>
+                                                <TextBox x:Name="MbawDataTextBox" Grid.Row="0" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="80"/>
+
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Spirit Data:" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0" VerticalAlignment="Top"/>
+                                                <TextBox x:Name="SpiritDataTextBox" Grid.Row="1" Grid.Column="1" TextWrapping="Wrap" AcceptsReturn="True" Height="80" Margin="0,10,0,0"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
 
                                     <!-- Additional Reconciliation Flags -->
-                                    <GroupBox Header="Risk and Reason" Margin="0,0,0,10" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Padding="10">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="120"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                            </Grid.RowDefinitions>
+                                    <Border Style="{StaticResource CardStyle}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                                <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#D32F2F" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="Risk and Reason" Style="{StaticResource SectionHeaderStyle}" Margin="0"/>
+                                            </StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="120"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
 
-                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Risky Item:" Style="{StaticResource FieldLabelStyle}"/>
-                                            <TextBox x:Name="RiskyItemTextBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}"/>
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Risky Item:" Style="{StaticResource FieldLabelStyle}"/>
+                                                <TextBox x:Name="RiskyItemTextBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}"/>
 
-                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Reason (Non-Risky):" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
-                                            <ComboBox x:Name="ReasonNonRiskyComboBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}" Margin="0,10,0,0"
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Reason (Non-Risky):" Style="{StaticResource FieldLabelStyle}" Margin="0,10,10,0"/>
+                                                <ComboBox x:Name="ReasonNonRiskyComboBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource ModernComboBoxStyle}" Margin="0,10,0,0"
                                                       ItemsSource="{Binding ReasonOptions}" DisplayMemberPath="Content" SelectedValuePath="Id"
                                                       SelectedValue="{Binding SelectedReasonId, Mode=TwoWay}"/>
-                                        </Grid>
-                                    </GroupBox>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                             </Grid>
                         </ScrollViewer>
@@ -452,36 +577,47 @@
                 </Border>
 
                 <!-- Section inférieure : Aide à la réconciliation -->
-                <Border Grid.Row="1" Background="White" Margin="0,5,0,0" Padding="15">
+                <Border Grid.Row="1" Background="White" Margin="0,5,0,0" Padding="20" BorderBrush="#E0E0E0" BorderThickness="0,1,0,0">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        
+
                         <!-- Titre de la section -->
-                        <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,10">
-                            <TextBlock Text="Invoice Linker" FontWeight="Bold" FontSize="16" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Grid Grid.Row="0" Margin="0,0,0,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                <TextBlock Text="&#xE71B;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="{DynamicResource BNPMainGreenBrush}" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="Invoice Linker" FontWeight="Bold" FontSize="18" Foreground="#222222" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                                 <!-- Link status badge -->
-                                <Border x:Name="LinkStatusBadgeContainer" CornerRadius="12" Background="#FCE8E6" Padding="10,4" Margin="0,0,10,0" VerticalAlignment="Center">
-                                    <TextBlock x:Name="LinkStatusBadge" Text="NOT LINKED" Foreground="#B00020" FontWeight="Bold"/>
+                                <Border x:Name="LinkStatusBadgeContainer" CornerRadius="14" Background="#FFEBEE" Padding="12,6" Margin="0,0,12,0" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#C62828" Margin="0,0,6,0"/>
+                                        <TextBlock x:Name="LinkStatusBadge" Text="NOT LINKED" Foreground="#C62828" FontWeight="SemiBold" FontSize="11"/>
+                                    </StackPanel>
                                 </Border>
-                                <ComboBox x:Name="DwingsSearchTypeComboBox" Width="160" Style="{StaticResource ModernComboBoxStyle}" Margin="10,0,0,0">
+                                <ComboBox x:Name="DwingsSearchTypeComboBox" Width="160" Style="{StaticResource ModernComboBoxStyle}" Margin="0,0,8,0">
                                     <ComboBoxItem IsSelected="True">BGPMT</ComboBoxItem>
                                     <ComboBoxItem>BGI (INVOICE_ID)</ComboBoxItem>
                                     <ComboBoxItem>Business Case Ref</ComboBoxItem>
                                     <ComboBoxItem>Business Case ID</ComboBoxItem>
                                     <ComboBoxItem>Guarantee ID</ComboBoxItem>
                                 </ComboBox>
-                                <TextBox x:Name="DwingsSearchTextBox" Width="200" Style="{StaticResource ModernTextBoxStyle}" Margin="10,0,0,0"/>
-                                <Button x:Name="DwingsSearchButton" Content="Search DWINGS" Click="DwingsSearchButton_Click" Style="{StaticResource ModernPrimaryButtonStyle}" Margin="10,0,0,0" Padding="10,5" Height="30"/>
-                                <Button x:Name="DwingsSuggestButton" Content="Suggest" Click="DwingsSuggestButton_Click" Style="{StaticResource ModernButtonStyle}" Margin="10,0,0,0" Padding="10,5" Height="30"/>
-                                <Button x:Name="ReRunAutoSearchButton" Content="Re-run Auto Search" Click="ReRunAutoSearch_Click" Style="{StaticResource ModernButtonStyle}" Margin="10,0,0,0" Padding="10,5" Height="30"/>
+                                <TextBox x:Name="DwingsSearchTextBox" Width="200" Style="{StaticResource ModernTextBoxStyle}" Margin="0,0,8,0"/>
+                                <Button x:Name="DwingsSearchButton" Content="Search DWINGS" Click="DwingsSearchButton_Click" Style="{StaticResource ModernPrimaryButtonStyle}" Margin="0,0,8,0" Padding="12,6" Height="32"/>
+                                <Button x:Name="DwingsSuggestButton" Content="Suggest" Click="DwingsSuggestButton_Click" Style="{StaticResource ModernButtonStyle}" Margin="0,0,8,0" Padding="12,6" Height="32"/>
+                                <Button x:Name="ReRunAutoSearchButton" Content="Re-run Auto Search" Click="ReRunAutoSearch_Click" Style="{StaticResource ModernButtonStyle}" Padding="12,6" Height="32"/>
                             </StackPanel>
-                        </DockPanel>
-                        
+                        </Grid>
+
                         <!-- DWINGS search results -->
                         <DataGrid Grid.Row="1" x:Name="DwingsResultsGrid" Style="{StaticResource ModernDataGridStyle}"
                                   ColumnHeaderStyle="{StaticResource DataGridColumnHeaderStyle}"
@@ -524,7 +660,7 @@
                                 </DataGridTemplateColumn>
                             </DataGrid.Columns>
                         </DataGrid>
-                        
+
                         <!-- Diagnostics (collapsed by default) -->
                         <Expander Grid.Row="2" x:Name="DiagnosticsExpander" Header="Diagnostics" IsExpanded="False" Margin="0,10,0,0">
                             <Border BorderBrush="#DDDDDD" BorderThickness="1" Padding="8" Background="#FAFAFA">
@@ -544,7 +680,7 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                
+
                 <TextBlock x:Name="StatusText" Grid.Column="0" VerticalAlignment="Center" Foreground="{DynamicResource BNPMainGreenBrush}" FontStyle="Italic"/>
                 <Button x:Name="CancelButton" Grid.Column="1" Content="Cancel" Click="CancelButton_Click" Style="{StaticResource ModernButtonStyle}" Margin="0,0,10,0" Padding="15,8" MinWidth="100"/>
                 <Button x:Name="SaveButton" Grid.Column="2" Content="Save" Click="SaveButton_Click" Style="{StaticResource ModernPrimaryButtonStyle}" Padding="15,8" MinWidth="100"/>

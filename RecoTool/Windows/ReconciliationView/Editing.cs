@@ -1,17 +1,22 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using RecoTool.Services;
 using RecoTool.Services.DTOs;
+using RecoTool.Infrastructure.Logging;
+using RecoTool.Services.Rules;
 
 namespace RecoTool.Windows
 {
     // Partial: Editing handlers and save plumbing
     public partial class ReconciliationView
     {
+        // Prevent double invocation of confirmation when multiple handlers fire
+        private bool _ruleConfirmBusy;
         // Persist selection changes for Action/KPI/Incident and ActionStatus
         private async void UserFieldComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -81,7 +86,14 @@ namespace RecoTool.Windows
                     return;
                 }
 
-                await _reconciliationService.SaveReconciliationAsync(reco);
+                // Preview rules for edit and ask confirmation if self outputs are proposed
+                await ConfirmAndApplyRuleOutputsAsync(row, reco);
+
+                // Save without applying rules again (we already applied selected outputs above)
+                await _reconciliationService.SaveReconciliationAsync(reco, applyRulesOnEdit: false);
+                
+                // Refresh KPIs to reflect changes immediately
+                UpdateKpis(_filteredData);
 
                 // Fire-and-forget background sync to network DB to reduce sync debt (debounced)
                 try
@@ -123,7 +135,8 @@ namespace RecoTool.Windows
                 var headerText = Convert.ToString(e.Column?.Header) ?? string.Empty;
                 if (string.Equals(headerText, "Action", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(headerText, "KPI", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(headerText, "Incident Type", StringComparison.OrdinalIgnoreCase))
+                    || string.Equals(headerText, "Incident Type", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(headerText, "Reason Non Risky", StringComparison.OrdinalIgnoreCase))
                 {
                     return;
                 }
@@ -160,6 +173,8 @@ namespace RecoTool.Windows
             reco.Action = row.Action;
             reco.ActionStatus = row.ActionStatus;
             reco.ActionDate = row.ActionDate;
+            // DEPRECATED: ReviewDate removed - use ActionStatus instead
+            // reco.ReviewDate = row.ReviewDate;
             reco.KPI = row.KPI;
             reco.IncidentType = row.IncidentType;
             reco.Comments = row.Comments;
@@ -176,12 +191,121 @@ namespace RecoTool.Windows
             reco.RiskyItem = row.RiskyItem;
             reco.ReasonNonRisky = row.ReasonNonRisky;
 
-            await _reconciliationService.SaveReconciliationAsync(reco);
+            // Preview rules and ask user confirmation for self outputs; apply to UI immediately
+            await ConfirmAndApplyRuleOutputsAsync(row, reco);
+
+            // Save without applying rules again (we already applied chosen outputs above)
+            await _reconciliationService.SaveReconciliationAsync(reco, applyRulesOnEdit: false);
+            
+            // Refresh KPIs to reflect changes immediately
+            UpdateKpis(_filteredData);
 
             // Best-effort background sync (debounced)
             try
             {
                 ScheduleBulkPushDebounced();
+            }
+            catch { }
+            finally { _ruleConfirmBusy = false; }
+        }
+
+        // Resolve a user-field display name by id and category
+        private string GetUserFieldName(int? id, string category)
+        {
+            try
+            {
+                if (!id.HasValue) return null;
+                var list = AllUserFields;
+                if (list == null) return id.Value.ToString();
+                var q = list.AsEnumerable();
+                if (!string.IsNullOrWhiteSpace(category))
+                    q = q.Where(u => string.Equals(u?.USR_Category ?? string.Empty, category, StringComparison.OrdinalIgnoreCase));
+                var uf = q.FirstOrDefault(u => u?.USR_ID == id.Value) ?? list.FirstOrDefault(u => u?.USR_ID == id.Value);
+                return uf?.USR_FieldName ?? id.Value.ToString();
+            }
+            catch { return id?.ToString(); }
+        }
+
+        // Display rule outputs and apply to current row upon confirmation; notify counterpart outputs via toast
+        private async Task ConfirmAndApplyRuleOutputsAsync(ReconciliationViewData row, RecoTool.Models.Reconciliation reco)
+        {
+            try
+            {
+                if (_ruleConfirmBusy) return;
+                _ruleConfirmBusy = true;
+                var res = await _reconciliationService.PreviewRulesForEditAsync(row.ID);
+                if (res == null || res.Rule == null) return;
+
+                // Prepare SELF outputs summary (labels, not IDs)
+                var selfChanges = new List<string>();
+                if (res.NewActionIdSelf.HasValue) selfChanges.Add($"Action: {GetUserFieldName(res.NewActionIdSelf.Value, "Action")}");
+                if (res.NewKpiIdSelf.HasValue) selfChanges.Add($"KPI: {GetUserFieldName(res.NewKpiIdSelf.Value, "KPI")}");
+                if (res.NewIncidentTypeIdSelf.HasValue) selfChanges.Add($"Incident Type: {GetUserFieldName(res.NewIncidentTypeIdSelf.Value, "Incident Type")}");
+                if (res.NewRiskyItemSelf.HasValue) selfChanges.Add($"Risky Item: {(res.NewRiskyItemSelf.Value ? "Yes" : "No")}");
+                if (res.NewReasonNonRiskyIdSelf.HasValue) selfChanges.Add($"Reason Non Risky: {GetUserFieldName(res.NewReasonNonRiskyIdSelf.Value, "Reason Non Risky")}");
+                if (res.NewToRemindSelf.HasValue) selfChanges.Add($"To Remind: {(res.NewToRemindSelf.Value ? "Yes" : "No")}");
+                if (res.NewToRemindDaysSelf.HasValue) selfChanges.Add($"To Remind Days: {res.NewToRemindDaysSelf.Value}");
+                if (res.NewFirstClaimTodaySelf == true) selfChanges.Add("First Claim Date: Today");
+
+                // Show counterpart toast if rule applies to counterpart
+                if (res.Rule.ApplyTo == ApplyTarget.Counterpart || res.Rule.ApplyTo == ApplyTarget.Both)
+                {
+                    var cp = new List<string>();
+                    if (res.Rule.OutputActionId.HasValue) cp.Add($"Action: {GetUserFieldName(res.Rule.OutputActionId.Value, "Action")}");
+                    if (res.Rule.OutputKpiId.HasValue) cp.Add($"KPI: {GetUserFieldName(res.Rule.OutputKpiId.Value, "KPI")}");
+                    if (res.Rule.OutputIncidentTypeId.HasValue) cp.Add($"Incident Type: {GetUserFieldName(res.Rule.OutputIncidentTypeId.Value, "Incident Type")}");
+                    if (res.Rule.OutputRiskyItem.HasValue) cp.Add($"Risky Item: {(res.Rule.OutputRiskyItem.Value ? "Yes" : "No")}");
+                    if (res.Rule.OutputReasonNonRiskyId.HasValue) cp.Add($"Reason Non Risky: {GetUserFieldName(res.Rule.OutputReasonNonRiskyId.Value, "Reason Non Risky")}");
+                    if (res.Rule.OutputToRemind.HasValue) cp.Add($"To Remind: {(res.Rule.OutputToRemind.Value ? "Yes" : "No")}");
+                    if (res.Rule.OutputToRemindDays.HasValue) cp.Add($"To Remind Days: {res.Rule.OutputToRemindDays.Value}");
+                    var txt = cp.Count > 0 ? string.Join(", ", cp) : "(no change)";
+                    try { ShowToast($"Rule '{res.Rule.RuleId}' (counterpart): {txt}", onClick: () => { try { OpenMatchedPopup(row); } catch { } }); } catch { }
+                }
+
+                if (selfChanges.Count == 0)
+                {
+                    // Nothing to confirm/apply on current row
+                    return;
+                }
+
+                var details = string.Join("\n - ", selfChanges);
+                var msgText = $"Rule '{res.Rule.RuleId}' proposes to apply on this row:\n - {details}\n\nDo you want to apply these changes?";
+                var answer = MessageBox.Show(msgText, "Confirm rule application", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (answer != MessageBoxResult.Yes) return;
+
+                // Apply to in-memory row for instant UI feedback
+                if (res.NewActionIdSelf.HasValue) { UserFieldUpdateService.ApplyAction(row, reco, res.NewActionIdSelf.Value, AllUserFields); }
+                if (res.NewKpiIdSelf.HasValue) { row.KPI = res.NewKpiIdSelf.Value; reco.KPI = res.NewKpiIdSelf.Value; }
+                if (res.NewIncidentTypeIdSelf.HasValue) { row.IncidentType = res.NewIncidentTypeIdSelf.Value; reco.IncidentType = res.NewIncidentTypeIdSelf.Value; }
+                if (res.NewRiskyItemSelf.HasValue) { row.RiskyItem = res.NewRiskyItemSelf.Value; reco.RiskyItem = res.NewRiskyItemSelf.Value; }
+                if (res.NewReasonNonRiskyIdSelf.HasValue) { row.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value; reco.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value; }
+                if (res.NewToRemindSelf.HasValue) { row.ToRemind = res.NewToRemindSelf.Value; reco.ToRemind = res.NewToRemindSelf.Value; }
+                if (res.NewToRemindDaysSelf.HasValue)
+                {
+                    try { var d = DateTime.Today.AddDays(res.NewToRemindDaysSelf.Value); row.ToRemindDate = d; reco.ToRemindDate = d; } catch { }
+                }
+                if (res.NewFirstClaimTodaySelf == true)
+                {
+                    try { row.FirstClaimDate = DateTime.Today; reco.FirstClaimDate = DateTime.Today; } catch { }
+                }
+
+                // Log file entry (origin=edit) to preserve trace
+                try
+                {
+                    var outs = new List<string>();
+                    if (res.NewActionIdSelf.HasValue) outs.Add($"Action={res.NewActionIdSelf.Value}");
+                    if (res.NewKpiIdSelf.HasValue) outs.Add($"KPI={res.NewKpiIdSelf.Value}");
+                    if (res.NewIncidentTypeIdSelf.HasValue) outs.Add($"IncidentType={res.NewIncidentTypeIdSelf.Value}");
+                    if (res.NewRiskyItemSelf.HasValue) outs.Add($"RiskyItem={res.NewRiskyItemSelf.Value}");
+                    if (res.NewReasonNonRiskyIdSelf.HasValue) outs.Add($"ReasonNonRisky={res.NewReasonNonRiskyIdSelf.Value}");
+                    if (res.NewToRemindSelf.HasValue) outs.Add($"ToRemind={res.NewToRemindSelf.Value}");
+                    if (res.NewToRemindDaysSelf.HasValue) outs.Add($"ToRemindDays={res.NewToRemindDaysSelf.Value}");
+                    if (res.NewFirstClaimTodaySelf == true) outs.Add("FirstClaimDate=Today");
+                    var outsStr = string.Join("; ", outs);
+                    var countryId = _offlineFirstService?.CurrentCountryId;
+                    LogHelper.WriteRuleApplied("edit", countryId, row.ID, res.Rule.RuleId, outsStr, res.UserMessage);
+                }
+                catch { }
             }
             catch { }
         }

@@ -115,6 +115,10 @@ namespace RecoTool.Windows
                 IsGrouped = r.IsGrouped,
                 IsAmountMatch = r.IsAmountMatch,
                 Sign = r.Sign,
+                // New DWINGS-related inputs
+                MTStatusAcked = r.MTStatusAcked,
+                CommIdEmail = r.CommIdEmail,
+                BgiStatusInitiated = r.BgiStatusInitiated,
                 // Time/state conditions
                 TriggerDateIsNull = r.TriggerDateIsNull,
                 DaysSinceTriggerMin = r.DaysSinceTriggerMin,
@@ -135,6 +139,8 @@ namespace RecoTool.Windows
                 OutputReasonNonRiskyId = r.OutputReasonNonRiskyId,
                 OutputToRemind = r.OutputToRemind,
                 OutputToRemindDays = r.OutputToRemindDays,
+                // New output
+                OutputFirstClaimToday = r.OutputFirstClaimToday,
                 ApplyTo = r.ApplyTo,
                 AutoApply = r.AutoApply,
                 Message = r.Message

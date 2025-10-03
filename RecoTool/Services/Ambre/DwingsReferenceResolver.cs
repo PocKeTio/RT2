@@ -41,14 +41,9 @@ namespace RecoTool.Services.AmbreImport
                 string bgiCandidate;
                 if (!isPivot)
                 {
-                    // Receivable: prefer explicit, then Rec_Num -> RecOrigin_Num -> RawLabel
-                    string ExtractBgiReceivableOrdered()
-                    {
-                        return DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Reconciliation_Num)
-                               ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.ReconciliationOrigin_Num)
-                               ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.RawLabel);
-                    }
-                    bgiCandidate = dataAmbre.Receivable_InvoiceFromAmbre?.Trim() ?? ExtractBgiReceivableOrdered();
+                    // Receivable: ONLY use Reconciliation_Num (no fallback to other fields)
+                    bgiCandidate = dataAmbre.Receivable_InvoiceFromAmbre?.Trim() 
+                                   ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Reconciliation_Num);
                 }
                 else
                 {
@@ -92,7 +87,7 @@ namespace RecoTool.Services.AmbreImport
                 // Suggestions
                 if (hit == null)
                 {
-                    var suggested = GetSuggestedInvoice(dataAmbre, tokens, dwInvoices);
+                    var suggested = GetSuggestedInvoice(dataAmbre, tokens, dwInvoices, isPivot);
                     if (!string.IsNullOrWhiteSpace(suggested))
                         hit = dwInvoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, suggested, StringComparison.OrdinalIgnoreCase));
                 }
@@ -143,16 +138,9 @@ namespace RecoTool.Services.AmbreImport
             DwingsTokens tokens,
             List<DwingsInvoiceDto> dwInvoices)
         {
-            // Prefer explicit field, then extracted BGI with priority:
-            // Reconciliation_Num -> ReconciliationOrigin_Num -> RawLabel (last)
-            string ExtractBgiReceivableOrdered()
-            {
-                return DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Reconciliation_Num)
-                       ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.ReconciliationOrigin_Num)
-                       ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.RawLabel);
-            }
-
-            var bgi = dataAmbre.Receivable_InvoiceFromAmbre?.Trim() ?? ExtractBgiReceivableOrdered();
+            // Receivable: ONLY use Reconciliation_Num (no fallback to other fields)
+            var bgi = dataAmbre.Receivable_InvoiceFromAmbre?.Trim() 
+                      ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Reconciliation_Num);
             
             if (string.IsNullOrWhiteSpace(bgi))
                 return ResolveByOfficialRef(dataAmbre, dwInvoices); // try OfficialRef exact match if no BGI
@@ -264,12 +252,22 @@ namespace RecoTool.Services.AmbreImport
         private string GetSuggestedInvoice(
             DataAmbre dataAmbre,
             DwingsTokens tokens,
-            List<DwingsInvoiceDto> dwInvoices)
+            List<DwingsInvoiceDto> dwInvoices,
+            bool isPivot)
         {
-            // For suggestions, prefer explicit Receivable_InvoiceFromAmbre, else BGI with same receivable order
-            string bgiOrdered = DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Reconciliation_Num)
-                                ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.ReconciliationOrigin_Num)
-                                ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.RawLabel);
+            // For receivable: ONLY use Reconciliation_Num
+            // For pivot: use fallback chain (Rec_Num -> RecOrigin_Num -> RawLabel)
+            string bgiOrdered;
+            if (!isPivot)
+            {
+                bgiOrdered = DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Reconciliation_Num);
+            }
+            else
+            {
+                bgiOrdered = DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Reconciliation_Num)
+                            ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.ReconciliationOrigin_Num)
+                            ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.RawLabel);
+            }
 
             var suggestions = DwingsLinkingHelper.SuggestInvoicesForAmbre(
                 dwInvoices,

@@ -21,6 +21,28 @@
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
+        
+        <!-- Centered Text Style for DataGrid Columns -->
+        <Style x:Key="CenteredTextStyle" TargetType="TextBlock">
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="TextAlignment" Value="Center"/>
+        </Style>
+        
+        <!-- Right-aligned Text Style for Numbers -->
+        <Style x:Key="RightAlignedTextStyle" TargetType="TextBlock">
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="TextAlignment" Value="Right"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+        </Style>
+        
+        <!-- Centered CheckBox Style -->
+        <Style x:Key="CenteredCheckBoxStyle" TargetType="CheckBox">
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        
         <!-- Converters -->
         <local:UserFieldOptionsConverter x:Key="UserFieldOptionsConverter"/>
         <local:ActionColorConverter x:Key="ActionColorConverter"/>
@@ -36,8 +58,8 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Header - Optimisé pour un seul ruban -->
-        <Border x:Name="HeaderBorder" Grid.Row="0" Background="{DynamicResource BNPMainGreenBrush}" Padding="12,8" CornerRadius="8,8,0,0" Effect="{StaticResource StandardShadow}">
+        <!-- Compact Modern Header with Integrated KPIs -->
+        <Border x:Name="HeaderBorder" Grid.Row="0" Background="White" Padding="12,8" Effect="{StaticResource StandardShadow}" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -45,146 +67,155 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Titre et info compte regroupés -->
+                <!-- View Info + KPIs Integrated -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal">
-                    <Border Background="#FFFFFF" CornerRadius="50" Width="36" Height="36" Margin="0,0,15,0" Effect="{StaticResource LightShadow}">
-                        <TextBlock Text="&#xE81E;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="{DynamicResource BNPMainGreenBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                    <StackPanel>
-                        <TextBlock x:Name="TitleText" Text="Default View" FontSize="18" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
+                    <!-- View Title Card -->
+                    <Border Background="{DynamicResource BNPMainGreenBrush}" CornerRadius="8" Padding="12,8" Margin="0,0,12,0">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE8C9;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                            <TextBlock x:Name="AccountInfoText" Text="Account: All | Status: All" VerticalAlignment="Center" Foreground="White" FontSize="12"/>
+                            <Border Background="White" CornerRadius="6" Width="32" Height="32" Margin="0,0,10,0">
+                                <TextBlock Text="&#xE81E;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="{DynamicResource BNPMainGreenBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                            </Border>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock x:Name="TitleText" Text="Default View" FontSize="14" FontWeight="Bold" Foreground="White"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                    <TextBlock Text="&#xE8C9;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="White" Opacity="0.9" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                    <TextBlock x:Name="AccountInfoText" Text="Account: All | Status: All" Foreground="White" Opacity="0.9" FontSize="10"/>
+                                    <TextBlock Text="&#xE909;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="White" Opacity="0.9" VerticalAlignment="Center" Margin="8,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                    <TextBlock x:Name="CountryPivotReceivableText" Text="" Foreground="White" Opacity="0.9" FontSize="10"/>
+                                </StackPanel>
+                            </StackPanel>
                         </StackPanel>
-                        <!-- Country-specific Pivot/Receivable info -->
-                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                            <TextBlock Text="&#xE909;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                            <TextBlock x:Name="CountryPivotReceivableText" Text="" VerticalAlignment="Center" Foreground="White" FontSize="12"/>
-                        </StackPanel>
+                    </Border>
+
+                    <!-- Enhanced KPI Cards with Labels -->
+                    <StackPanel Orientation="Horizontal">
+                        <!-- Total Rows -->
+                        <Border Background="#F4F7FE" CornerRadius="6" Padding="10,6" Margin="0,0,8,0" BorderBrush="#E0E6F7" BorderThickness="1">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE179;" FontFamily="Segoe MDL2 Assets" Foreground="#3B82F6" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <StackPanel>
+                                    <TextBlock Text="Total" FontSize="9" Foreground="#64748B" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiTotalCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#0F172A"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <!-- Matched -->
+                        <Border Background="#ECFDF5" CornerRadius="6" Padding="10,6" Margin="0,0,8,0" BorderBrush="#D1FAE5" BorderThickness="1">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" Foreground="#10B981" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <StackPanel>
+                                    <TextBlock Text="Matched" FontSize="9" Foreground="#065F46" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiMatchedCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#064E3B"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <!-- Unmatched -->
+                        <Border Background="#FEF2F2" CornerRadius="6" Padding="10,6" Margin="0,0,8,0" BorderBrush="#FEE2E2" BorderThickness="1">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" Foreground="#EF4444" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <StackPanel>
+                                    <TextBlock Text="Unmatched" FontSize="9" Foreground="#7F1D1D" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiUnmatchedCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#991B1B"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <!-- To Review -->
+                        <Border Background="#FFF7ED" CornerRadius="6" Padding="10,6" Margin="0,0,8,0" BorderBrush="#FFEDD5" BorderThickness="1">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" Foreground="#FB923C" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <StackPanel>
+                                    <TextBlock Text="To Review" FontSize="9" Foreground="#9A3412" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiToReviewCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#7C2D12"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <!-- Total Amount -->
+                        <Border Background="#F8FAFC" CornerRadius="6" Padding="10,6" BorderBrush="#E2E8F0" BorderThickness="1">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xEAFD;" FontFamily="Segoe MDL2 Assets" Foreground="#2563EB" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <StackPanel>
+                                    <TextBlock Text="Amount" FontSize="9" Foreground="#64748B" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiTotalAmountText" Text="0.00" FontSize="13" FontWeight="Bold" Foreground="#0F172A"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </StackPanel>
 
-                <!-- Filter & View Buttons -->
+                <!-- Action Buttons Group -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
 
 
-                    <!-- Load View Button -->
-                    <Button x:Name="LoadViewButton" Click="LoadView_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="0,0,8,0">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                </Border>
-                            </ControlTemplate>
-                        </Button.Template>
+                    <!-- View Management Group -->
+                    <Border Background="#F8F9FA" CornerRadius="6" Padding="6,4" BorderBrush="#DEE2E6" BorderThickness="1" Margin="0,0,8,0">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="Load View" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                            <Button x:Name="LoadViewButton" Click="LoadView_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Load View">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#2196F3" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                    <TextBlock Text="Load" Foreground="#2196F3" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Rectangle Width="1" Height="20" Fill="#DEE2E6" Margin="4,0"/>
+                            <Button x:Name="SaveViewButton" Click="SaveView_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Save View">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#4CAF50" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                    <TextBlock Text="Save" Foreground="#4CAF50" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
                         </StackPanel>
-                    </Button>
+                    </Border>
 
-                    <!-- Save View Button -->
-                    <Button x:Name="SaveViewButton" Click="SaveView_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="0,0,8,0">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                </Border>
-                            </ControlTemplate>
-                        </Button.Template>
+                    <!-- Filter Management Group -->
+                    <Border Background="#F8F9FA" CornerRadius="6" Padding="6,4" BorderBrush="#DEE2E6" BorderThickness="1" Margin="0,0,8,0">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="Save View" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                            <Button x:Name="LoadFilterButton" Click="LoadFilter_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Load Filter">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#FF9800" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                    <TextBlock Text="Load" Foreground="#FF9800" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Rectangle Width="1" Height="20" Fill="#DEE2E6" Margin="4,0"/>
+                            <Button x:Name="SaveFilterButton" Click="SaveFilter_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Save Filter">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#FF9800" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                    <TextBlock Text="Save" Foreground="#FF9800" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Rectangle Width="1" Height="20" Fill="#DEE2E6" Margin="4,0"/>
+                            <Button x:Name="ReapplyFilterButton" Click="ReapplyFilter_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Reapply Filter">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#2196F3" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                    <TextBlock Text="Reapply" Foreground="#2196F3" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Rectangle Width="1" Height="20" Fill="#DEE2E6" Margin="4,0"/>
+                            <Button x:Name="ResetFilterButton" Click="ResetFilter_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Reset Filter">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE894;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#9E9E9E" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                    <TextBlock Text="Reset" Foreground="#9E9E9E" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
                         </StackPanel>
-                    </Button>
+                    </Border>
 
-                    <!-- Load Filter Button -->
-                    <Button x:Name="LoadFilterButton" Click="LoadFilter_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="0,0,8,0">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                </Border>
-                            </ControlTemplate>
-                        </Button.Template>
+                    <!-- Actions Group -->
+                    <Border Background="#F8F9FA" CornerRadius="6" Padding="6,4" BorderBrush="#DEE2E6" BorderThickness="1" Margin="0,0,8,0">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="Load Filter" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                            <Rectangle Width="1" Height="20" Fill="#DEE2E6" Margin="4,0"/>
+                            <Button x:Name="ExportButton" Click="Export_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Export">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#00BCD4" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                    <TextBlock Text="Export" Foreground="#00BCD4" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
                         </StackPanel>
-                    </Button>
+                    </Border>
 
-                    <!-- Save Filter Button -->
-                    <Button x:Name="SaveFilterButton" Click="SaveFilter_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="0,0,8,0">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                </Border>
-                            </ControlTemplate>
-                        </Button.Template>
+                    <!-- Close Button -->
+                    <Button x:Name="CloseViewButton" Click="CloseViewButton_Click" Style="{StaticResource StandardButtonStyle}" Background="#FFEBEE" BorderBrush="#EF5350" BorderThickness="1" Padding="10,6" ToolTip="Close View">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="Save Filter" VerticalAlignment="Center" FontWeight="SemiBold"/>
-                        </StackPanel>
-                    </Button>
-
-                    <!-- Reset Button -->
-                    <Button x:Name="ResetFilterButton" Click="ResetFilter_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                </Border>
-                            </ControlTemplate>
-                        </Button.Template>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="Reset" VerticalAlignment="Center" FontWeight="SemiBold"/>
-                        </StackPanel>
-                    </Button>
-
-                    <!-- Run Rules Now Button -->
-                    <Button x:Name="RunRulesNowButton" Click="RunRulesNow_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0" ToolTip="Execute rules immediately on selection or on the current filtered set if no selection.">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                </Border>
-                            </ControlTemplate>
-                        </Button.Template>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE773;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="Run Rules" VerticalAlignment="Center" FontWeight="SemiBold"/>
-                        </StackPanel>
-                    </Button>
-
-                    <!-- Export Button (moved from KPI bar) -->
-                    <Button x:Name="ExportButton" Click="Export_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                </Border>
-                            </ControlTemplate>
-                        </Button.Template>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="Export" VerticalAlignment="Center" FontWeight="SemiBold"/>
-                        </StackPanel>
-                    </Button>
-
-                    <!-- Close View Button -->
-                    <Button x:Name="CloseViewButton" Click="CloseViewButton_Click" Foreground="{DynamicResource BNPMainGreenBrush}" Padding="10,5" Margin="8,0,0,0">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="#FFFFFF" CornerRadius="4" Padding="{TemplateBinding Padding}" Effect="{StaticResource LightShadow}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                </Border>
-                            </ControlTemplate>
-                        </Button.Template>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="Close" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                            <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#D32F2F" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                            <TextBlock Text="Close" Foreground="#D32F2F" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
                 </StackPanel>
@@ -582,6 +613,24 @@
                                     </ComboBox>
                                 </Grid>
 
+                                <!-- Last Reviewed filter -->
+                                <Grid Margin="0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Last Reviewed:" VerticalAlignment="Center"/>
+                                    <ComboBox x:Name="LastReviewedComboBox" Grid.Column="1" Margin="5,0,0,0" Style="{StaticResource ModernComboBoxStyle}"
+                                              SelectedValue="{Binding VM.FilterLastReviewed, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              SelectedValuePath="Content">
+                                        <ComboBoxItem Content="All" IsSelected="True"/>
+                                        <ComboBoxItem Content="Never"/>
+                                        <ComboBoxItem Content="Today"/>
+                                        <ComboBoxItem Content="1week"/>
+                                        <ComboBoxItem Content="1month"/>
+                                    </ComboBox>
+                                </Grid>
+
                                 <Grid Margin="0,8">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="120"/>
@@ -606,85 +655,7 @@
                 </Border>
             </Expander>
 
-            <!-- KPI Summary Bar -->
-            <Border Grid.Row="1" Background="#FFFFFF" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="6" Margin="0,0,0,6" Effect="{StaticResource LightShadow}" Height="50">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-
-                    <!-- Total Rows -->
-                    <Border Grid.Column="0" Margin="2" CornerRadius="10" Background="#F4F7FE" BorderBrush="#E0E6F7" BorderThickness="1">
-                        <StackPanel Orientation="Horizontal" Margin="8,4" VerticalAlignment="Center">
-                            <TextBlock Text="&#xE179;" FontFamily="Segoe MDL2 Assets" Foreground="#3B82F6" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="Total Rows:" Foreground="#334155" FontSize="11" Margin="0,0,6,0"/>
-                                <TextBlock x:Name="KpiTotalCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#0F172A"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Matched Count -->
-                    <Border Grid.Column="1" Margin="2" CornerRadius="10" Background="#ECFDF5" BorderBrush="#D1FAE5" BorderThickness="1">
-                        <StackPanel Orientation="Horizontal" Margin="8,4" VerticalAlignment="Center">
-                            <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" Foreground="#10B981" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="Matched:" Foreground="#065F46" FontSize="11" Margin="0,0,6,0"/>
-                                <TextBlock x:Name="KpiMatchedCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#064E3B"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Unmatched Count -->
-                    <Border Grid.Column="2" Margin="2" CornerRadius="10" Background="#FEF2F2" BorderBrush="#FEE2E2" BorderThickness="1">
-                        <StackPanel Orientation="Horizontal" Margin="8,4" VerticalAlignment="Center">
-                            <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" Foreground="#EF4444" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="Unmatched:" Foreground="#7F1D1D" FontSize="11" Margin="0,0,6,0"/>
-                                <TextBlock x:Name="KpiUnmatchedCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#991B1B"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Total Amount -->
-                    <Border Grid.Column="3" Margin="2" CornerRadius="10" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1">
-                        <StackPanel Orientation="Horizontal" Margin="8,4" VerticalAlignment="Center">
-                            <TextBlock Text="&#xEAFD;" FontFamily="Segoe MDL2 Assets" Foreground="#2563EB" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="Total Amount:" Foreground="#334155" FontSize="11" Margin="0,0,6,0"/>
-                                <TextBlock x:Name="KpiTotalAmountText" Text="0.00" FontSize="13" FontWeight="Bold" Foreground="#0F172A"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Matched Amount -->
-                    <Border Grid.Column="4" Margin="2" CornerRadius="10" Background="#ECFDF5" BorderBrush="#D1FAE5" BorderThickness="1">
-                        <StackPanel Orientation="Horizontal" Margin="8,4" VerticalAlignment="Center">
-                            <TextBlock Text="&#xE8FB;" FontFamily="Segoe MDL2 Assets" Foreground="#10B981" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="Matched Amount:" Foreground="#065F46" FontSize="11" Margin="0,0,6,0"/>
-                                <TextBlock x:Name="KpiMatchedAmountText" Text="0.00" FontSize="13" FontWeight="Bold" Foreground="#064E3B"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Unmatched Amount -->
-                    <Border Grid.Column="5" Margin="2" CornerRadius="10" Background="#FEF2F2" BorderBrush="#FEE2E2" BorderThickness="1">
-                        <StackPanel Orientation="Horizontal" Margin="8,4" VerticalAlignment="Center">
-                            <TextBlock Text="&#xE89F;" FontFamily="Segoe MDL2 Assets" Foreground="#EF4444" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="Unmatched Amount:" Foreground="#7F1D1D" FontSize="11" Margin="0,0,6,0"/>
-                                <TextBlock x:Name="KpiUnmatchedAmountText" Text="0.00" FontSize="13" FontWeight="Bold" Foreground="#991B1B"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-                </Grid>
-            </Border>
+            <!-- KPI Summary Bar - Now integrated in header above -->
 
             <!-- Data Grid Section -->
             <Border Grid.Row="2" Margin="15" Background="White" BorderBrush="#DDDDDD" BorderThickness="1" CornerRadius="8">
@@ -708,7 +679,7 @@
                               EnableColumnVirtualization="True"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling"
-                              FrozenColumnCount="0"
+                              FrozenColumnCount="2"
                               SelectionMode="Extended"
                               SelectionUnit="FullRow"
                               Loaded="ResultsDataGrid_Loaded"
@@ -740,7 +711,16 @@
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                                 <Setter Property="VerticalContentAlignment" Value="Center"/>
                             </Style>
-                            <!-- No special checkbox styles; rely on default DataGridCheckBoxColumn behavior (like ACK) -->
+                            <!-- Cell Style for Reviewed Today Highlight -->
+                            <Style x:Key="ReviewedTodayHighlight" TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsReviewedToday}" Value="True">
+                                        <Setter Property="Background" Value="#E8F5E9"/>
+                                        <Setter Property="BorderBrush" Value="#A5D6A7"/>
+                                        <Setter Property="BorderThickness" Value="0,0,1,0"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
                         </DataGrid.Resources>
                         <DataGrid.ColumnHeaderStyle>
                             <Style TargetType="DataGridColumnHeader">
@@ -800,14 +780,6 @@
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow">
                                 <Setter Property="SnapsToDevicePixels" Value="True"/>
-                                <Setter Property="Background">
-                                    <Setter.Value>
-                                        <MultiBinding Converter="{StaticResource ActionColorConverter}">
-                                            <Binding Path="Action"/>
-                                            <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
-                                        </MultiBinding>
-                                    </Setter.Value>
-                                </Setter>
                                 <Setter Property="Foreground" Value="Black"/>
                                 <Setter Property="ContextMenu">
                                     <Setter.Value>
@@ -821,13 +793,8 @@
                                 </Setter>
                                 <EventSetter Event="ContextMenuOpening" Handler="DataGridRow_ContextMenuOpening"/>
                                 <Style.Triggers>
-                                    <!-- transient highlights after sync refresh -->
-                                    <DataTrigger Binding="{Binding IsNewlyAdded}" Value="True">
-                                        <Setter Property="Background" Value="#E6FFED"/>
-                                    </DataTrigger>
-                                    <DataTrigger Binding="{Binding IsUpdated}" Value="True">
-                                        <Setter Property="Background" Value="#FFF8E1"/>
-                                    </DataTrigger>
+                                    <!-- Removed: IsNewlyAdded and IsUpdated background colors -->
+                                    <!-- Only keep hover and selection states -->
                                     <Trigger Property="IsMouseOver" Value="True">
                                         <Setter Property="Background" Value="#EEF5FF"/>
                                     </Trigger>
@@ -840,7 +807,7 @@
                         </DataGrid.RowStyle>
                         <DataGrid.Columns>
                             <!-- New/Updated indicators placed first -->
-                            <DataGridTemplateColumn Header="" Width="30" IsReadOnly="True" CanUserResize="False" CanUserReorder="False">
+                            <DataGridTemplateColumn Header="" Width="30" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource ReviewedTodayHighlight}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="N" Foreground="Red" FontWeight="Bold" HorizontalAlignment="Center"
@@ -849,7 +816,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="" Width="36" IsReadOnly="True" CanUserResize="False" CanUserReorder="False">
+                            <DataGridTemplateColumn Header="" Width="36" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource ReviewedTodayHighlight}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="U" Foreground="#1976D2" FontWeight="Bold" HorizontalAlignment="Center"
@@ -879,6 +846,10 @@
                                                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,4,0" Opacity="0"/>
                                                     </Grid>
                                                     <ControlTemplate.Triggers>
+                                                        <DataTrigger Binding="{Binding IsReviewedToday}" Value="True">
+                                                            <Setter TargetName="CellBorder" Property="Background" Value="#E8F5E9"/>
+                                                            <Setter Property="BorderBrush" Value="#A5D6A7"/>
+                                                        </DataTrigger>
                                                         <Trigger Property="IsReadOnly" Value="False">
                                                             <Setter TargetName="EditGlyph" Property="Opacity" Value="0.35"/>
                                                             <Setter Property="ToolTip" Value="Editable"/>
@@ -911,7 +882,7 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <!-- Account side column (P/R) -->
-                            <DataGridTextColumn Header="Account" Binding="{Binding AccountSide}" Width="60" IsReadOnly="True">
+                            <DataGridTextColumn Header="Account" Binding="{Binding AccountSide}" Width="60" IsReadOnly="True" CellStyle="{StaticResource ReviewedTodayHighlight}">
                                 <DataGridTextColumn.ElementStyle>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="HorizontalAlignment" Value="Center"/>
@@ -927,24 +898,24 @@
                                     </Style>
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>
-                            <DataGridTextColumn Header="Event Num" Binding="{Binding Event_Num}" Width="100" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Pivot Transaction Codes" Binding="{Binding Pivot_TransactionCodesFromLabel}" Width="150" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Event Num" Binding="{Binding Event_Num}" Width="100" IsReadOnly="True" CellStyle="{StaticResource ReviewedTodayHighlight}" ElementStyle="{StaticResource CenteredTextStyle}"/>
+                            <DataGridTextColumn Header="Pivot Transaction Codes" Binding="{Binding Pivot_TransactionCodesFromLabel}" Width="150" IsReadOnly="True" CellStyle="{StaticResource ReviewedTodayHighlight}"/>
                             <DataGridTextColumn Header="Category" Binding="{Binding CategoryLabel}" Width="140" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Raw Label" Binding="{Binding RawLabel}" Width="200" IsReadOnly="True"/>
                             <!-- Newly added DWINGS invoice columns near the beginning -->
                             <DataGridTextColumn Header="Receiver" Binding="{Binding I_RECEIVER_NAME}" Width="180" IsReadOnly="True"/>
                             <DataGridTextColumn Header="MT Status" Binding="{Binding I_MT_STATUS}" Width="120" IsReadOnly="True"/>
                             <DataGridTextColumn Header="MT Error message" Binding="{Binding I_ERROR_MESSAGE}" Width="220" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Local Signed Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="130" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Operation Date" Binding="{Binding Operation_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Local Signed Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="130" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
+                            <DataGridTextColumn Header="Operation Date" Binding="{Binding Operation_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
                             <DataGridTextColumn Header="Reconciliation Num" Binding="{Binding Reconciliation_Num}" Width="130" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Reconciliation Origin Num" Binding="{Binding ReconciliationOrigin_Num}" Width="150" IsReadOnly="True"/>
                             <!-- DWINGS link fields (from T_Reconciliation) -->
                             <DataGridTextColumn Header="DW Invoice ID (BGI)" Binding="{Binding DWINGS_InvoiceID}" Width="150" IsReadOnly="True"/>
                             <DataGridTextColumn Header="DW Commission (BGPMT)" Binding="{Binding DWINGS_BGPMT}" Width="170" IsReadOnly="True"/>
                             <DataGridTextColumn Header="DW Guarantee ID" Binding="{Binding DWINGS_GuaranteeID}" Width="170" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Signed Amount" Binding="{Binding SignedAmount, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Value Date" Binding="{Binding Value_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Signed Amount" Binding="{Binding SignedAmount, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
+                            <DataGridTextColumn Header="Value Date" Binding="{Binding Value_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
                             <DataGridTextColumn Header="Guarantee Type" Width="130" IsReadOnly="True" SortMemberPath="G_GUARANTEE_TYPE">
                                 <DataGridTextColumn.Binding>
                                     <Binding Path="G_GUARANTEE_TYPE" Converter="{StaticResource GuaranteeTypeDisplayConverter}"/>
@@ -956,33 +927,49 @@
                             <DataGridTemplateColumn Header="Action" Width="120" SortMemberPath="Action">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock>
-                                            <TextBlock.Text>
-                                                <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
+                                        <Border>
+                                            <Border.Background>
+                                                <MultiBinding Converter="{StaticResource ActionColorConverter}">
                                                     <Binding Path="Action"/>
                                                     <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
                                                 </MultiBinding>
-                                            </TextBlock.Text>
-                                        </TextBlock>
+                                            </Border.Background>
+                                            <TextBlock Margin="2,0,2,0" HorizontalAlignment="Center" TextAlignment="Center">
+                                                <TextBlock.Text>
+                                                    <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
+                                                        <Binding Path="Action"/>
+                                                        <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
+                                                    </MultiBinding>
+                                                </TextBlock.Text>
+                                            </TextBlock>
+                                        </Border>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                                 <DataGridTemplateColumn.CellEditingTemplate>
                                     <DataTemplate>
-                                        <ComboBox Width="Auto"
-                                                  SelectedValue="{Binding Action, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  SelectedValuePath="USR_ID"
-                                                  DisplayMemberPath="USR_FieldName"
-                                                  SelectionChanged="UserFieldComboBox_SelectionChanged"
-                                                  Tag="Action"
-                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
-                                            <ComboBox.ItemsSource>
-                                                <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Action">
-                                                    <Binding Path="Account_ID"/>
+                                        <Border>
+                                            <Border.Background>
+                                                <MultiBinding Converter="{StaticResource ActionColorConverter}">
+                                                    <Binding Path="Action"/>
                                                     <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
-                                                    <Binding ElementName="Root" Path="DataContext.CurrentCountryObject"/>
                                                 </MultiBinding>
-                                            </ComboBox.ItemsSource>
-                                        </ComboBox>
+                                            </Border.Background>
+                                            <ComboBox Width="Auto"
+                                                      SelectedValue="{Binding Action, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      SelectedValuePath="USR_ID"
+                                                      DisplayMemberPath="USR_FieldName"
+                                                      SelectionChanged="UserFieldComboBox_SelectionChanged"
+                                                      Tag="Action"
+                                                      HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+                                                <ComboBox.ItemsSource>
+                                                    <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Action">
+                                                        <Binding Path="Account_ID"/>
+                                                        <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
+                                                        <Binding ElementName="Root" Path="DataContext.CurrentCountryObject"/>
+                                                    </MultiBinding>
+                                                </ComboBox.ItemsSource>
+                                            </ComboBox>
+                                        </Border>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
@@ -990,7 +977,7 @@
                             <DataGridTemplateColumn Header="Action Status" Width="120" SortMemberPath="ActionStatus">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding ActionStatus, Converter={StaticResource BoolToPendingDoneConverter}}"/>
+                                        <TextBlock Text="{Binding ActionStatus, Converter={StaticResource BoolToPendingDoneConverter}}" HorizontalAlignment="Center" TextAlignment="Center"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                                 <DataGridTemplateColumn.CellEditingTemplate>
@@ -1000,7 +987,7 @@
                                                   SelectedValuePath="Tag"
                                                   SelectionChanged="UserFieldComboBox_SelectionChanged"
                                                   Tag="ActionStatus"
-                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                                                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
                                             <ComboBoxItem Tag="False">PENDING</ComboBoxItem>
                                             <ComboBoxItem Tag="True">DONE</ComboBoxItem>
                                         </ComboBox>
@@ -1008,18 +995,27 @@
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
                             <!-- Action Date -->
-                            <DataGridTemplateColumn Header="Action Date" Width="130" SortMemberPath="ActionDate">
+                            <DataGridTemplateColumn Header="Action Date" Width="160" SortMemberPath="ActionDate">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding ActionDate, StringFormat={}{0:dd/MM/yyyy}}"/>
+                                        <TextBlock Text="{Binding ActionDate, StringFormat={}{0:dd/MM/yyyy}}" HorizontalAlignment="Center" TextAlignment="Center"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                                 <DataGridTemplateColumn.CellEditingTemplate>
                                     <DataTemplate>
-                                        <DatePicker Language="fr-FR"
-                                                    SelectedDateFormat="Short"
-                                                    SelectedDate="{Binding ActionDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                    Loaded="DatePicker_OpenOnLoad"/>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <DatePicker Grid.Column="0" Language="fr-FR"
+                                                        SelectedDateFormat="Short"
+                                                        SelectedDate="{Binding ActionDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                        Loaded="DatePicker_OpenOnLoad"/>
+                                            <Button Grid.Column="1" Content="📅" ToolTip="Set to Today" 
+                                                    Padding="4,2" Margin="2,0,0,0" FontSize="10"
+                                                    Click="SetDateToToday_Click" Tag="ActionDate"/>
+                                        </Grid>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
@@ -1027,7 +1023,7 @@
                             <DataGridTemplateColumn Header="Assignee" Width="140" SortMemberPath="Assignee">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock>
+                                        <TextBlock HorizontalAlignment="Center" TextAlignment="Center">
                                             <TextBlock.Text>
                                                 <MultiBinding Converter="{StaticResource AssigneeIdToNameConverter}">
                                                     <Binding Path="Assignee"/>
@@ -1044,7 +1040,7 @@
                                                   DisplayMemberPath="Name"
                                                   SelectedValuePath="Id"
                                                   SelectedValue="{Binding Assignee, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                                                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
                                         </ComboBox>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
@@ -1072,58 +1068,85 @@
                             <DataGridTextColumn Header="Internal Invoice Ref" Binding="{Binding InternalInvoiceReference}" Width="140"/>
 
                             <!-- First Claim Date with DatePicker -->
-                            <DataGridTemplateColumn Header="First Claim Date" Width="130" SortMemberPath="FirstClaimDate">
+                            <DataGridTemplateColumn Header="First Claim Date" Width="160" SortMemberPath="FirstClaimDate">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding FirstClaimDate, StringFormat={}{0:dd/MM/yyyy}}"/>
+                                        <TextBlock Text="{Binding FirstClaimDate, StringFormat={}{0:dd/MM/yyyy}}" HorizontalAlignment="Center" TextAlignment="Center"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                                 <DataGridTemplateColumn.CellEditingTemplate>
                                     <DataTemplate>
-                                        <DatePicker Language="fr-FR"
-                                                    SelectedDateFormat="Short"
-                                                    SelectedDate="{Binding FirstClaimDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                    Loaded="DatePicker_OpenOnLoad"/>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <DatePicker Grid.Column="0" Language="fr-FR"
+                                                        SelectedDateFormat="Short"
+                                                        SelectedDate="{Binding FirstClaimDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                        Loaded="DatePicker_OpenOnLoad"/>
+                                            <Button Grid.Column="1" Content="📅" ToolTip="Set to Today" 
+                                                    Padding="4,2" Margin="2,0,0,0" FontSize="10"
+                                                    Click="SetDateToToday_Click" Tag="FirstClaimDate"/>
+                                        </Grid>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
 
                             <!-- Last Claim Date with DatePicker -->
-                            <DataGridTemplateColumn Header="Last Claim Date" Width="130" SortMemberPath="LastClaimDate">
+                            <DataGridTemplateColumn Header="Last Claim Date" Width="160" SortMemberPath="LastClaimDate">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding LastClaimDate, StringFormat={}{0:dd/MM/yyyy}}"/>
+                                        <TextBlock Text="{Binding LastClaimDate, StringFormat={}{0:dd/MM/yyyy}}" HorizontalAlignment="Center" TextAlignment="Center"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                                 <DataGridTemplateColumn.CellEditingTemplate>
                                     <DataTemplate>
-                                        <DatePicker Language="fr-FR"
-                                                    SelectedDateFormat="Short"
-                                                    SelectedDate="{Binding LastClaimDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                    Loaded="DatePicker_OpenOnLoad"/>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <DatePicker Grid.Column="0" Language="fr-FR"
+                                                        SelectedDateFormat="Short"
+                                                        SelectedDate="{Binding LastClaimDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                        Loaded="DatePicker_OpenOnLoad"/>
+                                            <Button Grid.Column="1" Content="📅" ToolTip="Set to Today" 
+                                                    Padding="4,2" Margin="2,0,0,0" FontSize="10"
+                                                    Click="SetDateToToday_Click" Tag="LastClaimDate"/>
+                                        </Grid>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
 
-                            <DataGridCheckBoxColumn Header="To Remind" Binding="{Binding ToRemind}" Width="80"/>
+                            <DataGridCheckBoxColumn Header="To Remind" Binding="{Binding ToRemind}" Width="80" ElementStyle="{StaticResource CenteredCheckBoxStyle}"/>
 
                             <!-- Remind Date with DatePicker -->
-                            <DataGridTemplateColumn Header="Remind Date" Width="120" SortMemberPath="ToRemindDate">
+                            <DataGridTemplateColumn Header="Remind Date" Width="150" SortMemberPath="ToRemindDate">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding ToRemindDate, StringFormat={}{0:dd/MM/yyyy}}"/>
+                                        <TextBlock Text="{Binding ToRemindDate, StringFormat={}{0:dd/MM/yyyy}}" HorizontalAlignment="Center" TextAlignment="Center"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                                 <DataGridTemplateColumn.CellEditingTemplate>
                                     <DataTemplate>
-                                        <DatePicker Language="fr-FR"
-                                                    SelectedDateFormat="Short"
-                                                    SelectedDate="{Binding ToRemindDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                    Loaded="DatePicker_OpenOnLoad"/>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <DatePicker Grid.Column="0" Language="fr-FR"
+                                                        SelectedDateFormat="Short"
+                                                        SelectedDate="{Binding ToRemindDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                        Loaded="DatePicker_OpenOnLoad"/>
+                                            <Button Grid.Column="1" Content="📅" ToolTip="Set to Today" 
+                                                    Padding="4,2" Margin="2,0,0,0" FontSize="10"
+                                                    Click="SetDateToToday_Click" Tag="ToRemindDate"/>
+                                        </Grid>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridCheckBoxColumn Header="ACK" Binding="{Binding ACK}" Width="60"/>
+                            <DataGridCheckBoxColumn Header="ACK" Binding="{Binding ACK}" Width="60" ElementStyle="{StaticResource CenteredCheckBoxStyle}"/>
                             <DataGridTextColumn Header="Swift Code" Binding="{Binding SwiftCode}" Width="100"/>
                             <DataGridTextColumn Header="Payment Reference" Binding="{Binding PaymentReference}" Width="130"/>
                             <DataGridTextColumn Header="User" Binding="{Binding Reco_ModifiedBy}" Width="120" IsReadOnly="True"/>
@@ -1131,7 +1154,7 @@
                             <DataGridTemplateColumn Header="KPI" Width="160" SortMemberPath="KPI">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock>
+                                        <TextBlock HorizontalAlignment="Center" TextAlignment="Center">
                                             <TextBlock.Text>
                                                 <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
                                                     <Binding Path="KPI"/>
@@ -1149,7 +1172,7 @@
                                                   DisplayMemberPath="USR_FieldName"
                                                   SelectionChanged="UserFieldComboBox_SelectionChanged"
                                                   Tag="KPI"
-                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                                                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
                                             <ComboBox.ItemsSource>
                                                 <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="KPI">
                                                     <Binding Path="Account_ID"/>
@@ -1166,7 +1189,7 @@
                             <DataGridTemplateColumn Header="Incident Type" Width="180" SortMemberPath="IncidentType">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock>
+                                        <TextBlock HorizontalAlignment="Center" TextAlignment="Center">
                                             <TextBlock.Text>
                                                 <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
                                                     <Binding Path="IncidentType"/>
@@ -1184,7 +1207,7 @@
                                                   DisplayMemberPath="USR_FieldName"
                                                   SelectionChanged="UserFieldComboBox_SelectionChanged"
                                                   Tag="Incident Type"
-                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                                                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
                                             <ComboBox.ItemsSource>
                                                 <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="Incident Type">
                                                     <Binding Path="Account_ID"/>
@@ -1199,12 +1222,13 @@
                             <DataGridCheckBoxColumn Header="Risky Item"
                                                     Width="100"
                                                     Binding="{Binding RiskyItem}"
-                                                    IsThreeState="False"/>
+                                                    IsThreeState="False"
+                                                    ElementStyle="{StaticResource CenteredCheckBoxStyle}"/>
                             <!-- Reason Non Risky: editable ComboBox bound to referential filtered by RISKY category -->
                             <DataGridTemplateColumn Header="Reason Non Risky" Width="180" SortMemberPath="ReasonNonRisky">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock>
+                                        <TextBlock HorizontalAlignment="Center" TextAlignment="Center">
                                             <TextBlock.Text>
                                                 <MultiBinding Converter="{StaticResource UserFieldIdToNameConverter}">
                                                     <Binding Path="ReasonNonRisky"/>
@@ -1222,7 +1246,7 @@
                                                   DisplayMemberPath="USR_FieldName"
                                                   SelectionChanged="UserFieldComboBox_SelectionChanged"
                                                   Tag="ReasonNonRisky"
-                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+                                                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
                                             <ComboBox.ItemsSource>
                                                 <MultiBinding Converter="{StaticResource UserFieldOptionsConverter}" ConverterParameter="RISKY">
                                                     <Binding Path="Account_ID"/>
@@ -1235,22 +1259,22 @@
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
 
-                            <DataGridTextColumn Header="DW Currency" Binding="{Binding GUARANTEE_CURRENCY}" Width="80" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="DW Currency" Binding="{Binding GUARANTEE_CURRENCY}" Width="80" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
+                            <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
                             
                             <!-- DWINGS Guarantee extended fields -->
-                            <DataGridTextColumn Header="NatureOfDeal" Binding="{Binding G_NATURE}" Width="110" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Event Status" Binding="{Binding G_EVENT_STATUS}" Width="120" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Issue Date" Binding="{Binding G_ISSUEDATE}" Width="110" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="PartyID" Binding="{Binding G_PARTY_ID}" Width="110" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="NatureOfDeal" Binding="{Binding G_NATURE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
+                            <DataGridTextColumn Header="Event Status" Binding="{Binding G_EVENT_STATUS}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
+                            <DataGridTextColumn Header="Issue Date" Binding="{Binding G_ISSUEDATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
+                            <DataGridTextColumn Header="PartyID" Binding="{Binding G_PARTY_ID}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
                             <DataGridTextColumn Header="PartyName" Binding="{Binding G_NAME1}" Width="160" IsReadOnly="True"/>
                             
                             <!-- DWINGS Invoice extended fields -->
-                            <DataGridTextColumn Header="Req Amount" Binding="{Binding I_REQUESTED_INVOICE_AMOUNT}" Width="130" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Cur" Binding="{Binding I_BILLING_CURRENCY}" Width="70" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="StartDate" Binding="{Binding I_START_DATE}" Width="110" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="EndDate" Binding="{Binding I_END_DATE}" Width="110" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Invoice Status" Binding="{Binding I_T_INVOICE_STATUS}" Width="120" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Req Amount" Binding="{Binding I_REQUESTED_INVOICE_AMOUNT}" Width="130" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
+                            <DataGridTextColumn Header="Cur" Binding="{Binding I_BILLING_CURRENCY}" Width="70" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
+                            <DataGridTextColumn Header="StartDate" Binding="{Binding I_START_DATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
+                            <DataGridTextColumn Header="EndDate" Binding="{Binding I_END_DATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
+                            <DataGridTextColumn Header="Invoice Status" Binding="{Binding I_T_INVOICE_STATUS}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
                             <DataGridTextColumn Header="Payment Method" Binding="{Binding I_PAYMENT_METHOD}" Width="140" IsReadOnly="True" SortMemberPath="I_PAYMENT_METHOD"/>
 
                         </DataGrid.Columns>
@@ -1269,5 +1293,24 @@
                 </Grid>
             </Border>
         </Grid>
+
+        <!-- Floating toast notification -->
+        <Border x:Name="ToastPanel"
+                Grid.RowSpan="2"
+                Background="#DD333333"
+                CornerRadius="6"
+                Padding="10"
+                Margin="10"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Visibility="Collapsed"
+                Panel.ZIndex="1000"
+                MouseLeftButtonUp="ToastPanel_MouseLeftButtonUp"
+                Cursor="Hand">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="White" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <TextBlock x:Name="ToastText" Text="" Foreground="White" FontWeight="SemiBold"/>
+            </StackPanel>
+        </Border>
     </Grid>
 </UserControl>

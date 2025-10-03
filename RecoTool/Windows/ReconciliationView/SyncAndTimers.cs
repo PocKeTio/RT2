@@ -98,6 +98,8 @@ namespace RecoTool.Windows
                     }
                     _syncEventsHooked = false;
                 }
+                // Unsubscribe from rule-applied event
+                try { _reconciliationService.RuleApplied -= ReconciliationService_RuleApplied; } catch { }
                 if (_highlightClearTimer != null)
                 {
                     _highlightClearTimer.Stop();

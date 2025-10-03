@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using RecoTool.Models;
+using RecoTool.Services;
 
 namespace RecoTool.Services.DTOs
 {
@@ -316,6 +317,24 @@ namespace RecoTool.Services.DTOs
         public string I_PAYMENT_METHOD { get; set; }
         public string I_PAYMENT_TYPE { get; set; }
         public string I_DEBTOR_PARTY_NAME { get; set; }
+
+        /// <summary>
+        /// Gets the TransactionType for receivable based on PAYMENT_METHOD from BGI
+        /// </summary>
+        public TransactionType? GetReceivableTransactionType()
+        {
+            if (string.IsNullOrWhiteSpace(I_PAYMENT_METHOD)) return null;
+            
+            return I_PAYMENT_METHOD.ToUpperInvariant() switch
+            {
+                "INCOMING_PAYMENT" => TransactionType.INCOMING_PAYMENT,
+                "DIRECT_DEBIT" => TransactionType.DIRECT_DEBIT,
+                "MANUAL_OUTGOING" => TransactionType.MANUAL_OUTGOING,
+                "OUTGOING_PAYMENT" => TransactionType.OUTGOING_PAYMENT,
+                "EXTERNAL_DEBIT_PAYMENT" => TransactionType.EXTERNAL_DEBIT_PAYMENT,
+                _ => null
+            };
+        }
         public string I_DEBTOR_ACCOUNT_NUMBER { get; set; }
         public string I_CREDITOR_PARTY_ID { get; set; }
         public string I_CREDITOR_ACCOUNT_NUMBER { get; set; }

@@ -24,7 +24,9 @@ namespace RecoTool.Services
         [Description("Correspondent Charges Pending Trigger")]
         CorrespondentChargesPendingTrigger = 15,
         [Description("Not TFSC")]
-        NotTFSC = 23
+        NotTFSC = 23,
+        [Description("Claims")]
+        Claims = 24
     }
 
     #endregion

@@ -2358,7 +2358,7 @@ namespace RecoTool.Services
                 try
                 {
                     var reconPath = GetNetworkReconciliationDbPath(countryId);
-                    needProvision = !string.IsNullOrWhiteSpace(reconPath) && File.Exists(reconPath);
+                    needProvision = !string.IsNullOrWhiteSpace(reconPath) && !File.Exists(reconPath);
                 }
                 catch { needProvision = true; }
 

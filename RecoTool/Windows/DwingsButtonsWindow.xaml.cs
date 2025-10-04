@@ -47,18 +47,34 @@ namespace RecoTool.Windows
                              && !r.IsDeleted)
                     .ToList();
 
-                // Map to display DTO
-                _items = filtered.Select(r => new DwingsTriggerItem
+                // Group by BGPMT: sum amounts, take first of other fields
+                var grouped = filtered
+                    .GroupBy(r => r.DWINGS_BGPMT ?? "")
+                    .Select(g => new
+                    {
+                        BGPMT = g.Key,
+                        Items = g.ToList(),
+                        First = g.First(),
+                        TotalAmount = g.Sum(x => x.SignedAmount),
+                        IsGrouped = g.Any(x => x.IsMatchedAcrossAccounts),
+                        AllIDs = string.Join(",", g.Select(x => x.ID))
+                    })
+                    .ToList();
+
+                // Map to display DTO (one row per BGPMT)
+                _items = grouped.Select(g => new DwingsTriggerItem
                 {
-                    ID = r.ID,
-                    DWINGS_GuaranteeID = r.DWINGS_GuaranteeID,
-                    DWINGS_InvoiceID = r.DWINGS_InvoiceID,
-                    DWINGS_BGPMT = r.DWINGS_BGPMT,
-                    Amount = r.SignedAmount,
-                    Currency = r.CCY,
-                    Comments = r.Comments,
-                    PaymentReference = r.PaymentReference,
-                    IsGrouped = r.IsMatchedAcrossAccounts
+                    ID = g.AllIDs,  // Store all IDs for batch update
+                    DWINGS_GuaranteeID = g.First.DWINGS_GuaranteeID,
+                    DWINGS_InvoiceID = g.First.DWINGS_InvoiceID,
+                    DWINGS_BGPMT = g.BGPMT,
+                    Amount = g.TotalAmount,
+                    Currency = g.First.CCY,
+                    Comments = g.First.Comments,
+                    PaymentReference = g.First.PaymentReference,
+                    IsGrouped = g.IsGrouped,
+                    ValueDate = g.First.Value_Date,
+                    LineCount = g.Items.Count
                 }).ToList();
 
                 GridReconciliations.ItemsSource = _items;
@@ -91,6 +107,20 @@ namespace RecoTool.Windows
                     return;
                 }
 
+                // Warning: non-grouped lines with manual trigger
+                var nonGroupedManual = list.Where(r => !r.IsGrouped && !string.IsNullOrWhiteSpace(r.PaymentReference)).ToList();
+                if (nonGroupedManual.Any())
+                {
+                    var result = MessageBox.Show(this, 
+                        $"WARNING: {nonGroupedManual.Count} line(s) are NOT grouped but have a manual Payment Reference.\n\n" +
+                        "This means the trigger was set manually in ReconciliationView without proper grouping.\n" +
+                        "Do you want to continue anyway?",
+                        "Non-Grouped Lines Warning", 
+                        MessageBoxButton.YesNo, 
+                        MessageBoxImage.Warning);
+                    if (result != MessageBoxResult.Yes) return;
+                }
+
                 (sender as FrameworkElement).IsEnabled = false;
                 Progress.Value = 0;
 
@@ -101,18 +131,22 @@ namespace RecoTool.Windows
                     await Task.Delay(100); // small UI breath
                     if (ok)
                     {
-                        // Load the actual Reconciliation object to update it
-                        var reco = await _reconciliationService.GetReconciliationByIdAsync(_countryId, item.ID);
-                        if (reco != null)
+                        // Process all IDs in this grouped item (comma-separated)
+                        var ids = item.ID.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var id in ids)
                         {
-                            reco.Action = (int)ActionType.Triggered;
-                            reco.TriggerDate = DateTime.UtcNow;
-                            // Save PaymentReference if it was manually entered
-                            if (!item.IsGrouped && !string.IsNullOrWhiteSpace(item.PaymentReference))
+                            var reco = await _reconciliationService.GetReconciliationByIdAsync(_countryId, id.Trim());
+                            if (reco != null)
                             {
-                                reco.PaymentReference = item.PaymentReference;
+                                reco.Action = (int)ActionType.Triggered;
+                                reco.TriggerDate = DateTime.UtcNow;
+                                // Save PaymentReference if it was manually entered
+                                if (!item.IsGrouped && !string.IsNullOrWhiteSpace(item.PaymentReference))
+                                {
+                                    reco.PaymentReference = item.PaymentReference;
+                                }
+                                updated.Add(reco);
                             }
-                            updated.Add(reco);
                         }
                     }
                     Progress.Value += 1;
@@ -153,7 +187,7 @@ namespace RecoTool.Windows
         public event PropertyChangedEventHandler PropertyChanged;
         protected void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
-        public string ID { get; set; }
+        public string ID { get; set; }  // Can contain multiple IDs (comma-separated) for grouped items
         public string DWINGS_GuaranteeID { get; set; }
         public string DWINGS_InvoiceID { get; set; }
         public string DWINGS_BGPMT { get; set; }
@@ -161,6 +195,8 @@ namespace RecoTool.Windows
         public string Currency { get; set; }
         public string Comments { get; set; }
         public bool IsGrouped { get; set; }
+        public DateTime? ValueDate { get; set; }  // Value date from Pivot line
+        public int LineCount { get; set; }  // Number of lines in this BGPMT group
 
         private string _paymentReference;
         public string PaymentReference

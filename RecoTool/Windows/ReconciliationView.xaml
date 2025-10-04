@@ -50,6 +50,9 @@
         <local:UserFieldIdToNameConverter x:Key="UserFieldIdToNameConverter"/>
         <local:BoolToPendingDoneConverter x:Key="BoolToPendingDoneConverter"/>
         <local:AssigneeIdToNameConverter x:Key="AssigneeIdToNameConverter"/>
+        <local:IsPositiveConverter x:Key="IsPositiveConverter"/>
+        <local:IsNegativeConverter x:Key="IsNegativeConverter"/>
+        <local:PluralConverter x:Key="PluralConverter"/>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
     </UserControl.Resources>
     <Grid Background="{DynamicResource BNPBackground}">
@@ -147,54 +150,60 @@
 
 
                     <!-- View Management Group -->
-                    <Border Background="#F8F9FA" CornerRadius="6" Padding="6,4" BorderBrush="#DEE2E6" BorderThickness="1" Margin="0,0,8,0">
-                        <StackPanel Orientation="Horizontal">
-                            <Button x:Name="LoadViewButton" Click="LoadView_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Load View">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#2196F3" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                    <TextBlock Text="Load" Foreground="#2196F3" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
-                            <Rectangle Width="1" Height="20" Fill="#DEE2E6" Margin="4,0"/>
-                            <Button x:Name="SaveViewButton" Click="SaveView_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Save View">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#4CAF50" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                    <TextBlock Text="Save" Foreground="#4CAF50" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
+                    <Border Background="#E3F2FD" CornerRadius="6" Padding="8,6" BorderBrush="#2196F3" BorderThickness="1.5" Margin="0,0,12,0">
+                        <StackPanel>
+                            <TextBlock Text="📋 VIEW" FontSize="9" FontWeight="Bold" Foreground="#1976D2" Margin="0,0,0,4" HorizontalAlignment="Center"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="LoadViewButton" Click="LoadView_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Load saved view (columns + filters + sort)">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#2196F3" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                        <TextBlock Text="Load View" Foreground="#2196F3" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Rectangle Width="1" Height="20" Fill="#90CAF9" Margin="4,0"/>
+                                <Button x:Name="SaveViewButton" Click="SaveView_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Save current view (columns + filters + sort)">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#1976D2" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                        <TextBlock Text="Save View" Foreground="#1976D2" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 
                     <!-- Filter Management Group -->
-                    <Border Background="#F8F9FA" CornerRadius="6" Padding="6,4" BorderBrush="#DEE2E6" BorderThickness="1" Margin="0,0,8,0">
-                        <StackPanel Orientation="Horizontal">
-                            <Button x:Name="LoadFilterButton" Click="LoadFilter_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Load Filter">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#FF9800" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                    <TextBlock Text="Load" Foreground="#FF9800" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
-                            <Rectangle Width="1" Height="20" Fill="#DEE2E6" Margin="4,0"/>
-                            <Button x:Name="SaveFilterButton" Click="SaveFilter_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Save Filter">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#FF9800" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                    <TextBlock Text="Save" Foreground="#FF9800" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
-                            <Rectangle Width="1" Height="20" Fill="#DEE2E6" Margin="4,0"/>
-                            <Button x:Name="ReapplyFilterButton" Click="ReapplyFilter_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Reapply Filter">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#2196F3" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                    <TextBlock Text="Reapply" Foreground="#2196F3" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
-                            <Rectangle Width="1" Height="20" Fill="#DEE2E6" Margin="4,0"/>
-                            <Button x:Name="ResetFilterButton" Click="ResetFilter_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Reset Filter">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE894;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#9E9E9E" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                    <TextBlock Text="Reset" Foreground="#9E9E9E" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
+                    <Border Background="#FFF3E0" CornerRadius="6" Padding="8,6" BorderBrush="#FF9800" BorderThickness="1.5" Margin="0,0,8,0">
+                        <StackPanel>
+                            <TextBlock Text="🔍 FILTER" FontSize="9" FontWeight="Bold" Foreground="#F57C00" Margin="0,0,0,4" HorizontalAlignment="Center"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="LoadFilterButton" Click="LoadFilter_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="6,4" ToolTip="Load saved filter (criteria only)">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#FF9800" VerticalAlignment="Center" Margin="0,0,4,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                        <TextBlock Text="Load" Foreground="#FF9800" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Rectangle Width="1" Height="18" Fill="#FFB74D" Margin="3,0"/>
+                                <Button x:Name="SaveFilterButton" Click="SaveFilter_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="6,4" ToolTip="Save current filter (criteria only)">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#F57C00" VerticalAlignment="Center" Margin="0,0,4,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                        <TextBlock Text="Save" Foreground="#F57C00" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Rectangle Width="1" Height="18" Fill="#FFB74D" Margin="3,0"/>
+                                <Button x:Name="ReapplyFilterButton" Click="ReapplyFilter_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="6,4" ToolTip="Reapply current filter">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#FF9800" VerticalAlignment="Center" Margin="0,0,4,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                        <TextBlock Text="Reapply" Foreground="#FF9800" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Rectangle Width="1" Height="18" Fill="#FFB74D" Margin="3,0"/>
+                                <Button x:Name="ResetFilterButton" Click="ResetFilter_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="6,4" ToolTip="Clear all filters">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE894;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#9E9E9E" VerticalAlignment="Center" Margin="0,0,4,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                        <TextBlock Text="Reset" Foreground="#9E9E9E" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 
@@ -906,7 +915,7 @@
                             <DataGridTextColumn Header="Receiver" Binding="{Binding I_RECEIVER_NAME}" Width="180" IsReadOnly="True"/>
                             <DataGridTextColumn Header="MT Status" Binding="{Binding I_MT_STATUS}" Width="120" IsReadOnly="True"/>
                             <DataGridTextColumn Header="MT Error message" Binding="{Binding I_ERROR_MESSAGE}" Width="220" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Local Signed Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="130" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
+                            <DataGridTextColumn Header="Original Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="130" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
                             <DataGridTextColumn Header="Operation Date" Binding="{Binding Operation_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
                             <DataGridTextColumn Header="Reconciliation Num" Binding="{Binding Reconciliation_Num}" Width="130" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Reconciliation Origin Num" Binding="{Binding ReconciliationOrigin_Num}" Width="150" IsReadOnly="True"/>
@@ -914,7 +923,106 @@
                             <DataGridTextColumn Header="DW Invoice ID (BGI)" Binding="{Binding DWINGS_InvoiceID}" Width="150" IsReadOnly="True"/>
                             <DataGridTextColumn Header="DW Commission (BGPMT)" Binding="{Binding DWINGS_BGPMT}" Width="170" IsReadOnly="True"/>
                             <DataGridTextColumn Header="DW Guarantee ID" Binding="{Binding DWINGS_GuaranteeID}" Width="170" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Signed Amount" Binding="{Binding SignedAmount, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
+                            <DataGridTextColumn Header="Amount in Country Cur" Binding="{Binding SignedAmount, StringFormat={}{0:N2}}" Width="150" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
+                            <DataGridTextColumn Header="CCY" Binding="{Binding CCY}" Width="60" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
+                            
+                            <!-- Missing Amount: conditional formatting (Green=0, Orange>0, Red<0) -->
+                            <DataGridTemplateColumn Header="Missing Amount" Width="130" SortMemberPath="MissingAmount" IsReadOnly="True">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Padding="4,2">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Style.Triggers>
+                                                        <!-- Green: Balanced (= 0) -->
+                                                        <DataTrigger Binding="{Binding MissingAmount}" Value="0">
+                                                            <Setter Property="Background" Value="#E8F5E9"/>
+                                                        </DataTrigger>
+                                                        <!-- Orange: Waiting for payment (> 0) -->
+                                                        <DataTrigger Binding="{Binding MissingAmount, Converter={StaticResource IsPositiveConverter}}" Value="True">
+                                                            <Setter Property="Background" Value="#FFF3E0"/>
+                                                        </DataTrigger>
+                                                        <!-- Red: Overpayment (< 0) -->
+                                                        <DataTrigger Binding="{Binding MissingAmount, Converter={StaticResource IsNegativeConverter}}" Value="True">
+                                                            <Setter Property="Background" Value="#FFEBEE"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="{Binding MissingAmount, StringFormat={}{0:N2}}" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="#666"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding MissingAmount}" Value="0">
+                                                                <Setter Property="Foreground" Value="#2E7D32"/>
+                                                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding MissingAmount, Converter={StaticResource IsPositiveConverter}}" Value="True">
+                                                                <Setter Property="Foreground" Value="#EF6C00"/>
+                                                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding MissingAmount, Converter={StaticResource IsNegativeConverter}}" Value="True">
+                                                                <Setter Property="Foreground" Value="#C62828"/>
+                                                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                                <TextBlock.ToolTip>
+                                                    <ToolTip>
+                                                        <StackPanel>
+                                                            <TextBlock FontWeight="Bold" Margin="0,0,0,4">Missing Amount</TextBlock>
+                                                            <TextBlock>
+                                                                <Run Text="• Positive: Waiting for more payments"/>
+                                                                <LineBreak/>
+                                                                <Run Text="• Negative: Overpayment"/>
+                                                                <LineBreak/>
+                                                                <Run Text="• Zero: Balanced"/>
+                                                            </TextBlock>
+                                                        </StackPanel>
+                                                    </ToolTip>
+                                                </TextBlock.ToolTip>
+                                            </TextBlock>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            
+                            <!-- Counterpart Info: Total amount and count -->
+                            <DataGridTemplateColumn Header="Counterpart" Width="150" SortMemberPath="CounterpartTotalAmount" IsReadOnly="True">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                            <StackPanel.ToolTip>
+                                                <ToolTip>
+                                                    <StackPanel>
+                                                        <TextBlock FontWeight="Bold" Margin="0,0,0,4">Counterpart Lines</TextBlock>
+                                                        <TextBlock>
+                                                            <Run Text="Total amount: "/>
+                                                            <Run Text="{Binding CounterpartTotalAmount, StringFormat={}{0:N2}, Mode=OneWay}" FontWeight="Bold"/>
+                                                            <LineBreak/>
+                                                            <Run Text="Number of lines: "/>
+                                                            <Run Text="{Binding CounterpartCount, Mode=OneWay}" FontWeight="Bold"/>
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                </ToolTip>
+                                            </StackPanel.ToolTip>
+                                            <TextBlock Text="{Binding CounterpartTotalAmount, StringFormat={}{0:N2}}" Foreground="#1976D2" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                            <TextBlock Text=" (" Foreground="#666" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding CounterpartCount}" Foreground="#666" VerticalAlignment="Center"/>
+                                            <TextBlock Foreground="#666" VerticalAlignment="Center">
+                                                <TextBlock.Text>
+                                                    <MultiBinding StringFormat=" {0})">
+                                                        <Binding Path="CounterpartCount" Converter="{StaticResource PluralConverter}" ConverterParameter="line|lines"/>
+                                                    </MultiBinding>
+                                                </TextBlock.Text>
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            
                             <DataGridTextColumn Header="Value Date" Binding="{Binding Value_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
                             <DataGridTextColumn Header="Guarantee Type" Width="130" IsReadOnly="True" SortMemberPath="G_GUARANTEE_TYPE">
                                 <DataGridTextColumn.Binding>
@@ -932,6 +1040,7 @@
                                                 <MultiBinding Converter="{StaticResource ActionColorConverter}">
                                                     <Binding Path="Action"/>
                                                     <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
+                                                    <Binding Path="ActionStatus"/>
                                                 </MultiBinding>
                                             </Border.Background>
                                             <TextBlock Margin="2,0,2,0" HorizontalAlignment="Center" TextAlignment="Center">
@@ -952,6 +1061,7 @@
                                                 <MultiBinding Converter="{StaticResource ActionColorConverter}">
                                                     <Binding Path="Action"/>
                                                     <Binding ElementName="Root" Path="DataContext.AllUserFields"/>
+                                                    <Binding Path="ActionStatus"/>
                                                 </MultiBinding>
                                             </Border.Background>
                                             <ComboBox Width="Auto"
@@ -1294,12 +1404,14 @@
             </Border>
         </Grid>
 
-        <!-- Floating toast notification -->
+        <!-- Floating toast notification (enhanced) -->
         <Border x:Name="ToastPanel"
                 Grid.RowSpan="2"
-                Background="#DD333333"
-                CornerRadius="6"
-                Padding="10"
+                Background="#DD1E1E1E"
+                BorderBrush="#4CAF50"
+                BorderThickness="2"
+                CornerRadius="8"
+                Padding="12,8"
                 Margin="10"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Top"
@@ -1307,9 +1419,39 @@
                 Panel.ZIndex="1000"
                 MouseLeftButtonUp="ToastPanel_MouseLeftButtonUp"
                 Cursor="Hand">
+            <Border.Effect>
+                <DropShadowEffect Color="Black" BlurRadius="15" ShadowDepth="3" Opacity="0.5"/>
+            </Border.Effect>
             <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="White" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                <TextBlock x:Name="ToastText" Text="" Foreground="White" FontWeight="SemiBold"/>
+                <TextBlock Text="✨" FontSize="16" Foreground="#4CAF50" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock x:Name="ToastText" Text="" Foreground="White" FontWeight="SemiBold" TextWrapping="Wrap" MaxWidth="400"/>
+                <TextBlock Text="→" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4CAF50" VerticalAlignment="Center" Margin="8,0,0,0"/>
+            </StackPanel>
+        </Border>
+        
+        <!-- Loading Overlay -->
+        <Border Grid.RowSpan="2" Background="#80FFFFFF" 
+                Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}"
+                Panel.ZIndex="1000">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock Text="⏳" FontSize="48" HorizontalAlignment="Center" Margin="0,0,0,16">
+                    <TextBlock.RenderTransform>
+                        <RotateTransform x:Name="LoadingRotation" CenterX="24" CenterY="24"/>
+                    </TextBlock.RenderTransform>
+                    <TextBlock.Triggers>
+                        <EventTrigger RoutedEvent="Loaded">
+                            <BeginStoryboard>
+                                <Storyboard RepeatBehavior="Forever">
+                                    <DoubleAnimation Storyboard.TargetName="LoadingRotation"
+                                                   Storyboard.TargetProperty="Angle"
+                                                   From="0" To="360" Duration="0:0:2"/>
+                                </Storyboard>
+                            </BeginStoryboard>
+                        </EventTrigger>
+                    </TextBlock.Triggers>
+                </TextBlock>
+                <TextBlock Text="Loading data..." FontSize="16" FontWeight="SemiBold" 
+                          Foreground="{DynamicResource BNPMainGreenBrush}" HorizontalAlignment="Center"/>
             </StackPanel>
         </Border>
     </Grid>

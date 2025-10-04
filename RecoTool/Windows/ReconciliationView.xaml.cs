@@ -573,7 +573,8 @@ namespace RecoTool.Windows
                               || (m.Tag as string) == "__MarkActionDone__"
                               || (m.Tag as string) == "__AddRuleFromLine__"
                               || (m.Tag as string) == "__Copy__"
-                              || (m.Tag as string) == "__SearchBGI__").ToList())
+                              || (m.Tag as string) == "__SearchBGI__"
+                              || (m.Tag as string) == "__OpenGrouped__").ToList())
                     {
                         cm.Items.Remove(mi);
                     }
@@ -583,6 +584,22 @@ namespace RecoTool.Windows
                     }
 
                     cm.Items.Add(new Separator { Tag = "__InjectedSep__" });
+                    
+                    // Add "Open Other Account grouped lines" if counterpart exists
+                    if (rowData.CounterpartCount.HasValue && rowData.CounterpartCount.Value > 0)
+                    {
+                        var openGroupedItem = new MenuItem { Header = "Open Other Account grouped lines", Tag = "__OpenGrouped__", DataContext = rowData };
+                        openGroupedItem.Click += (s2, e2) =>
+                        {
+                            try
+                            {
+                                OpenMatchedPopup(rowData);
+                            }
+                            catch { }
+                        };
+                        cm.Items.Add(openGroupedItem);
+                    }
+                    
                     var takeItem = new MenuItem { Header = "Take (Assign to me)", Tag = "__Take__", DataContext = rowData };
                     takeItem.Click += QuickTakeMenuItem_Click;
                     cm.Items.Add(takeItem);
@@ -903,30 +920,54 @@ namespace RecoTool.Windows
             catch { }
         }
 
-        private void ShowToast(string text, Action onClick = null)
+        private void ShowToast(string text, Action onClick = null, int durationSeconds = 5)
         {
             try
             {
                 var panel = this.FindName("ToastPanel") as Border;
                 var tb = this.FindName("ToastText") as TextBlock;
                 if (panel == null || tb == null) return;
+                
                 tb.Text = text ?? string.Empty;
-                panel.Visibility = Visibility.Visible;
                 _toastClickAction = onClick;
                 _toastTargetReconciliationId = null;
 
+                // Fade in animation
+                panel.Opacity = 0;
+                panel.Visibility = Visibility.Visible;
+                var fadeIn = new System.Windows.Media.Animation.DoubleAnimation
+                {
+                    From = 0,
+                    To = 1,
+                    Duration = TimeSpan.FromMilliseconds(300)
+                };
+                panel.BeginAnimation(Border.OpacityProperty, fadeIn);
+
                 if (_toastTimer == null)
                 {
-                    _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                    _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(durationSeconds) };
                     _toastTimer.Tick += (s, e) =>
                     {
-                        try { panel.Visibility = Visibility.Collapsed; } catch { }
+                        try 
+                        { 
+                            // Fade out animation
+                            var fadeOut = new System.Windows.Media.Animation.DoubleAnimation
+                            {
+                                From = 1,
+                                To = 0,
+                                Duration = TimeSpan.FromMilliseconds(300)
+                            };
+                            fadeOut.Completed += (_, __) => { panel.Visibility = Visibility.Collapsed; };
+                            panel.BeginAnimation(Border.OpacityProperty, fadeOut);
+                        } 
+                        catch { }
                         finally { _toastTimer?.Stop(); }
                     };
                 }
                 else
                 {
                     _toastTimer.Stop();
+                    _toastTimer.Interval = TimeSpan.FromSeconds(durationSeconds);
                 }
                 _toastTimer.Start();
             }

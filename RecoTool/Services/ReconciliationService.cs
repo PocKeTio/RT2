@@ -292,6 +292,14 @@ namespace RecoTool.Services
             try
             {
                 _recoViewCache.Clear();
+                
+                // Reset DWINGS cache initialization flag (will be reinitialized on next load)
+                lock (_dwingsCacheLock)
+                {
+                    _dwingsCachesInitialized = false;
+                }
+                ReconciliationViewData.ClearDwingsCaches();
+                
                 System.Diagnostics.Debug.WriteLine("ReconciliationService: View cache cleared");
             }
             catch (Exception ex)
@@ -305,16 +313,102 @@ namespace RecoTool.Services
         /// </summary>
         public async Task<List<ReconciliationViewData>> GetReconciliationViewAsync(string countryId, string filterSql = null, bool dashboardOnly = false)
         {
+            // CRITICAL: Always ensure DWINGS caches are initialized for lazy loading
+            await EnsureDwingsCachesInitializedAsync().ConfigureAwait(false);
+            
             var key = $"{countryId ?? string.Empty}|{dashboardOnly}|{NormalizeFilterForCache(filterSql)}";
             if (_recoViewCache.TryGetValue(key, out var existing))
             {
                 var cached = await existing.Value.ConfigureAwait(false);
+                
+                // CRITICAL: Re-apply enrichments for cached data (linking may have been lost)
+                // This ensures DWINGS_InvoiceID, MissingAmount, etc. are always calculated
+                await ReapplyEnrichmentsAsync(cached, countryId).ConfigureAwait(false);
+                
                 return cached;
             }
             var lazy = new Lazy<Task<List<ReconciliationViewData>>>(() => BuildReconciliationViewAsyncCore(countryId, filterSql, dashboardOnly, key));
             var entry = _recoViewCache.GetOrAdd(key, lazy);
             var result = await entry.Value.ConfigureAwait(false);
             return result;
+        }
+        
+        /// <summary>
+        /// Re-applies critical enrichments to a list of ReconciliationViewData
+        /// Needed because DWINGS caches may have been cleared between cache creation and retrieval
+        /// Also used for preloaded data to ensure enrichments are always applied
+        /// </summary>
+        public async Task ReapplyEnrichmentsToListAsync(List<ReconciliationViewData> list, string countryId)
+        {
+            await ReapplyEnrichmentsAsync(list, countryId).ConfigureAwait(false);
+        }
+        
+        /// <summary>
+        /// Re-applies critical enrichments to cached data (internal implementation)
+        /// </summary>
+        private async Task ReapplyEnrichmentsAsync(List<ReconciliationViewData> list, string countryId)
+        {
+            if (list == null || list.Count == 0) return;
+            
+            try
+            {
+                // Re-link DWINGS invoices (may have been cleared)
+                var invoices = await GetDwingsInvoicesAsync().ConfigureAwait(false);
+                ReconciliationViewEnricher.EnrichWithDwingsInvoices(list, invoices);
+                
+                // Re-link DWINGS guarantees heuristically
+                foreach (var row in list)
+                {
+                    if (string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID))
+                    {
+                        var gid = DwingsLinkingHelper.ExtractGuaranteeId(row.Reconciliation_Num)
+                                  ?? DwingsLinkingHelper.ExtractGuaranteeId(row.Comments)
+                                  ?? DwingsLinkingHelper.ExtractGuaranteeId(row.Receivable_DWRefFromAmbre)
+                                  ?? DwingsLinkingHelper.ExtractGuaranteeId(row.RawLabel)
+                                  ?? row.I_BUSINESS_CASE_REFERENCE
+                                  ?? row.I_BUSINESS_CASE_ID;
+                        if (!string.IsNullOrWhiteSpace(gid))
+                        {
+                            row.DWINGS_GuaranteeID = gid;
+                        }
+                    }
+                }
+                
+                // Recalculate MissingAmount
+                var country = _countries?.TryGetValue(countryId, out var c) == true ? c : null;
+                if (country != null)
+                {
+                    ReconciliationViewEnricher.CalculateMissingAmounts(list, country.CNT_AmbreReceivable, country.CNT_AmbrePivot);
+                }
+            }
+            catch { /* best-effort */ }
+        }
+        
+        private bool _dwingsCachesInitialized = false;
+        private readonly object _dwingsCacheLock = new object();
+        
+        /// <summary>
+        /// Ensures DWINGS caches are initialized once per country session
+        /// Called before returning cached data to guarantee lazy loading works
+        /// Public to allow ReconciliationView to initialize caches for preloaded data
+        /// </summary>
+        public async Task EnsureDwingsCachesInitializedAsync()
+        {
+            if (_dwingsCachesInitialized) return;
+            
+            lock (_dwingsCacheLock)
+            {
+                if (_dwingsCachesInitialized) return;
+                _dwingsCachesInitialized = true;
+            }
+            
+            try
+            {
+                var invoices = await GetDwingsInvoicesAsync().ConfigureAwait(false);
+                var guarantees = await GetDwingsGuaranteesAsync().ConfigureAwait(false);
+                ReconciliationViewData.InitializeDwingsCaches(invoices, guarantees);
+            }
+            catch { /* best-effort */ }
         }
 
         private async Task<List<ReconciliationViewData>> BuildReconciliationViewAsyncCore(string countryId, string filterSql, bool dashboardOnly, string cacheKey)
@@ -349,13 +443,30 @@ namespace RecoTool.Services
             var swExec = Stopwatch.StartNew();
             var list = await ExecuteQueryAsync<ReconciliationViewData>(query);
 
-            // Enrich invoice fields via centralized helper (no SQL join to T_DW_Data)
+            // OPTIMIZED: Initialize DWINGS caches for lazy loading (no longer enriches all properties)
             try
             {
                 var invoices = await GetDwingsInvoicesAsync().ConfigureAwait(false);
+                var guarantees = await GetDwingsGuaranteesAsync().ConfigureAwait(false);
+                
+                // Initialize static caches in ReconciliationViewData
+                ReconciliationViewData.InitializeDwingsCaches(invoices, guarantees);
+                
+                // Link rows to DWINGS invoices (sets DWINGS_InvoiceID only)
                 ReconciliationViewEnricher.EnrichWithDwingsInvoices(list, invoices);
             }
             catch { /* best-effort enrichment */ }
+            
+            // Calculate missing amounts for grouped lines (Receivable vs Pivot)
+            try
+            {
+                var country = _countries?.TryGetValue(countryId, out var c) == true ? c : null;
+                if (country != null)
+                {
+                    ReconciliationViewEnricher.CalculateMissingAmounts(list, country.CNT_AmbreReceivable, country.CNT_AmbrePivot);
+                }
+            }
+            catch { /* best-effort calculation */ }
 
             // Compute transient UI flags for new/updated based on reconciliation timestamps
             try
@@ -464,14 +575,9 @@ namespace RecoTool.Services
             }
             catch { }
 
-            // Enrich guarantee fields from in-memory DWINGS cache (avoid heavy SQL joins and keep UI robust)
+            // OPTIMIZED: Link guarantee IDs heuristically (G_* fields are now lazy-loaded)
             try
             {
-                var guarantees = await GetDwingsGuaranteesAsync().ConfigureAwait(false);
-                var byGuaranteeId = guarantees.Where(g => !string.IsNullOrWhiteSpace(g.GUARANTEE_ID))
-                                              .GroupBy(g => g.GUARANTEE_ID, StringComparer.OrdinalIgnoreCase)
-                                              .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
-
                 foreach (var row in list)
                 {
                     // Resolve guarantee id heuristically if missing
@@ -491,47 +597,9 @@ namespace RecoTool.Services
                             row.DWINGS_GuaranteeID = gid; // backfill for consistency
                         }
                     }
-
-                    if (string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID)) continue;
-                    if (!byGuaranteeId.TryGetValue(row.DWINGS_GuaranteeID, out var g)) continue;
-
-                    row.GUARANTEE_ID = g.GUARANTEE_ID;
-                    row.GUARANTEE_STATUS = g.GUARANTEE_STATUS ?? row.GUARANTEE_STATUS;
-                    row.GUARANTEE_TYPE = g.GUARANTEE_TYPE ?? row.GUARANTEE_TYPE;
-                    // Also hydrate the prefixed field used directly by the grid binding
-                    row.G_GUARANTEE_TYPE = g.GUARANTEE_TYPE ?? row.G_GUARANTEE_TYPE;
-
-                    // Prefixed G_* extended fields
-                    row.G_NATURE = g.NATURE ?? row.G_NATURE;
-                    row.G_EVENT_STATUS = g.EVENT_STATUS ?? row.G_EVENT_STATUS;
-                    row.G_EVENT_EFFECTIVEDATE = g.EVENT_EFFECTIVEDATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? row.G_EVENT_EFFECTIVEDATE;
-                    row.G_ISSUEDATE = g.ISSUEDATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? row.G_ISSUEDATE;
-                    row.G_OFFICIALREF = g.OFFICIALREF ?? row.G_OFFICIALREF;
-                    row.G_UNDERTAKINGEVENT = g.UNDERTAKINGEVENT ?? row.G_UNDERTAKINGEVENT;
-                    row.G_PROCESS = g.PROCESS ?? row.G_PROCESS;
-                    row.G_EXPIRYDATETYPE = g.EXPIRYDATETYPE ?? row.G_EXPIRYDATETYPE;
-                    row.G_EXPIRYDATE = g.EXPIRYDATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? row.G_EXPIRYDATE;
-                    row.G_PARTY_ID = g.PARTY_ID ?? row.G_PARTY_ID;
-                    row.G_PARTY_REF = g.PARTY_REF ?? row.G_PARTY_REF;
-                    row.G_SECONDARY_OBLIGOR = g.SECONDARY_OBLIGOR ?? row.G_SECONDARY_OBLIGOR;
-                    row.G_SECONDARY_OBLIGOR_NATURE = g.SECONDARY_OBLIGOR_NATURE ?? row.G_SECONDARY_OBLIGOR_NATURE;
-                    row.G_ROLE = g.ROLE ?? row.G_ROLE;
-                    row.G_COUNTRY = g.COUNTRY ?? row.G_COUNTRY;
-                    row.G_CENTRAL_PARTY_CODE = g.CENTRAL_PARTY_CODE ?? row.G_CENTRAL_PARTY_CODE;
-                    row.G_NAME1 = g.NAME1 ?? row.G_NAME1;
-                    row.G_NAME2 = g.NAME2 ?? row.G_NAME2;
-                    row.G_GROUPE = g.GROUPE ?? row.G_GROUPE;
-                    row.G_PREMIUM = g.PREMIUM ?? row.G_PREMIUM;
-                    row.G_BRANCH_CODE = g.BRANCH_CODE ?? row.G_BRANCH_CODE;
-                    row.G_BRANCH_NAME = g.BRANCH_NAME ?? row.G_BRANCH_NAME;
-                    row.G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY = g.OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY ?? row.G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY;
-                    row.G_CANCELLATIONDATE = g.CANCELLATIONDATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? row.G_CANCELLATIONDATE;
-                    row.G_CONTROLER = g.CONTROLER ?? row.G_CONTROLER;
-                    row.G_AUTOMATICBOOKOFF = g.AUTOMATICBOOKOFF ?? row.G_AUTOMATICBOOKOFF;
-                    row.G_NATUREOFDEAL = g.NATUREOFDEAL ?? row.G_NATUREOFDEAL;
                 }
             }
-            catch { /* best-effort enrichment */ }
+            catch { /* best-effort linking */ }
             swExec.Stop();
 
             // Store materialized list for incremental updates

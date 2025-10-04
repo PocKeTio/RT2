@@ -198,6 +198,61 @@ namespace RecoTool.Windows
 
                 // Build batch updates
                 var updates = new List<Reconciliation>();
+                var rulesAppliedCount = 0;
+                
+                // For multi-selection, check if any rules will be triggered
+                bool applyRules = false;
+                if (targetRows.Count > 1)
+                {
+                    // Pre-check: count how many rows will actually trigger rules
+                    int rowsWithRules = 0;
+                    foreach (var r in targetRows.Take(Math.Min(targetRows.Count, 50))) // Sample first 50 for performance
+                    {
+                        try
+                        {
+                            var res = await _reconciliationService.PreviewRulesForEditAsync(r.ID);
+                            if (res != null && res.Rule != null)
+                            {
+                                rowsWithRules++;
+                            }
+                        }
+                        catch { }
+                    }
+                    
+                    // Only ask if at least one rule will be triggered
+                    if (rowsWithRules > 0)
+                    {
+                        var fieldName = isAction ? "Action" : isKpi ? "KPI" : "Incident Type";
+                        var fieldValue = newId.HasValue ? $"to '{GetUserFieldName(category, newId.Value)}'" : "(cleared)";
+                        
+                        var result = MessageBox.Show(
+                            $"BULK UPDATE: {fieldName} {fieldValue} for {targetRows.Count} rows\n\n" +
+                            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+                            "⚠️ AUTOMATIC RULES DETECTION\n\n" +
+                            $"At least {rowsWithRules} row(s) will trigger automatic rules that could:\n" +
+                            "  • Change other fields (KPI, Incident Type, etc.)\n" +
+                            "  • Add comments\n" +
+                            "  • Set reminders\n\n" +
+                            "Do you want to apply these automatic rules?\n\n" +
+                            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
+                            "• YES: Apply rules automatically (recommended)\n" +
+                            "• NO: Only update the {fieldName} field\n" +
+                            "• CANCEL: Abort the entire operation",
+                            $"Apply Automatic Rules? ({rowsWithRules} rules detected)",
+                            MessageBoxButton.YesNoCancel,
+                            MessageBoxImage.Question);
+                        
+                        if (result == MessageBoxResult.Cancel) return;
+                        applyRules = (result == MessageBoxResult.Yes);
+                    }
+                    // If no rules detected, proceed without asking (applyRules stays false)
+                }
+                else
+                {
+                    // Single row: always apply rules (existing behavior)
+                    applyRules = true;
+                }
+                
                 foreach (var r in targetRows)
                 {
                     var reco = await _reconciliationService.GetOrCreateReconciliationAsync(r.ID);
@@ -213,10 +268,69 @@ namespace RecoTool.Windows
                     {
                         UserFieldUpdateService.ApplyIncidentType(r, reco, newId);
                     }
+                    
+                    // Apply rules if requested
+                    if (applyRules)
+                    {
+                        try
+                        {
+                            var res = await _reconciliationService.PreviewRulesForEditAsync(r.ID);
+                            if (res != null && res.Rule != null)
+                            {
+                                // Apply SELF outputs silently (no confirmation for bulk)
+                                if (res.NewActionIdSelf.HasValue) { UserFieldUpdateService.ApplyAction(r, reco, res.NewActionIdSelf.Value, AllUserFields); }
+                                if (res.NewKpiIdSelf.HasValue) { r.KPI = res.NewKpiIdSelf.Value; reco.KPI = res.NewKpiIdSelf.Value; }
+                                if (res.NewIncidentTypeIdSelf.HasValue) { r.IncidentType = res.NewIncidentTypeIdSelf.Value; reco.IncidentType = res.NewIncidentTypeIdSelf.Value; }
+                                if (res.NewRiskyItemSelf.HasValue) { r.RiskyItem = res.NewRiskyItemSelf.Value; reco.RiskyItem = res.NewRiskyItemSelf.Value; }
+                                if (res.NewReasonNonRiskyIdSelf.HasValue) { r.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value; reco.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value; }
+                                if (res.NewToRemindSelf.HasValue) { r.ToRemind = res.NewToRemindSelf.Value; reco.ToRemind = res.NewToRemindSelf.Value; }
+                                if (res.NewToRemindDaysSelf.HasValue)
+                                {
+                                    try { var d = DateTime.Today.AddDays(res.NewToRemindDaysSelf.Value); r.ToRemindDate = d; reco.ToRemindDate = d; } catch { }
+                                }
+                                if (res.NewFirstClaimTodaySelf == true)
+                                {
+                                    try { r.FirstClaimDate = DateTime.Today; reco.FirstClaimDate = DateTime.Today; } catch { }
+                                }
+                                
+                                // Apply UserMessage to Comments
+                                if (!string.IsNullOrWhiteSpace(res.UserMessage))
+                                {
+                                    try
+                                    {
+                                        var currentUser = Environment.UserName;
+                                        var prefix = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {currentUser}: ";
+                                        var msg = prefix + $"[Rule {res.Rule.RuleId ?? "(unnamed)"}] {res.UserMessage}";
+                                        if (string.IsNullOrWhiteSpace(r.Comments))
+                                        {
+                                            r.Comments = msg;
+                                            reco.Comments = msg;
+                                        }
+                                        else if (!r.Comments.Contains(msg))
+                                        {
+                                            r.Comments = msg + Environment.NewLine + r.Comments;
+                                            reco.Comments = msg + Environment.NewLine + reco.Comments;
+                                        }
+                                    }
+                                    catch { }
+                                }
+                                
+                                rulesAppliedCount++;
+                            }
+                        }
+                        catch { /* Continue with other rows if rule evaluation fails */ }
+                    }
+                    
                     updates.Add(reco);
                 }
 
                 await _reconciliationService.SaveReconciliationsAsync(updates);
+                
+                // Show summary if rules were applied
+                if (applyRules && rulesAppliedCount > 0)
+                {
+                    ShowToast($"✨ Rules applied to {rulesAppliedCount} of {targetRows.Count} rows");
+                }
                 
                 // Refresh KPIs to reflect changes immediately
                 UpdateKpis(_filteredData);
@@ -460,6 +574,22 @@ namespace RecoTool.Windows
             {
                 ShowError($"Failed to set reminder: {ex.Message}");
             }
+        }
+
+        // Helper: Get user field name by category and ID
+        private string GetUserFieldName(string category, int id)
+        {
+            try
+            {
+                var list = AllUserFields;
+                if (list == null) return id.ToString();
+                var q = list.AsEnumerable();
+                if (!string.IsNullOrWhiteSpace(category))
+                    q = q.Where(u => string.Equals(u?.USR_Category ?? string.Empty, category, StringComparison.OrdinalIgnoreCase));
+                var uf = q.FirstOrDefault(u => u?.USR_ID == id) ?? list.FirstOrDefault(u => u?.USR_ID == id);
+                return uf?.USR_FieldName ?? id.ToString();
+            }
+            catch { return id.ToString(); }
         }
     }
 }

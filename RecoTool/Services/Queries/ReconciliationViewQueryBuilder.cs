@@ -46,8 +46,13 @@ namespace RecoTool.Services.Queries
                             a.CreationDate, 
                             a.DeleteDate,
                             r.Action, 
+                            r.ActionStatus,
+                            r.ActionDate,
                             r.KPI, 
                             r.RiskyItem,
+                            r.DWINGS_GuaranteeID,
+                            r.DWINGS_InvoiceID,
+                            r.DWINGS_BGPMT,
                             IIF(dup.DupCount > 1, True, False) AS IsPotentialDuplicate
                         FROM 
                             (

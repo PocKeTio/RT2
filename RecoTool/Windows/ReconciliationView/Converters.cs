@@ -33,6 +33,13 @@ namespace RecoTool.Windows
 
                 var all = values[1] as IReadOnlyList<UserField>;
                 if (actionId == null || all == null) return Transparent;
+                
+                // CRITICAL: Only show color if action is PENDING (not DONE)
+                // values[2] is ActionStatus (true = DONE, false/null = PENDING)
+                if (values.Length >= 3 && values[2] is bool actionStatus && actionStatus == true)
+                {
+                    return Transparent; // Action is DONE, no color
+                }
 
                 // Rebuild cache only when the source list instance changes (cheap reference check)
                 if (!ReferenceEquals(all, _lastAllRef))
@@ -390,6 +397,70 @@ namespace RecoTool.Windows
             if (string.Equals(s, "DONE", StringComparison.OrdinalIgnoreCase)) return true;
             if (string.Equals(s, "PENDING", StringComparison.OrdinalIgnoreCase)) return false;
             return null;
+        }
+    }
+    
+    // Converter: check if decimal? is positive (> 0)
+    public class IsPositiveConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            if (value is decimal d) return d > 0;
+            if (value is double db) return db > 0;
+            if (value is int i) return i > 0;
+            return false;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    // Converter: check if decimal? is negative (< 0)
+    public class IsNegativeConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            if (value is decimal d) return d < 0;
+            if (value is double db) return db < 0;
+            if (value is int i) return i < 0;
+            return false;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    // Converter: pluralize text based on count (e.g., "1 line" vs "2 lines")
+    public class PluralConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            if (value == null) return "";
+            
+            int count = 0;
+            if (value is int i) count = i;
+            else if (value is long l) count = (int)l;
+            else if (int.TryParse(value.ToString(), out var parsed)) count = parsed;
+            
+            if (parameter is string param)
+            {
+                var parts = param.Split('|');
+                if (parts.Length == 2)
+                {
+                    return count == 1 ? parts[0] : parts[1];
+                }
+            }
+            
+            return count == 1 ? "item" : "items";
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            throw new NotImplementedException();
         }
     }
 }

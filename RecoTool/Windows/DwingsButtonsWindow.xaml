@@ -16,11 +16,13 @@
         <DataGrid x:Name="GridReconciliations" Grid.Row="1" Margin="10" AutoGenerateColumns="False"
                   IsReadOnly="False" SelectionMode="Extended" CanUserAddRows="False" CanUserDeleteRows="False">
             <DataGrid.Columns>
+                <DataGridTextColumn Header="Lines" Binding="{Binding LineCount}" Width="60" IsReadOnly="True"/>
                 <DataGridTextColumn Header="DWINGS Guarantee" Binding="{Binding DWINGS_GuaranteeID}" Width="150" IsReadOnly="True"/>
                 <DataGridTextColumn Header="DWINGS Invoice ID" Binding="{Binding DWINGS_InvoiceID}" Width="150" IsReadOnly="True"/>
                 <DataGridTextColumn Header="DWINGS BGPMT" Binding="{Binding DWINGS_BGPMT}" Width="120" IsReadOnly="True"/>
-                <DataGridTextColumn Header="Amount" Binding="{Binding Amount, StringFormat=N2}" Width="120" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Amount (Sum)" Binding="{Binding Amount, StringFormat=N2}" Width="120" IsReadOnly="True"/>
                 <DataGridTextColumn Header="Currency" Binding="{Binding Currency}" Width="80" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Value Date (Pivot)" Binding="{Binding ValueDate, StringFormat={}{0:dd/MM/yyyy}}" Width="130" IsReadOnly="True"/>
                 <DataGridTextColumn Header="Comments" Binding="{Binding Comments}" Width="200" IsReadOnly="True"/>
                 <DataGridTextColumn Header="Payment Reference" Binding="{Binding PaymentReference, UpdateSourceTrigger=PropertyChanged}" Width="150">
                     <DataGridTextColumn.ElementStyle>
@@ -48,7 +50,6 @@
                         </Style>
                     </DataGridTextColumn.EditingElementStyle>
                 </DataGridTextColumn>
-                <DataGridCheckBoxColumn Header="Grouped" Binding="{Binding IsGrouped}" Width="80" IsReadOnly="True"/>
             </DataGrid.Columns>
         </DataGrid>
 

@@ -90,10 +90,12 @@ namespace RecoTool.Windows
 
         public async Task RefreshAsync()
         {
-            if (!CanRefresh) return;
+            // Don't check CanRefresh if IsLoading is already true (initial load)
+            if (!IsLoading && !CanRefresh) return;
 
             try
             {
+                if (!IsLoading) IsLoading = true; // Set only if not already loading
                 // Toujours rafraîchir l'info Pivot/Receivable avant chargement
                 UpdateCountryPivotReceivableInfo();
                 RefreshStarted?.Invoke(this, EventArgs.Empty);
@@ -104,6 +106,7 @@ namespace RecoTool.Windows
             }
             finally
             {
+                IsLoading = false;
                 RefreshCompleted?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -129,9 +132,12 @@ namespace RecoTool.Windows
         /// </summary>
         private async Task LoadReconciliationDataAsync()
         {
+            var previousCursor = this.Cursor;
             try
             {
-                IsLoading = true;
+                // Show hourglass cursor during loading
+                this.Cursor = System.Windows.Input.Cursors.Wait;
+                
                 UpdateStatusInfo("Loading data...");
                 var swTotal = Stopwatch.StartNew();
                 var swDb = Stopwatch.StartNew();
@@ -143,6 +149,16 @@ namespace RecoTool.Windows
                     viewList = _preloadedAllData.ToList();
                     usedPreloaded = true;
                     swDb.Stop();
+                    
+                    // CRITICAL: Preloaded data may have stale DWINGS links, re-enrich them
+                    // This ensures MissingAmount, grouping flags, etc. are always calculated
+                    // IMPORTANT: Must initialize DWINGS caches first (may not have been done yet)
+                    try
+                    {
+                        await _reconciliationService?.EnsureDwingsCachesInitializedAsync();
+                        await _reconciliationService?.ReapplyEnrichmentsToListAsync(viewList, _currentCountryId);
+                    }
+                    catch { /* best-effort */ }
                 }
                 else
                 {
@@ -178,7 +194,8 @@ namespace RecoTool.Windows
             }
             finally
             {
-                IsLoading = false;
+                // Restore previous cursor
+                this.Cursor = previousCursor;
             }
         }
 

@@ -109,12 +109,14 @@ namespace RecoTool.Windows
                 var receivableId = currentCountry.CNT_AmbreReceivable;
                 var pivotId = currentCountry.CNT_AmbrePivot;
 
+                // Currency breakdown: use ABSOLUTE values to show volume (not net balance)
                 var grouped = _reconciliationViewData
                     .Where(r => !string.IsNullOrWhiteSpace(r.CCY) && r.SignedAmount != 0)
                     .GroupBy(r => r.CCY.Trim().ToUpperInvariant())
                     .Select(g => new
                     {
                         CCY = g.Key,
+                        // Abs() = volume total (crédit + débit), pas le solde net
                         RecAmount = g.Where(x => x.Account_ID == receivableId).Sum(x => Math.Abs(x.SignedAmount)),
                         PivAmount = g.Where(x => x.Account_ID == pivotId).Sum(x => Math.Abs(x.SignedAmount))
                     })
@@ -235,8 +237,13 @@ namespace RecoTool.Windows
 
         private async void UserControl_Loaded(object sender, RoutedEventArgs e)
         {
-            // Clear cache to ensure fresh data when navigating to dashboard
-            _reconciliationService?.ClearViewCache();
+            // Reload dashboard data to reflect any changes made in ReconciliationView
+            // This ensures QuickStats (like "Reviewed Today") are up-to-date
+            try
+            {
+                await LoadDashboardDataAsync();
+            }
+            catch { /* best-effort */ }
         }
 
 
@@ -1614,11 +1621,14 @@ namespace RecoTool.Windows
             UnderInvestigationCount = underInvestigation;
 
             // Calcul des montants rÃ©els
+            // IMPORTANT: SignedAmount peut Ãªtre positif ou nÃgatif
+            // - Receivable: montants SIGNÃ‰S (+ = crÃdit, - = dÃbit)
+            // - Pivot: montants SIGNÃ‰S (+ = entrÃe, - = sortie)
+            // Pour le total, on garde le signe pour voir le solde net
             TotalReceivableAmount = receivableData.Sum(r => r.SignedAmount);
             ReceivableAccountsCount = receivableData.Count;
             TotalPivotAmount = pivotData.Sum(r => r.SignedAmount);
             PivotAccountsCount = pivotData.Count;
-
             // Quick Stats computation
             TotalLiveCount = totalLines;
             int matchedCount = _reconciliationViewData.Count(r => !string.IsNullOrWhiteSpace(r.DWINGS_GuaranteeID)
@@ -1724,22 +1734,22 @@ namespace RecoTool.Windows
         {
             try
             {
-                if (_reconciliationViewData == null || !_reconciliationViewData.Any())
-                {
-                    return;
-                }
-
-                var kpiData = _reconciliationViewData
+                var receivableData = _reconciliationViewData
+                    .Where(r => r.Account_ID == _offlineFirstService?.CurrentCountry?.CNT_AmbreReceivable)
+                    .ToList();
+                
+                // KPI breakdown: use ABSOLUTE values to show volume (not net balance)
+                var kpiData = receivableData
                     .Where(r => r.KPI.HasValue)
                     .GroupBy(r => r.KPI.Value)
                     .Select(g => new { 
                         KPI = g.Key, 
                         Count = g.Count(),
+                        // Abs() = volume total des transactions, pas le solde net
                         TotalAmount = g.Sum(x => Math.Abs(x.SignedAmount))
                     })
                     .OrderByDescending(x => x.Count)
                     .ToList();
-
                 if (!kpiData.Any())
                 {
                     return;
@@ -1778,18 +1788,12 @@ namespace RecoTool.Windows
         {
             try
             {
-                if (_reconciliationViewData == null || !_reconciliationViewData.Any())
-                {
-                    return;
-                }
-
-                // Calculer la rÃ©partition rÃ©elle par devise depuis T_Data_Ambre.CCY
                 var currencyData = _reconciliationViewData
                     .Where(r => !string.IsNullOrEmpty(r.CCY) && r.SignedAmount != 0)
                     .GroupBy(r => r.CCY)
                     .Select(g => new { 
                         Currency = g.Key, 
-                        Amount = Math.Abs(g.Sum(x => x.SignedAmount)),
+                        Amount = Math.Abs(g.Sum(x => x.SignedAmount)), // Abs du SOLDE NET
                         Count = g.Count()
                     })
                     .OrderByDescending(c => c.Amount)

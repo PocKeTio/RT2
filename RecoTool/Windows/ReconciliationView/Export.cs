@@ -123,7 +123,6 @@ namespace RecoTool.Windows
                 {
                     prevScreenUpdating = app.ScreenUpdating;
                     prevEnableEvents = app.EnableEvents;
-                    CalculationState = app.Calculation;
                     app.ScreenUpdating = false;
                     app.EnableEvents = false;
                     app.Calculation = Microsoft.Office.Interop.Excel.XlCalculation.xlCalculationManual;

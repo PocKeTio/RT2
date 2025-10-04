@@ -24,9 +24,7 @@ namespace RecoTool.Services.AmbreImport
         private readonly ReconciliationService _reconciliationService;
         private readonly DwingsReferenceResolver _dwingsResolver;
         private readonly RulesEngine _rulesEngine;
-        // Feature flag: keep legacy hard-coded mappings as a fallback (ComputeAutoAction + cross-side assignment)
-        // Default: false to rely solely on truth-table rules
-        private readonly bool _legacyFallbacksEnabled = false;
+        private TransformationService _transformationService; // Cached per import
 
         public AmbreReconciliationUpdater(
             OfflineFirstService offlineFirstService,
@@ -87,36 +85,33 @@ namespace RecoTool.Services.AmbreImport
             Country country,
             string countryId)
         {
-            var reconciliations = new List<Reconciliation>();
-            var dwInvoices = await _reconciliationService.GetDwingsInvoicesAsync();
+            // OPTIMIZATION: Load DWINGS invoices once and cache TransformationService
+            var dwInvoices = (await _reconciliationService.GetDwingsInvoicesAsync()).ToList();
+            _transformationService = new TransformationService(new List<Country> { country });
+            
             var staged = new List<ReconciliationStaging>();
 
-            foreach (var dataAmbre in newRecords)
+            // OPTIMIZATION: Parallel processing of reconciliation creation
+            var tasks = newRecords.Select(async dataAmbre =>
             {
                 var reconciliation = await CreateReconciliationAsync(
-                    dataAmbre, country, countryId, dwInvoices.ToList());
+                    dataAmbre, country, countryId, dwInvoices);
                     
-                reconciliations.Add(reconciliation);
-                
-                staged.Add(new ReconciliationStaging
+                return new ReconciliationStaging
                 {
                     Reconciliation = reconciliation,
                     DataAmbre = dataAmbre,
                     IsPivot = dataAmbre.IsPivotAccount(country.CNT_AmbrePivot),
                     Bgi = reconciliation.DWINGS_InvoiceID
-                });
-            }
+                };
+            });
+            
+            staged = (await Task.WhenAll(tasks)).ToList();
 
-            // Apply truth-table rules (import scope)
-            await ApplyTruthTableRulesAsync(staged, country, countryId);
+            // Apply truth-table rules (import scope) - pass dwInvoices to avoid reloading
+            await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices);
 
-            // Apply legacy cross-side action rules as fallback (can be superseded by truth-table counterparts)
-            if (_legacyFallbacksEnabled)
-            {
-                ApplyCrossSideActionRules(staged);
-            }
-
-            return reconciliations;
+            return staged.Select(s => s.Reconciliation).ToList();
         }
 
         private async Task<Reconciliation> CreateReconciliationAsync(
@@ -144,80 +139,16 @@ namespace RecoTool.Services.AmbreImport
             reconciliation.DWINGS_BGPMT = dwingsRefs.CommissionId;
             reconciliation.DWINGS_GuaranteeID = dwingsRefs.GuaranteeId;
 
-            // Calculate KPI (legacy path); by default we rely on truth-table rules to set KPI
-            if (_legacyFallbacksEnabled)
-            {
-                var kpi = CalculateKpi(dataAmbre, isPivot, country);
-                reconciliation.KPI = (int)kpi;
-            }
-
-            // Calculate auto action
-            if (_legacyFallbacksEnabled)
-            {
-                var action = await CalculateAutoActionAsync(
-                    dataAmbre, reconciliation, country, countryId, isPivot);
-                if (action.HasValue)
-                    reconciliation.Action = (int)action.Value;
-            }
+            // KPI and Action are set by truth-table rules only
 
             return reconciliation;
         }
 
-        private void ApplyCrossSideActionRules(List<ReconciliationStaging> staged)
+
+        private RuleContext BuildRuleContext(DataAmbre dataAmbre, Reconciliation reconciliation, Country country, string countryId, bool isPivot, List<DwingsInvoiceDto> dwInvoices)
         {
-            try
-            {
-                var groups = staged
-                    .Where(s => !string.IsNullOrWhiteSpace(s.Bgi))
-                    .GroupBy(s => s.Bgi.Trim().ToUpperInvariant());
-
-                foreach (var group in groups)
-                {
-                    var pivots = group.Where(x => x.IsPivot).ToList();
-                    var receivables = group.Where(x => !x.IsPivot).ToList();
-                    
-                    if (pivots.Count == 0 || receivables.Count == 0) 
-                        continue;
-
-                    // Matched set: assign appropriate actions if not already set by rules engine
-                    foreach (var pivot in pivots)
-                    {
-                        if (!pivot.Reconciliation.Action.HasValue)
-                            pivot.Reconciliation.Action = (int)ActionType.Match;
-                    }
-                    
-                    foreach (var receivable in receivables)
-                    {
-                        if (!receivable.Reconciliation.Action.HasValue)
-                            receivable.Reconciliation.Action = (int)ActionType.Trigger;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogManager.Warning($"Cross-side action assignment failed: {ex.Message}");
-            }
-        }
-
-        private KPIType CalculateKpi(DataAmbre dataAmbre, bool isPivot, Country country)
-        {
-            var transformationService = new TransformationService(new List<Country> { country });
-            var transactionType = transformationService.DetermineTransactionType(
-                dataAmbre.RawLabel, isPivot, dataAmbre.Category);
-                
-            string guaranteeType = !isPivot ? ExtractGuaranteeType(dataAmbre.RawLabel) : null;
-            
-            var (_, kpi) = transformationService.ApplyAutomaticCategorization(
-                transactionType, dataAmbre.SignedAmount, isPivot, guaranteeType);
-                
-            return kpi;
-        }
-
-        private RuleContext BuildRuleContext(DataAmbre dataAmbre, Reconciliation reconciliation, Country country, string countryId, bool isPivot)
-        {
-            // Determine transaction type name as enum-style string
-            var transformationService = new TransformationService(new List<Country> { country });
-            var tx = transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot, dataAmbre.Category);
+            // OPTIMIZATION: Use cached TransformationService instead of creating new instance
+            var tx = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot, dataAmbre.Category);
             string txName = tx.HasValue ? Enum.GetName(typeof(TransactionType), tx.Value) : null;
 
             // Guarantee type detectable primarily on receivable from label
@@ -252,7 +183,7 @@ namespace RecoTool.Services.AmbreImport
                 ? (int?)(today - reconciliation.LastClaimDate.Value.Date).TotalDays
                 : null;
 
-            // Resolve DWINGS invoice to compute new inputs (best-effort)
+            // OPTIMIZATION: Use passed dwInvoices instead of reloading
             bool? mtAcked = null;
             bool? hasCommEmail = null;
             bool? bgiInitiated = null;
@@ -260,8 +191,7 @@ namespace RecoTool.Services.AmbreImport
             {
                 if (!string.IsNullOrWhiteSpace(reconciliation?.DWINGS_InvoiceID))
                 {
-                    var invoices = _reconciliationService.GetDwingsInvoicesAsync().GetAwaiter().GetResult();
-                    var inv = invoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, reconciliation.DWINGS_InvoiceID, StringComparison.OrdinalIgnoreCase));
+                    var inv = dwInvoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, reconciliation.DWINGS_InvoiceID, StringComparison.OrdinalIgnoreCase));
                     if (inv != null)
                     {
                         if (!string.IsNullOrWhiteSpace(inv.MT_STATUS))
@@ -302,7 +232,7 @@ namespace RecoTool.Services.AmbreImport
             };
         }
 
-        private async Task ApplyTruthTableRulesAsync(List<ReconciliationStaging> staged, Country country, string countryId)
+        private async Task ApplyTruthTableRulesAsync(List<ReconciliationStaging> staged, Country country, string countryId, List<DwingsInvoiceDto> dwInvoices)
         {
             try
             {
@@ -311,36 +241,43 @@ namespace RecoTool.Services.AmbreImport
                 // First pass: apply SELF outputs immediately; gather counterpart intents by BGI
                 var counterpartIntents = new List<(string Bgi, bool TargetIsPivot, string RuleId, int? ActionId, int? KpiId, int? IncidentTypeId, bool? RiskyItem, int? ReasonNonRiskyId, bool? ToRemind, int? ToRemindDays)>();
 
-                foreach (var s in staged)
+                // OPTIMIZATION: Parallel rule evaluation (rules engine is stateless)
+                var ruleEvaluationTasks = staged.Select(async s =>
                 {
-                    var ctx = BuildRuleContext(s.DataAmbre, s.Reconciliation, country, countryId, s.IsPivot);
+                    var ctx = BuildRuleContext(s.DataAmbre, s.Reconciliation, country, countryId, s.IsPivot, dwInvoices);
                     var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Import).ConfigureAwait(false);
+                    return (Staging: s, Result: res);
+                }).ToList();
+                
+                var evaluationResults = await Task.WhenAll(ruleEvaluationTasks);
+
+                foreach (var (s, res) in evaluationResults)
+                {
                     if (res == null || res.Rule == null) continue;
 
                     // Self application
+                    // In Import scope, always apply rules (AutoApply only affects Edit scope)
                     if (res.Rule.ApplyTo == ApplyTarget.Self || res.Rule.ApplyTo == ApplyTarget.Both)
                     {
-                        if (res.Rule.AutoApply)
+                        if (res.NewActionIdSelf.HasValue) s.Reconciliation.Action = res.NewActionIdSelf.Value;
+                        if (res.NewKpiIdSelf.HasValue) s.Reconciliation.KPI = res.NewKpiIdSelf.Value;
+                        if (res.NewIncidentTypeIdSelf.HasValue) s.Reconciliation.IncidentType = res.NewIncidentTypeIdSelf.Value;
+                        if (res.NewRiskyItemSelf.HasValue) s.Reconciliation.RiskyItem = res.NewRiskyItemSelf.Value;
+                        if (res.NewReasonNonRiskyIdSelf.HasValue) s.Reconciliation.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value;
+                        if (res.NewToRemindSelf.HasValue)
                         {
-                            if (res.NewActionIdSelf.HasValue) s.Reconciliation.Action = res.NewActionIdSelf.Value;
-                            if (res.NewKpiIdSelf.HasValue) s.Reconciliation.KPI = res.NewKpiIdSelf.Value;
-                            if (res.NewIncidentTypeIdSelf.HasValue) s.Reconciliation.IncidentType = res.NewIncidentTypeIdSelf.Value;
-                            if (res.NewRiskyItemSelf.HasValue) s.Reconciliation.RiskyItem = res.NewRiskyItemSelf.Value;
-                            if (res.NewReasonNonRiskyIdSelf.HasValue) s.Reconciliation.ReasonNonRisky = res.NewReasonNonRiskyIdSelf.Value;
-                            if (res.NewToRemindSelf.HasValue)
-                            {
-                                s.Reconciliation.ToRemind = res.NewToRemindSelf.Value;
-                            }
-                            if (res.NewToRemindDaysSelf.HasValue)
-                            {
-                                var days = res.NewToRemindDaysSelf.Value;
-                                try { s.Reconciliation.ToRemindDate = DateTime.Today.AddDays(days); } catch { }
-                            }
-                            if (res.NewFirstClaimTodaySelf == true)
-                            {
-                                try { s.Reconciliation.FirstClaimDate = DateTime.Today; } catch { }
-                            }
+                            s.Reconciliation.ToRemind = res.NewToRemindSelf.Value;
                         }
+                        if (res.NewToRemindDaysSelf.HasValue)
+                        {
+                            var days = res.NewToRemindDaysSelf.Value;
+                            try { s.Reconciliation.ToRemindDate = DateTime.Today.AddDays(days); } catch { }
+                        }
+                        if (res.NewFirstClaimTodaySelf == true)
+                        {
+                            try { s.Reconciliation.FirstClaimDate = DateTime.Today; } catch { }
+                        }
+                        
                         if (!string.IsNullOrWhiteSpace(res.UserMessage))
                         {
                             // Prepend timestamped message to comments; keep non-blocking and avoid duplicates
@@ -379,8 +316,8 @@ namespace RecoTool.Services.AmbreImport
                     }
 
                     // Counterpart application intents
-                    if (res.Rule.AutoApply
-                        && (res.Rule.ApplyTo == ApplyTarget.Counterpart || res.Rule.ApplyTo == ApplyTarget.Both)
+                    // In Import scope, always apply rules (AutoApply only affects Edit scope)
+                    if ((res.Rule.ApplyTo == ApplyTarget.Counterpart || res.Rule.ApplyTo == ApplyTarget.Both)
                         && !string.IsNullOrWhiteSpace(s.Bgi))
                     {
                         var targetIsPivot = !s.IsPivot; // counterpart side
@@ -478,34 +415,6 @@ namespace RecoTool.Services.AmbreImport
             }
         }
 
-        private async Task<ActionType?> CalculateAutoActionAsync(
-            DataAmbre dataAmbre,
-            Reconciliation reconciliation,
-            Country country,
-            string countryId,
-            bool isPivot)
-        {
-            try
-            {
-                var transformationService = new TransformationService(new List<Country> { country });
-                var transactionType = transformationService.DetermineTransactionType(
-                    dataAmbre.RawLabel, isPivot, dataAmbre.Category);
-
-                string paymentMethod = await _dwingsResolver.GetPaymentMethodAsync(
-                    dataAmbre, countryId);
-
-                var autoAction = _reconciliationService.ComputeAutoAction(
-                    transactionType, dataAmbre, reconciliation, country, 
-                    paymentMethod: paymentMethod, today: DateTime.Today);
-                    
-                return autoAction;
-            }
-            catch (Exception ex)
-            {
-                LogManager.Warning($"Failed to calculate auto action: {ex.Message}");
-                return null;
-            }
-        }
 
         private string ExtractGuaranteeType(string label)
         {
@@ -662,23 +571,32 @@ namespace RecoTool.Services.AmbreImport
                 try
                 {
                     var nowUtc = DateTime.UtcNow;
-                    int count = 0;
                     
-                    foreach (var id in ids)
+                    // OPTIMIZATION: Batch update with IN clause (Access supports up to ~1000 items)
+                    const int batchSize = 500;
+                    int totalCount = 0;
+                    
+                    for (int i = 0; i < ids.Count; i += batchSize)
                     {
+                        var batch = ids.Skip(i).Take(batchSize).ToList();
+                        var inClause = string.Join(",", batch.Select((_, idx) => $"?"));
+                        
                         using (var cmd = new OleDbCommand(
-                            "UPDATE [T_Reconciliation] SET [DeleteDate]=NULL, [LastModified]=?, [ModifiedBy]=? " +
-                            "WHERE [ID]=? AND [DeleteDate] IS NOT NULL", conn, tx))
+                            $"UPDATE [T_Reconciliation] SET [DeleteDate]=NULL, [LastModified]=?, [ModifiedBy]=? " +
+                            $"WHERE [ID] IN ({inClause}) AND [DeleteDate] IS NOT NULL", conn, tx))
                         {
                             cmd.Parameters.Add("@LastModified", OleDbType.Date).Value = nowUtc;
                             cmd.Parameters.AddWithValue("@ModifiedBy", _currentUser);
-                            cmd.Parameters.AddWithValue("@ID", id);
-                            count += await cmd.ExecuteNonQueryAsync();
+                            foreach (var id in batch)
+                            {
+                                cmd.Parameters.AddWithValue("@ID", id);
+                            }
+                            totalCount += await cmd.ExecuteNonQueryAsync();
                         }
                     }
                     
                     tx.Commit();
-                    LogManager.Info($"Unarchived {count} reconciliation record(s)");
+                    LogManager.Info($"Unarchived {totalCount} reconciliation record(s)");
                 }
                 catch
                 {
@@ -703,24 +621,33 @@ namespace RecoTool.Services.AmbreImport
                 try
                 {
                     var nowUtc = DateTime.UtcNow;
-                    int count = 0;
                     
-                    foreach (var id in ids)
+                    // OPTIMIZATION: Batch update with IN clause
+                    const int batchSize = 500;
+                    int totalCount = 0;
+                    
+                    for (int i = 0; i < ids.Count; i += batchSize)
                     {
+                        var batch = ids.Skip(i).Take(batchSize).ToList();
+                        var inClause = string.Join(",", batch.Select((_, idx) => $"?"));
+                        
                         using (var cmd = new OleDbCommand(
-                            "UPDATE [T_Reconciliation] SET [DeleteDate]=?, [LastModified]=?, [ModifiedBy]=? " +
-                            "WHERE [ID]=? AND [DeleteDate] IS NULL", conn, tx))
+                            $"UPDATE [T_Reconciliation] SET [DeleteDate]=?, [LastModified]=?, [ModifiedBy]=? " +
+                            $"WHERE [ID] IN ({inClause}) AND [DeleteDate] IS NULL", conn, tx))
                         {
                             cmd.Parameters.Add("@DeleteDate", OleDbType.Date).Value = nowUtc;
                             cmd.Parameters.Add("@LastModified", OleDbType.Date).Value = nowUtc;
                             cmd.Parameters.AddWithValue("@ModifiedBy", _currentUser);
-                            cmd.Parameters.AddWithValue("@ID", id);
-                            count += await cmd.ExecuteNonQueryAsync();
+                            foreach (var id in batch)
+                            {
+                                cmd.Parameters.AddWithValue("@ID", id);
+                            }
+                            totalCount += await cmd.ExecuteNonQueryAsync();
                         }
                     }
                     
                     tx.Commit();
-                    LogManager.Info($"Archived {count} reconciliation record(s)");
+                    LogManager.Info($"Archived {totalCount} reconciliation record(s)");
                 }
                 catch
                 {

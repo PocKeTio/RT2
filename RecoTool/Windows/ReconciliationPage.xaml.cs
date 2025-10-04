@@ -247,7 +247,12 @@ namespace RecoTool.Windows
         public UserViewPreset SelectedSavedView
         {
             get => _selectedSavedView;
-            set { _selectedSavedView = value; OnPropertyChanged(nameof(SelectedSavedView)); /* TODO: Apply preset */ }
+            set 
+            { 
+                _selectedSavedView = value; 
+                OnPropertyChanged(nameof(SelectedSavedView));
+                OnPropertyChanged(nameof(AddViewModeIndicator));
+            }
         }
 
         public ObservableCollection<string> Statuses
@@ -305,7 +310,12 @@ namespace RecoTool.Windows
         public TodoListItem SelectedTodoItem
         {
             get => _selectedTodoItem;
-            set { _selectedTodoItem = value; OnPropertyChanged(nameof(SelectedTodoItem)); }
+            set 
+            { 
+                _selectedTodoItem = value; 
+                OnPropertyChanged(nameof(SelectedTodoItem));
+                OnPropertyChanged(nameof(AddViewModeIndicator));
+            }
         }
 
         public bool IsTodoMode
@@ -319,6 +329,7 @@ namespace RecoTool.Windows
                 OnPropertyChanged(nameof(CanChangeAccount));
                 OnPropertyChanged(nameof(CanChangeStatus));
                 OnPropertyChanged(nameof(CanUseSavedControls));
+                OnPropertyChanged(nameof(AddViewModeIndicator));
                 if (value) SelectedStatus = "Live";
             }
         }
@@ -472,6 +483,29 @@ namespace RecoTool.Windows
         {
             get => _editTodoName;
             set { _editTodoName = value; OnPropertyChanged(nameof(EditTodoName)); }
+        }
+        
+        /// <summary>
+        /// Indicates what will be used when clicking "Add View" (ToDo or Filter+View)
+        /// </summary>
+        public string AddViewModeIndicator
+        {
+            get
+            {
+                if (IsTodoMode && SelectedTodoItem != null)
+                {
+                    return $"(ToDo: {SelectedTodoItem.TDL_Name})";
+                }
+                else if (!string.IsNullOrWhiteSpace(_currentFilterName))
+                {
+                    return $"(Filter: {_currentFilterName})";
+                }
+                else if (SelectedSavedView != null)
+                {
+                    return $"(View: {SelectedSavedView.Name})";
+                }
+                return "(Current filters)";
+            }
         }
 
         /// <summary>
@@ -683,6 +717,7 @@ namespace RecoTool.Windows
                 IsTodoMode = false;
                 _currentFilter = null;
                 _currentFilterName = null;
+                OnPropertyChanged(nameof(AddViewModeIndicator));
                 // Do not modify already opened views; they keep their state
                 // Optionally clear transient UI fields
                 // EditTodoName remains so the selection is preserved visually
@@ -1120,6 +1155,7 @@ namespace RecoTool.Windows
             {
                 _currentFilter = filter?.UFI_SQL;
                 _currentFilterName = filter?.UFI_Name;
+                OnPropertyChanged(nameof(AddViewModeIndicator));
             }
             catch (Exception ex) { }
         }
@@ -1147,18 +1183,21 @@ namespace RecoTool.Windows
 
                 var parts = new List<string>();
                 parts.Add("a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)");
-                if (!string.IsNullOrWhiteSpace(accId))
-                {
-                    var safe = accId?.Replace("'", "''");
-                    parts.Add($"a.Account_ID = '{safe}'");
-                }
+                // CRITICAL: Do NOT filter Account_ID in backend SQL - we need BOTH Pivot and Receivable
+                // to calculate MissingAmount correctly. The UI filter will handle display filtering.
+                // if (!string.IsNullOrWhiteSpace(accId))
+                // {
+                //     var safe = accId?.Replace("'", "''");
+                //     parts.Add($"a.Account_ID = '{safe}'");
+                // }
                 var pred = RecoTool.Domain.Filters.FilterSqlHelper.ExtractNormalizedPredicate(where);
                 if (!string.IsNullOrWhiteSpace(pred)) parts.Add($"({pred})");
 
                 _currentFilter = "WHERE " + string.Join(" AND ", parts);
                 _currentFilterName = todo?.TDL_Name;
+                OnPropertyChanged(nameof(AddViewModeIndicator));
 
-                // Reflect header selections for child views
+                // Reflect header selections for child views (UI filtering only)
                 if (!string.IsNullOrWhiteSpace(token))
                 {
                     if (token.StartsWith("Pivot", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(country?.CNT_AmbrePivot))
@@ -1167,6 +1206,11 @@ namespace RecoTool.Windows
                         SelectedAccount = $"Receivable ({country.CNT_AmbreReceivable})";
                     else
                         SelectedAccount = accId;
+                }
+                else
+                {
+                    // No account filter specified - show all
+                    SelectedAccount = "All";
                 }
                 SelectedStatus = "Live";
 
@@ -1292,6 +1336,7 @@ namespace RecoTool.Windows
             // Reset current page-level filter context on country change
             _currentFilter = null;
             _currentFilterName = null;
+            OnPropertyChanged(nameof(AddViewModeIndicator));
 
             // Assurer la fin d'une synchro éventuelle avant de recharger les listes/combos
             try
@@ -1360,12 +1405,20 @@ namespace RecoTool.Windows
                         }
                         else
                         {
-                            // Apply for next added view only (do NOT reload page data)
+                            // Build next-view filter from saved filter
                             // IMPORTANT: strip Account/Status predicates from the saved filter; page combos handle them.
-                            try { _currentFilter = RecoTool.Services.UserFilterService.SanitizeWhereClause(selectedFilter.UFI_SQL); }
-                            catch { _currentFilter = selectedFilter.UFI_SQL; }
+                            try
+                            {
+                                var sanitizedFilter = RecoTool.Services.UserFilterService.SanitizeWhereClause(selectedFilter.UFI_SQL);
+                                _currentFilter = sanitizedFilter;
+                            }
+                            catch
+                            {
+                                _currentFilter = selectedFilter.UFI_SQL;
+                            }
                             _currentFilterName = selectedFilter.UFI_Name;
                         }
+                        OnPropertyChanged(nameof(AddViewModeIndicator));
                     }
                     catch (Exception ex)
                     {
@@ -1844,12 +1897,13 @@ namespace RecoTool.Windows
                 catch { }
             };
 
-            await ConfigureAndPreloadView(view);
-
-            // Mettre à jour la visibilité
+            // Mettre à jour la visibilité AVANT le chargement pour afficher la vue immédiatement
             panel.Visibility = Visibility.Visible;
             if (empty != null) empty.Visibility = Visibility.Collapsed;
             if (fab != null) fab.Visibility = Visibility.Visible;
+
+            // Charger les données en arrière-plan sans bloquer l'UI
+            _ = ConfigureAndPreloadView(view);
         }
 
         /// <summary>
@@ -1860,6 +1914,9 @@ namespace RecoTool.Windows
 
         private async Task ConfigureAndPreloadView(ReconciliationView view)
         {
+            // Show loading overlay immediately on UI thread
+            view.IsLoading = true;
+            
             // Aligner le pays avant toute action (sans déclencher un Refresh prématuré)
             try { view.SyncCountryFromService(false); } catch { }
             // Synchroniser l'affichage des filtres d'en-tête
@@ -1924,20 +1981,31 @@ namespace RecoTool.Windows
             // Freeze local references for lambda capture (resolve from DI as fallback)
             var localRepo = _recoRepository ?? (RecoTool.App.ServiceProvider?.GetService(typeof(RecoTool.Domain.Repositories.IReconciliationRepository)) as RecoTool.Domain.Repositories.IReconciliationRepository);
             var localSvc = _reconciliationService ?? (RecoTool.App.ServiceProvider?.GetService(typeof(RecoTool.Services.ReconciliationService)) as RecoTool.Services.ReconciliationService);
-            _ = System.Threading.Tasks.Task.Run(async () =>
+            
+            // CRITICAL: Ensure DWINGS caches are initialized BEFORE preloading data
+            // This prevents race condition where Refresh() is called before caches are ready
+            await System.Threading.Tasks.Task.Run(async () =>
             {
                 try
                 {
+                    // Initialize DWINGS caches first
+                    await localSvc?.EnsureDwingsCachesInitializedAsync();
+                    
                     var list = localRepo != null
                         ? await localRepo.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false)
                         : await localSvc.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
                     await view.Dispatcher.InvokeAsync(() =>
                     {
-                        try { view.InitializeWithPreloadedData(list, backendSql); } catch { }
-                        try { view.Refresh(); } catch { }
+                        try { view.InitializeWithPreloadedData(list, backendSql); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"InitializeWithPreloadedData error: {ex.Message}"); }
+                        try { view.Refresh(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Refresh error: {ex.Message}"); }
                     });
                 }
-                catch { }
+                catch (Exception ex) 
+                { 
+                    System.Diagnostics.Debug.WriteLine($"ConfigureAndPreloadView error: {ex.Message}");
+                    // Ensure loading state is cleared on error
+                    await view.Dispatcher.InvokeAsync(() => view.IsLoading = false);
+                }
             });
         }
 

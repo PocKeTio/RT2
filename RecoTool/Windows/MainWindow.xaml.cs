@@ -95,14 +95,58 @@ namespace RecoTool.Windows
                             // Temporarily enable background pushes for explicit app-close push
                             bool prevAllow = false;
                             try { prevAllow = _offlineFirstService.AllowBackgroundPushes; _offlineFirstService.AllowBackgroundPushes = true; } catch { }
-                            var pushTask = _offlineFirstService?.PushReconciliationIfPendingAsync(cid);
-                            if (pushTask != null)
+                            
+                            bool syncSuccess = false;
+                            string syncError = null;
+                            try
                             {
-                                // Always sync fully if there are pending operations before closing
-                                await pushTask;
+                                var pushTask = _offlineFirstService?.PushReconciliationIfPendingAsync(cid);
+                                if (pushTask != null)
+                                {
+                                    // Always sync fully if there are pending operations before closing
+                                    await pushTask;
+                                    syncSuccess = true;
+                                    try { progressWindow?.UpdateProgress("Synchronisation terminée avec succès", 90); } catch { }
+                                }
+                                else
+                                {
+                                    syncSuccess = true; // No pending changes
+                                }
                             }
+                            catch (Exception syncEx)
+                            {
+                                syncError = syncEx.Message;
+                                System.Diagnostics.Debug.WriteLine($"[MainWindow.Closing] Sync error: {syncEx.Message}");
+                                try { progressWindow?.UpdateProgress($"Erreur de synchronisation: {syncEx.Message}", 50); } catch { }
+                            }
+                            
                             // Restore policy
                             try { _offlineFirstService.AllowBackgroundPushes = prevAllow; } catch { }
+                            
+                            // Show warning if sync failed
+                            if (!syncSuccess && !string.IsNullOrWhiteSpace(syncError))
+                            {
+                                try
+                                {
+                                    var result = MessageBox.Show(
+                                        $"⚠️ SYNCHRONIZATION FAILED\n\n" +
+                                        $"Error: {syncError}\n\n" +
+                                        "Your local changes may not have been saved to the network.\n" +
+                                        "Do you want to close anyway?\n\n" +
+                                        "• YES: Close the application (changes may be lost)\n" +
+                                        "• NO: Cancel and try again",
+                                        "Synchronization Error",
+                                        MessageBoxButton.YesNo,
+                                        MessageBoxImage.Warning);
+                                    
+                                    if (result == MessageBoxResult.No)
+                                    {
+                                        _closingPushHandled = false; // Reset to allow retry
+                                        return; // Don't close
+                                    }
+                                }
+                                catch { }
+                            }
                         }
                         catch { /* ignore on shutdown */ }
                         finally

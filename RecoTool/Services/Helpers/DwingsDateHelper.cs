@@ -7,30 +7,14 @@ namespace RecoTool.Services.Helpers
 {
     public static class DwingsDateHelper
     {
+        /// <summary>
+        /// DEPRECATED: Date normalization is now handled by lazy-loaded properties in ReconciliationViewData
+        /// This method is kept for backward compatibility but does nothing
+        /// </summary>
         public static void NormalizeDwingsDateStrings(ReconciliationViewData dto)
         {
-            if (dto == null) return;
-
-            string Norm(string s)
-            {
-                if (string.IsNullOrWhiteSpace(s)) return s;
-                if (TryParseDwingsDate(s, out var dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("fr-FR"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("it-IT"), DateTimeStyles.None, out dt)) return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                return s;
-            }
-
-            // DWINGS Invoice date-like strings
-            dto.I_START_DATE = Norm(dto.I_START_DATE);
-            dto.I_END_DATE = Norm(dto.I_END_DATE);
-            dto.I_REQUESTED_EXECUTION_DATE = Norm(dto.I_REQUESTED_EXECUTION_DATE);
-
-            // DWINGS Guarantee date-like strings
-            dto.G_EVENT_EFFECTIVEDATE = Norm(dto.G_EVENT_EFFECTIVEDATE);
-            dto.G_ISSUEDATE = Norm(dto.G_ISSUEDATE);
-            dto.G_EXPIRYDATE = Norm(dto.G_EXPIRYDATE);
-            dto.G_CANCELLATIONDATE = Norm(dto.G_CANCELLATIONDATE);
+            // NO-OP: Date properties are now lazy-loaded and already formatted as yyyy-MM-dd
+            // All I_* and G_* date properties automatically format dates when accessed
         }
 
         public static bool TryParseDwingsDate(string input, out DateTime dt)

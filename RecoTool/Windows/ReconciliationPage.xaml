@@ -42,7 +42,11 @@
                         <Button Style="{StaticResource StandardButtonStyle}" Click="AddView_Click" IsEnabled="{Binding CanInteract}" Background="Transparent" BorderThickness="0">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="White" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                <TextBlock Text="Add View" FontSize="13" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center"/>
+                                <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center">
+                                    <Run Text="Add View"/>
+                                    <Run Text=" " />
+                                    <Run Text="{Binding AddViewModeIndicator, Mode=OneWay}" FontSize="11" FontWeight="Normal"/>
+                                </TextBlock>
                             </StackPanel>
                         </Button>
                     </Border>
@@ -106,6 +110,7 @@
                 <Border Grid.Column="3" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,16,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                        <TextBlock Text="Filter:" VerticalAlignment="Center" Margin="0,0,4,0" FontWeight="SemiBold"/>
                         <ComboBox x:Name="SavedFiltersComboBox" Width="130" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanUseSavedControls}"
                                   ItemsSource="{Binding SavedFilters}"
                                   DisplayMemberPath="UFI_Name"
@@ -119,6 +124,7 @@
                             </ComboBox.ItemContainerStyle>
                         </ComboBox>
                         <Rectangle Width="1" Height="24" Fill="#DEE2E6" Margin="12,0"/>
+                        <TextBlock Text="View:" VerticalAlignment="Center" Margin="0,0,4,0" FontWeight="SemiBold"/>
                         <ComboBox x:Name="SavedViewsComboBox" Width="130" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanUseSavedControls}"
                                   ItemsSource="{Binding SavedViews}"
                                   SelectedItem="{Binding SelectedSavedView, Mode=TwoWay}"

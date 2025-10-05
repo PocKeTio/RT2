@@ -221,18 +221,9 @@ namespace RecoTool.Windows
             {
                 var acc = string.IsNullOrWhiteSpace(account) ? "All" : account;
                 var stat = string.IsNullOrWhiteSpace(status) ? "All" : status; // Expected: All/Active/Deleted
-                var tb = this.FindName("AccountInfoText") as TextBlock;
-                if (tb != null)
-                {
-                    // Avoid displaying internal account IDs in the header (e.g., "Pivot (12345)")
-                    var friendlyAcc = acc;
-                    var idx = acc?.LastIndexOf('(') ?? -1;
-                    if (idx > 0)
-                    {
-                        friendlyAcc = acc.Substring(0, idx).Trim();
-                    }
-                    tb.Text = $"Account: {friendlyAcc} | Status: {stat}";
-                }
+                
+                // Don't update AccountInfoText here - it's managed by UpdateStatusInfo
+                // Account type is shown on line 3 via AccountTypeText
 
                 // Appliquer sur les filtres internes pour la vue
                 FilterAccountId = string.Equals(acc, "All", StringComparison.OrdinalIgnoreCase) ? null : ResolveAccountIdForFilter(acc);
@@ -252,19 +243,34 @@ namespace RecoTool.Windows
         {
             try
             {
-                var txt = this.FindName("CountryPivotReceivableText") as TextBlock;
-                var cc = _offlineFirstService?.CurrentCountry;
-                if (txt == null) return;
+                var accountTypeText = this.FindName("AccountTypeText") as TextBlock;
+                if (accountTypeText == null) return;
 
-                if (cc == null)
+                var country = _offlineFirstService?.CurrentCountry;
+                if (country == null)
                 {
-                    txt.Text = string.Empty;
+                    accountTypeText.Text = "";
                     return;
                 }
 
-                var pivot = string.IsNullOrWhiteSpace(cc.CNT_AmbrePivot) ? "-" : cc.CNT_AmbrePivot;
-                var recv = string.IsNullOrWhiteSpace(cc.CNT_AmbreReceivable) ? "-" : cc.CNT_AmbreReceivable;
-                txt.Text = $"Pivot: {pivot} | Receivable: {recv}";
+                // Determine which account is filtered
+                var filteredAccount = VM.FilterAccountId;
+                string accountType = "";
+                
+                if (!string.IsNullOrWhiteSpace(filteredAccount))
+                {
+                    if (string.Equals(filteredAccount, country.CNT_AmbrePivot, StringComparison.OrdinalIgnoreCase))
+                        accountType = "Pivot";
+                    else if (string.Equals(filteredAccount, country.CNT_AmbreReceivable, StringComparison.OrdinalIgnoreCase))
+                        accountType = "Receivable";
+                }
+                else
+                {
+                    // No filter = show both by default, pick Pivot
+                    accountType = "Pivot";
+                }
+                
+                accountTypeText.Text = accountType;
             }
             catch { }
         }

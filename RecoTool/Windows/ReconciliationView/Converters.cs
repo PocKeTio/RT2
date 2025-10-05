@@ -751,6 +751,26 @@ namespace RecoTool.Windows
 
     #endregion
 
+    #region String Validation Converters
+
+    /// <summary>
+    /// Converts a string value to bool: true if not null/empty, false otherwise
+    /// </summary>
+    public class IsNotNullOrEmptyConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            return !string.IsNullOrWhiteSpace(value as string);
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    #endregion
+
     #region Static Converter Instances
 
     /// <summary>
@@ -771,3 +791,4 @@ namespace RecoTool.Windows
     }
 
     #endregion
+}

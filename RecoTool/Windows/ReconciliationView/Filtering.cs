@@ -22,6 +22,12 @@ namespace RecoTool.Windows
             // Apply full filter set
             var filteredList = VM.ApplyFilters(_allViewData);
 
+            // Apply status filter if active (client-side only)
+            if (!string.IsNullOrEmpty(_activeStatusFilter))
+            {
+                filteredList = filteredList.Where(row => MatchesStatusFilter(row)).ToList();
+            }
+
             // Update display with pagination (first N lines) but totals on full filtered set
             _filteredData = filteredList;
             _loadedCount = Math.Min(InitialPageSize, _filteredData.Count);

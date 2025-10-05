@@ -513,7 +513,7 @@ namespace RecoTool.Services
                     else row.AccountSide = null;
                 }
 
-                // Group by DWINGS_InvoiceID first; if empty, group by InternalInvoiceReference
+                // Group by DWINGS_InvoiceID first
                 var byInvoice = list.Where(r => !string.IsNullOrWhiteSpace(r.DWINGS_InvoiceID))
                                     .GroupBy(r => r.DWINGS_InvoiceID, StringComparer.OrdinalIgnoreCase);
                 foreach (var g in byInvoice)
@@ -525,7 +525,10 @@ namespace RecoTool.Services
                         foreach (var row in g) row.IsMatchedAcrossAccounts = true;
                     }
                 }
-                var byInternal = list.Where(r => string.IsNullOrWhiteSpace(r.DWINGS_InvoiceID) && !string.IsNullOrWhiteSpace(r.InternalInvoiceReference))
+                
+                // Group by InternalInvoiceReference (INDEPENDENTLY - can coexist with DWINGS_InvoiceID)
+                // This allows a line to belong to multiple groups (BGI group + Internal ref group)
+                var byInternal = list.Where(r => !string.IsNullOrWhiteSpace(r.InternalInvoiceReference))
                                       .GroupBy(r => r.InternalInvoiceReference, StringComparer.OrdinalIgnoreCase);
                 foreach (var g in byInternal)
                 {

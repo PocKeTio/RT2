@@ -53,9 +53,6 @@
         <local:IsPositiveConverter x:Key="IsPositiveConverter"/>
         <local:IsNegativeConverter x:Key="IsNegativeConverter"/>
         <local:PluralConverter x:Key="PluralConverter"/>
-        <local:ReconciliationStatusColorConverter x:Key="ReconciliationStatusColorConverter"/>
-        <local:ReconciliationStatusTooltipConverter x:Key="ReconciliationStatusTooltipConverter"/>
-        <local:IsNotNullOrEmptyConverter x:Key="IsNotNullOrEmptyConverter"/>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
     </UserControl.Resources>
     <Grid Background="{DynamicResource BNPBackground}">
@@ -127,62 +124,107 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                                     <TextBlock Text="&#xE8C9;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="White" Opacity="0.9" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
                                     <TextBlock x:Name="AccountInfoText" Text="Account: All | Status: All" Foreground="White" Opacity="0.9" FontSize="10"/>
-                                    <TextBlock Text="&#xE909;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="White" Opacity="0.9" VerticalAlignment="Center" Margin="8,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                    <TextBlock x:Name="CountryPivotReceivableText" Text="" Foreground="White" Opacity="0.9" FontSize="10"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                    <TextBlock Text="&#xE910;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="White" Opacity="0.9" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                    <TextBlock x:Name="AccountTypeText" Text="" Foreground="White" Opacity="0.9" FontSize="10" FontWeight="SemiBold"/>
                                 </StackPanel>
                             </StackPanel>
                         </StackPanel>
                     </Border>
 
                     <!-- Enhanced KPI Cards with Labels -->
-                    <StackPanel Orientation="Horizontal">
+                    <StackPanel Orientation="Horizontal" Height="55">
                         <!-- Total Rows -->
-                        <Border Background="#F4F7FE" CornerRadius="6" Padding="10,6" Margin="0,0,8,0" BorderBrush="#E0E6F7" BorderThickness="1">
+                        <Border Background="#F4F7FE" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#E0E6F7" BorderThickness="1">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE179;" FontFamily="Segoe MDL2 Assets" Foreground="#3B82F6" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <TextBlock Text="&#xE179;" FontFamily="Segoe MDL2 Assets" Foreground="#3B82F6" FontSize="12" VerticalAlignment="Center" Margin="0,20,0,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
                                 <StackPanel>
-                                    <TextBlock Text="Total" FontSize="9" Foreground="#64748B" Margin="0,0,0,1"/>
-                                    <TextBlock x:Name="KpiTotalCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#0F172A"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-                        <!-- Matched -->
-                        <Border Background="#ECFDF5" CornerRadius="6" Padding="10,6" Margin="0,0,8,0" BorderBrush="#D1FAE5" BorderThickness="1">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" Foreground="#10B981" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                <StackPanel>
-                                    <TextBlock Text="Matched" FontSize="9" Foreground="#065F46" Margin="0,0,0,1"/>
-                                    <TextBlock x:Name="KpiMatchedCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#064E3B"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-                        <!-- Unmatched -->
-                        <Border Background="#FEF2F2" CornerRadius="6" Padding="10,6" Margin="0,0,8,0" BorderBrush="#FEE2E2" BorderThickness="1">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" Foreground="#EF4444" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                <StackPanel>
-                                    <TextBlock Text="Unmatched" FontSize="9" Foreground="#7F1D1D" Margin="0,0,0,1"/>
-                                    <TextBlock x:Name="KpiUnmatchedCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#991B1B"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-                        <!-- To Review -->
-                        <Border Background="#FFF7ED" CornerRadius="6" Padding="10,6" Margin="0,0,8,0" BorderBrush="#FFEDD5" BorderThickness="1">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" Foreground="#FB923C" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                <StackPanel>
-                                    <TextBlock Text="To Review" FontSize="9" Foreground="#9A3412" Margin="0,0,0,1"/>
-                                    <TextBlock x:Name="KpiToReviewCountText" Text="0" FontSize="13" FontWeight="Bold" Foreground="#7C2D12"/>
+                                    <TextBlock Text="Total" FontSize="11" Foreground="#64748B" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiTotalCountText" Margin="5,5,0,0" Text="0" FontSize="13" FontWeight="Bold" Foreground="#0F172A"/>
                                 </StackPanel>
                             </StackPanel>
                         </Border>
                         <!-- Total Amount -->
-                        <Border Background="#F8FAFC" CornerRadius="6" Padding="10,6" BorderBrush="#E2E8F0" BorderThickness="1">
+                        <Border Background="#F8FAFC" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#E2E8F0" BorderThickness="1">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xEAFD;" FontFamily="Segoe MDL2 Assets" Foreground="#2563EB" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <TextBlock Text="💰"  Foreground="#2563EB" FontSize="13" VerticalAlignment="Center" Margin="0,20,0,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
                                 <StackPanel>
-                                    <TextBlock Text="Amount" FontSize="9" Foreground="#64748B" Margin="0,0,0,1"/>
-                                    <TextBlock x:Name="KpiTotalAmountText" Text="0.00" FontSize="13" FontWeight="Bold" Foreground="#0F172A"/>
+                                    <TextBlock Text="Amount" FontSize="11" Foreground="#64748B" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiTotalAmountText" Margin="5,5,0,0" Text="0.00" FontSize="13" FontWeight="Bold" Foreground="#0F172A"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Separator -->
+                        <Rectangle Width="2" Height="40" Fill="#E2E8F0" Margin="4,0"/>
+                        
+                        <!-- Not Linked -->
+                        <Border x:Name="KpiNotLinkedBorder" Background="#FFEBEE" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#EF9A9A" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="NotLinked"
+                                ToolTip="Not linked with DWINGS">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" Foreground="#EF4444" FontSize="12" VerticalAlignment="Center" Margin="0,20,0,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <StackPanel>
+                                    <TextBlock Text="Not Linked" FontSize="11" Foreground="#7F1D1D" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiNotLinkedCountText" Text="0" Margin="5,5,0,0" FontSize="13" FontWeight="Bold" Foreground="#C62828"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Not Grouped -->
+                        <Border x:Name="KpiNotGroupedBorder" Background="#FFF3E0" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#FFCC80" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="NotGrouped"
+                                ToolTip="Not grouped across accounts">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" Foreground="#FF9800" FontSize="12" VerticalAlignment="Center" Margin="0,20,0,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <StackPanel>
+                                    <TextBlock Text="Not Grouped" FontSize="11" Foreground="#E65100" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiNotGroupedCountText" Text="0" Margin="5,5,0,0" FontSize="13" FontWeight="Bold" Foreground="#E65100"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- To Review -->
+                        <Border x:Name="KpiToReviewBorder" Background="#FFF7ED" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#FFEDD5" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="ToReview">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" Foreground="#FB923C" FontSize="12" VerticalAlignment="Center" Margin="0,20,0,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <StackPanel>
+                                    <TextBlock Text="To Review" FontSize="11" Foreground="#9A3412" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiToReviewCountText" Text="0" Margin="5,5,0,0" FontSize="13" FontWeight="Bold" Foreground="#7C2D12"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Reviewed -->
+                        <Border x:Name="KpiReviewedBorder" Background="#ECFDF5" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#D1FAE5" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="Reviewed">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" Foreground="#10B981" FontSize="12" VerticalAlignment="Center" Margin="0,20,0,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <StackPanel>
+                                    <TextBlock Text="Reviewed" FontSize="11" Foreground="#065F46" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiReviewedCountText" Text="0" Margin="5,5,0,0" FontSize="13" FontWeight="Bold" Foreground="#064E3B"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Has Differences -->
+                        <Border x:Name="KpiHasDifferencesBorder" Background="#FFFDE7" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#FFF59D" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="HasDifferences"
+                                ToolTip="Has discrepancy in amounts">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" Foreground="#FBC02D" FontSize="12" VerticalAlignment="Center" Margin="0,20,0,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <StackPanel>
+                                    <TextBlock Text="Differences" FontSize="11" Foreground="#F57F17" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiDiscrepancyCountText" Text="0" Margin="5,5,0,0" FontSize="13" FontWeight="Bold" Foreground="#F57F17"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Matched -->
+                        <Border x:Name="KpiMatchedBorder" Background="#E8F5E9" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#A5D6A7" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="Matched"
+                                ToolTip="Balanced and grouped">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" Foreground="#4CAF50" FontSize="12" VerticalAlignment="Center" Margin="0,20,0,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <StackPanel>
+                                    <TextBlock Text="Matched" FontSize="11" Foreground="#2E7D32" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiMatchedCountText" Text="0" Margin="5,5,0,0" FontSize="13" FontWeight="Bold" Foreground="#2E7D32"/>
                                 </StackPanel>
                             </StackPanel>
                         </Border>
@@ -201,14 +243,14 @@
                                 <Button x:Name="LoadViewButton" Click="LoadView_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Load saved view (columns + filters + sort)">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#2196F3" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                        <TextBlock Text="Load View" Foreground="#2196F3" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <TextBlock Text="Load" Foreground="#2196F3" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
                                 <Rectangle Width="1" Height="20" Fill="#90CAF9" Margin="4,0"/>
                                 <Button x:Name="SaveViewButton" Click="SaveView_Click" Style="{StaticResource StandardButtonStyle}" Background="Transparent" BorderThickness="0" Padding="8,6" ToolTip="Save current view (columns + filters + sort)">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="#1976D2" VerticalAlignment="Center" Margin="0,0,5,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                        <TextBlock Text="Save View" Foreground="#1976D2" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <TextBlock Text="Save" Foreground="#1976D2" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
                             </StackPanel>
@@ -646,7 +688,7 @@
                                     <TextBlock Grid.Column="0" Text="Potential Duplicates:" VerticalAlignment="Center"/>
                                     <CheckBox x:Name="PotentialDuplicatesCheckBox" Grid.Column="1" Margin="5,0,0,0"
                                               Content="Show only potential duplicates"
-                                              ToolTip="Show only rows where the same Event_Num occurs more than once in Ambre (DupCount > 1)."
+                                              ToolTip="Show only rows where the same combination of Event_Num, Reconciliation_Num, and Account_ID occurs more than once in Ambre (DupCount > 1)."
                                               IsChecked="{Binding VM.FilterPotentialDuplicates, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                 </Grid>
 
@@ -709,15 +751,16 @@
             </Expander>
 
             <!-- Data Grid Section -->
-            <Border Grid.Row="2" Margin="5" Background="White" BorderBrush="#DDDDDD" BorderThickness="1" CornerRadius="8">
+            <Border Grid.Row="2" Background="White" BorderBrush="#DDDDDD" BorderThickness="1" CornerRadius="8">
                 <Grid>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <!-- Loading Overlay -->
-                    <Border Grid.RowSpan="2" Background="#80FFFFFF" 
+                    <Border Grid.RowSpan="3" Background="#80FFFFFF" 
                 Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}"
                 Panel.ZIndex="1000">
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -743,7 +786,7 @@
                     </Border>
 
                     <!-- Results Grid -->
-                    <DataGrid x:Name="ResultsDataGrid" Grid.Row="0"
+                    <DataGrid x:Name="ResultsDataGrid" Grid.Row="1"
                               AutoGenerateColumns="False"
                               CanUserAddRows="False"
                               CanUserDeleteRows="False"
@@ -756,7 +799,7 @@
                               EnableColumnVirtualization="True"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling"
-                              FrozenColumnCount="2"
+                              FrozenColumnCount="1"
                               SelectionMode="Extended"
                               SelectionUnit="FullRow"
                               Loaded="ResultsDataGrid_Loaded"
@@ -798,31 +841,11 @@
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
-                            <!-- Cell Style for Reconciliation Status Indicator (N/U columns) -->
-                            <Style x:Key="ReconciliationStatusCellStyle" TargetType="DataGridCell" BasedOn="{StaticResource ReviewedTodayHighlight}">
-                                <Style.Triggers>
-                                    <!-- Reconciled: Green background -->
-                                    <MultiDataTrigger>
-                                        <MultiDataTrigger.Conditions>
-                                            <Condition Binding="{Binding DWINGS_InvoiceID, Converter={StaticResource IsNotNullOrEmptyConverter}}" Value="True"/>
-                                            <Condition Binding="{Binding InternalInvoiceReference, Converter={StaticResource IsNotNullOrEmptyConverter}}" Value="True"/>
-                                        </MultiDataTrigger.Conditions>
-                                        <Setter Property="Background" Value="#C8E6C9"/>
-                                    </MultiDataTrigger>
-                                    <!-- Matched Across Accounts: Blue background -->
-                                    <DataTrigger Binding="{Binding IsMatchedAcrossAccounts}" Value="True">
-                                        <Setter Property="Background" Value="#BBDEFB"/>
-                                    </DataTrigger>
-                                    <!-- Not Reconciled: Orange background -->
-                                    <MultiDataTrigger>
-                                        <MultiDataTrigger.Conditions>
-                                            <Condition Binding="{Binding DWINGS_InvoiceID, Converter={StaticResource IsNotNullOrEmptyConverter}}" Value="False"/>
-                                            <Condition Binding="{Binding InternalInvoiceReference, Converter={StaticResource IsNotNullOrEmptyConverter}}" Value="False"/>
-                                            <Condition Binding="{Binding IsMatchedAcrossAccounts}" Value="False"/>
-                                        </MultiDataTrigger.Conditions>
-                                        <Setter Property="Background" Value="#FFE0B2"/>
-                                    </MultiDataTrigger>
-                                </Style.Triggers>
+                            <!-- Cell Style for Status Indicator Column -->
+                            <Style x:Key="StatusIndicatorCellStyle" TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                <Setter Property="Background" Value="Transparent"/>
+                                <Setter Property="BorderThickness" Value="0,0,1,0"/>
+                                <Setter Property="BorderBrush" Value="#E0E0E0"/>
                             </Style>
                         </DataGrid.Resources>
                         <DataGrid.ColumnHeaderStyle>
@@ -909,51 +932,44 @@
                             </Style>
                         </DataGrid.RowStyle>
                         <DataGrid.Columns>
-                            <!-- New/Updated indicators with color coding based on reconciliation status -->
-                            <DataGridTemplateColumn Header="" Width="30" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource ReconciliationStatusCellStyle}">
+                            <!-- Status Indicator Column (Frozen) -->
+                            <DataGridTemplateColumn Header="" Width="50" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource StatusIndicatorCellStyle}">
+                                <DataGridTemplateColumn.HeaderTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="⚑" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" Cursor="Help"
+                                                   ToolTip="Status Legend:&#x0a;🔴 Red: Not linked with DWINGS&#x0a;🟠 Orange: Not grouped&#x0a;🟡 Yellow: Small discrepancy&#x0a;🟤 Dark Amber: Large discrepancy (>100)&#x0a;🟢 Green: Balanced &amp; grouped&#x0a;&#x0a;[N] = New entry&#x0a;[U] = Updated entry"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.HeaderTemplate>
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="N" FontWeight="Bold" HorizontalAlignment="Center"
-                                                   Visibility="{Binding IsNewlyAdded, Converter={StaticResource BoolToVisibilityConverter}}">
-                                            <TextBlock.Foreground>
-                                                <MultiBinding Converter="{StaticResource ReconciliationStatusColorConverter}">
-                                                    <Binding Path="DWINGS_InvoiceID"/>
-                                                    <Binding Path="InternalInvoiceReference"/>
-                                                    <Binding Path="IsMatchedAcrossAccounts"/>
-                                                </MultiBinding>
-                                            </TextBlock.Foreground>
-                                            <TextBlock.ToolTip>
-                                                <MultiBinding Converter="{StaticResource ReconciliationStatusTooltipConverter}">
-                                                    <Binding Path="DWINGS_InvoiceID"/>
-                                                    <Binding Path="InternalInvoiceReference"/>
-                                                    <Binding Path="IsMatchedAcrossAccounts"/>
-                                                </MultiBinding>
-                                            </TextBlock.ToolTip>
-                                        </TextBlock>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="" Width="36" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource ReconciliationStatusCellStyle}">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="U" FontWeight="Bold" HorizontalAlignment="Center"
-                                                   Visibility="{Binding IsUpdated, Converter={StaticResource BoolToVisibilityConverter}}">
-                                            <TextBlock.Foreground>
-                                                <MultiBinding Converter="{StaticResource ReconciliationStatusColorConverter}">
-                                                    <Binding Path="DWINGS_InvoiceID"/>
-                                                    <Binding Path="InternalInvoiceReference"/>
-                                                    <Binding Path="IsMatchedAcrossAccounts"/>
-                                                </MultiBinding>
-                                            </TextBlock.Foreground>
-                                            <TextBlock.ToolTip>
-                                                <MultiBinding Converter="{StaticResource ReconciliationStatusTooltipConverter}">
-                                                    <Binding Path="DWINGS_InvoiceID"/>
-                                                    <Binding Path="InternalInvoiceReference"/>
-                                                    <Binding Path="IsMatchedAcrossAccounts"/>
-                                                </MultiBinding>
-                                            </TextBlock.ToolTip>
-                                        </TextBlock>
-                                    </DataTemplate>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <!-- New/Updated badge (left side) with pulse animation -->
+                                            <Border x:Name="StatusBadge" Background="#2196F3" CornerRadius="2" Padding="3,1" Margin="0,0,4,0"
+                                                    Visibility="{Binding HasStatusIndicator, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
+                                                                <DataTrigger.EnterActions>
+                                                                    <BeginStoryboard>
+                                                                        <Storyboard>
+                                                                            <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                                                           From="1.0" To="0.3" Duration="0:0:0.8"
+                                                                                           AutoReverse="True" RepeatBehavior="3x"/>
+                                                                        </Storyboard>
+                                                                    </BeginStoryboard>
+                                                                </DataTrigger.EnterActions>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="{Binding StatusIndicator}" FontWeight="Bold" FontSize="9" Foreground="White"/>
+                                            </Border>
+                                            <!-- Status color dot (right side) -->
+                                            <Ellipse Width="12" Height="12" Fill="{Binding StatusColor}" 
+                                                     ToolTip="{Binding StatusTooltip}"/>
+                                        </StackPanel>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <!-- Group indicator (clickable) -->
@@ -1514,7 +1530,7 @@
 
                     <!-- Footer load more button (shown when scrolled to bottom) -->
                     <Button x:Name="LoadMoreFooterButton"
-                            Grid.Row="1"
+                            Grid.Row="2"
                             Content="Charger plus de données"
                             Margin="8"
                             Padding="10,6"

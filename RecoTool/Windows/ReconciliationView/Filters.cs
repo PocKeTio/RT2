@@ -17,11 +17,22 @@ namespace RecoTool.Windows
             catch { }
         }
 
-        // Reset all filter controls to default values, preserving some parent-provided constraints
+        // Reset all filter controls to initial state (todolist/filter) or default values
         private void ResetFilter_Click(object sender, RoutedEventArgs e)
         {
             try
             {
+                // If we have an initial filter state (from todolist/saved filter), restore it
+                if (!string.IsNullOrWhiteSpace(_initialFilterSql))
+                {
+                    ApplySavedFilterSql(_initialFilterSql);
+                    ApplyFilters();
+                    UpdateViewTitle();
+                    UpdateStatusInfo("Filters reset to initial state");
+                    return;
+                }
+
+                // Otherwise, clear all filters (default behavior)
                 // Preserve Account and Status provided by the parent page (do NOT clear)
                 // FilterAccountId = null;
                 // FilterStatus = null;

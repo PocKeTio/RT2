@@ -123,6 +123,9 @@ namespace RecoTool.Windows
                             // Percent based on total items in this filter
                             double percent = (totalLive > 0) ? (totalCount * 100.0 / totalLive) : 0.0;
                             
+                            // Compute status indicators (fetch actual data to calculate)
+                            var statusCounts = await GetStatusCountsAsync(cid, baseCombined).ConfigureAwait(false);
+                            
                             return new TodoCard 
                             { 
                                 Item = t, 
@@ -131,7 +134,13 @@ namespace RecoTool.Windows
                                 ActualTotal = totalCount,         // Real total (includes items without action)
                                 Percent = percent, 
                                 AccountLabel = accountLabel, 
-                                AmountsText = amountsText 
+                                AmountsText = amountsText,
+                                NewCount = statusCounts.NewCount,
+                                UpdatedCount = statusCounts.UpdatedCount,
+                                NotLinkedCount = statusCounts.NotLinkedCount,
+                                NotGroupedCount = statusCounts.NotGroupedCount,
+                                DiscrepancyCount = statusCounts.DiscrepancyCount,
+                                BalancedCount = statusCounts.BalancedCount
                             };
                         }
                         catch
@@ -155,6 +164,46 @@ namespace RecoTool.Windows
                 });
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Helper class to hold status counts
+        /// </summary>
+        private class StatusCounts
+        {
+            public int NewCount { get; set; }
+            public int UpdatedCount { get; set; }
+            public int NotLinkedCount { get; set; }
+            public int NotGroupedCount { get; set; }
+            public int DiscrepancyCount { get; set; }
+            public int BalancedCount { get; set; }
+        }
+
+        /// <summary>
+        /// Get status indicator counts for a TodoCard filter
+        /// </summary>
+        private async Task<StatusCounts> GetStatusCountsAsync(string countryId, string whereClause)
+        {
+            var result = new StatusCounts();
+            try
+            {
+                // Fetch the actual data to calculate status colors
+                var data = await _reconciliationService.GetReconciliationViewAsync(countryId, whereClause).ConfigureAwait(false);
+                if (data == null || !data.Any()) return result;
+
+                // Calculate counts based on StatusColor property
+                result.NewCount = data.Count(a => a.IsNewlyAdded);
+                result.UpdatedCount = data.Count(a => a.IsUpdated);
+                result.NotLinkedCount = data.Count(a => a.StatusColor == "#F44336"); // Red
+                result.NotGroupedCount = data.Count(a => a.StatusColor == "#FF9800"); // Orange
+                result.DiscrepancyCount = data.Count(a => a.StatusColor == "#FFC107" || a.StatusColor == "#FF6F00"); // Yellow or Dark Amber
+                result.BalancedCount = data.Count(a => a.StatusColor == "#4CAF50"); // Green
+            }
+            catch
+            {
+                // Return empty counts on error
+            }
+            return result;
         }
     }
 }

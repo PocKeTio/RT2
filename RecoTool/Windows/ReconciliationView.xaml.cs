@@ -3,27 +3,17 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
-using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Threading;
-using System.Diagnostics;
-using Microsoft.VisualBasic;
 using RecoTool.Models;
-using RecoTool.Properties;
 using RecoTool.Services;
-using OfflineFirstAccess.Models;
-using RecoTool.Domain.Filters;
 using RecoTool.UI.ViewModels;
-using RecoTool.UI.Models;
-using RecoTool.Infrastructure.Logging;
 using System.Windows.Media;
 using System.Windows.Controls.Primitives;
 using RecoTool.Services.DTOs;
@@ -52,6 +42,7 @@ namespace RecoTool.Windows
         private bool _isLoading;
         private bool _canRefresh = true;
         private bool _initialLoaded;
+        private string _initialFilterSql; // Capture initial filter state for reset
         private DispatcherTimer _filterDebounceTimer;
         private DispatcherTimer _highlightClearTimer;
         private DispatcherTimer _toastTimer;
@@ -105,6 +96,10 @@ namespace RecoTool.Windows
             try
             {
                 var text = string.IsNullOrWhiteSpace(title) ? "Default View" : (isTodo ? $"ToDo: {title}" : title);
+                
+                // Update _currentView so UpdateViewTitle() preserves it
+                _currentView = text;
+                
                 if (TitleText != null)
                 {
                     TitleText.Text = text;
@@ -649,9 +644,6 @@ namespace RecoTool.Windows
             catch { }
         }
 
-        
-
-        
 
         /// <summary>
         /// Reçoit un SQL de filtre sauvegardé depuis la page parente.
@@ -662,6 +654,9 @@ namespace RecoTool.Windows
         {
             try
             {
+                // Capture initial filter state for reset button
+                _initialFilterSql = sql;
+                
                 if (string.IsNullOrWhiteSpace(sql))
                 {
                     _backendFilterSql = null;
@@ -692,60 +687,6 @@ namespace RecoTool.Windows
                 _preloadedAllData = null;
             }
         }
-
-        /* moved to partial: SyncAndTimers.cs (InitializeFilterDebounce) */
-
-        
-
-        // Ensure the push debounce timer exists
-        /* moved to partial: SyncAndTimers.cs (EnsurePushDebounceTimer) */
-
-        // Timer handlers (named so we can unsubscribe on Unloaded)
-        /* moved to partial: SyncAndTimers.cs (FilterDebounceTimer_Tick) */
-
-        /* moved to partial: SyncAndTimers.cs (PushDebounceTimer_Tick) */
-
-        // Public entry to schedule a debounced background push
-        /* moved to partial: SyncAndTimers.cs (ScheduleBulkPushDebounced) */
-
-        /* moved to partial: SyncAndTimers.cs (SubscribeToSyncEvents) */
-
-        /* moved to partial: SyncAndTimers.cs (ReconciliationView_Unloaded) */
-
-        /* moved to partial: SyncAndTimers.cs (OnSyncStateChanged) */
-
-        // When any VM Filter* property changes, debounce ApplyFilters
-        /* moved to partial: SyncAndTimers.cs (VM_PropertyChanged) */
-
-        /* moved to partial: SyncAndTimers.cs (HandleSyncStateChangedAsync) */
-
-        /* moved to partial: SyncAndTimers.cs (HasMeaningfulUpdate) */
-
-        /* moved to partial: SyncAndTimers.cs (StringEquals/NullableEquals) */
-
-        /* moved to partial: SyncAndTimers.cs (StartHighlightClearTimer) */
-
-        /* moved to partial: SyncAndTimers.cs (HighlightClearTimer_Tick) */
-
-        /* moved to partial: SyncAndTimers.cs (ScheduleApplyFiltersDebounced) */
-
-        /* moved to partial: SyncAndTimers.cs (QueueBulkPush) */
-
-        // ---- Generic saved filter snapshot support ----
-
-        /* moved to partial: FilterSqlBridge.cs (GetCurrentFilterPreset) */
-
-        /* moved to partial: FilterSqlBridge.cs (ApplyFilterPreset) */
-
-        /// <summary>
-        /// Removes any Account_ID = '...' predicate from a WHERE or full SQL fragment.
-        /// Preserves other predicates and keeps/strips the WHERE keyword appropriately.
-        /// </summary>
-        /* moved to partial: FilterSqlBridge.cs (StripAccountFromWhere) */
-
-        /* moved to partial: FilterSqlBridge.cs (BuildSqlWithJsonComment) */
-
-        /* moved to partial: FilterSqlBridge.cs (TryExtractPresetFromSql) */
 
         /// <summary>
         /// Constructeur par défaut
@@ -1095,18 +1036,6 @@ namespace RecoTool.Windows
             catch { }
         }
 
-        /// <summary>
-        /// Initialise les données par défaut
-        /// </summary>
-        /* moved to partial: DataLoading.cs */
-
-        /// <summary>
-        /// Initialise les données depuis les services
-        /// </summary>
-        /* moved to partial: DataLoading.cs */
-
-        /* moved to partial: DataLoading.cs (ReconciliationView_Loaded) */
-
         public ObservableCollection<ReconciliationViewData> ViewData
         {
             get => _viewData;
@@ -1185,8 +1114,6 @@ namespace RecoTool.Windows
         
         #endregion
         
-
-        // Moved to partial: Events.cs
 
         #region Bound Filter Properties
 
@@ -1288,12 +1215,6 @@ namespace RecoTool.Windows
 
         #endregion
 
-        // Options moved to ReconciliationView.Options.cs
-
-        // --- Dynamic top filter options loading ---
-        // Options moved to ReconciliationView.Options.cs
-
-        
 
         #region Editing Handlers (persist user field changes)
         /* moved to partial: Editing.cs */
@@ -1612,36 +1533,7 @@ namespace RecoTool.Windows
             if (comboBox != null) comboBox.SelectedIndex = -1;
         }
 
-        
-
-        
-
-        /// <summary>
-        /// Displays an error message
-        /// </summary>
-        /* moved to partial: Logging.cs */
-
-        /* moved to partial: Logging.cs */
-
-        /* moved to partial: Logging.cs */
-
-        /* moved to partial: FilterSqlBridge.cs (GenerateWhereClause) */
-
-        /* moved to partial: FilterSqlBridge.cs (ApplyWhereClause) */
-
-        
-
-        
-
-        
-
-        
-
-        
-
-        
-
-        /* moved to partial: Events.cs */
+       
 
         #region Multi-User Session Checks
 
@@ -1783,6 +1675,135 @@ namespace RecoTool.Windows
         }
 
         #endregion
+
+        #region Status Filtering
+
+        private string _activeStatusFilter = null;
+
+        private void KpiFilter_Click(object sender, MouseButtonEventArgs e)
+        {
+            try
+            {
+                var border = sender as System.Windows.Controls.Border;
+                if (border == null) return;
+
+                var filterType = border.Tag as string;
+                if (string.IsNullOrEmpty(filterType)) return;
+
+                // Toggle filter: if same filter is active, clear it; otherwise set new filter
+                if (_activeStatusFilter == filterType)
+                {
+                    _activeStatusFilter = null;
+                    ShowToast("Filter cleared");
+                }
+                else
+                {
+                    _activeStatusFilter = filterType;
+                    ShowToast($"Filtering by: {filterType}");
+                }
+
+                // Update visual indication
+                UpdateKpiFilterVisuals();
+                ApplyStatusFilter();
+            }
+            catch (Exception ex)
+            {
+                ShowToast($"Error applying KPI filter: {ex.Message}");
+            }
+        }
+
+        private void UpdateKpiFilterVisuals()
+        {
+            try
+            {
+                // Reset all KPI borders to default
+                ResetKpiBorder("KpiToReviewBorder", "#FFEDD5", 1);
+                ResetKpiBorder("KpiReviewedBorder", "#D1FAE5", 1);
+                ResetKpiBorder("KpiNotLinkedBorder", "#EF9A9A", 1);
+                ResetKpiBorder("KpiNotGroupedBorder", "#FFCC80", 1);
+                ResetKpiBorder("KpiHasDifferencesBorder", "#FFF59D", 1);
+                ResetKpiBorder("KpiMatchedBorder", "#A5D6A7", 1);
+
+                // Highlight active filter
+                if (!string.IsNullOrEmpty(_activeStatusFilter))
+                {
+                    var borderName = _activeStatusFilter switch
+                    {
+                        "ToReview" => "KpiToReviewBorder",
+                        "Reviewed" => "KpiReviewedBorder",
+                        "NotLinked" => "KpiNotLinkedBorder",
+                        "NotGrouped" => "KpiNotGroupedBorder",
+                        "HasDifferences" => "KpiHasDifferencesBorder",
+                        "Matched" => "KpiMatchedBorder",
+                        _ => null
+                    };
+
+                    if (borderName != null)
+                    {
+                        var border = this.FindName(borderName) as System.Windows.Controls.Border;
+                        if (border != null)
+                        {
+                            border.BorderThickness = new Thickness(3);
+                            border.BorderBrush = new SolidColorBrush(Color.FromRgb(33, 150, 243)); // Blue highlight
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void ResetKpiBorder(string borderName, string defaultColor, double thickness)
+        {
+            try
+            {
+                var border = this.FindName(borderName) as System.Windows.Controls.Border;
+                if (border != null)
+                {
+                    border.BorderThickness = new Thickness(thickness);
+                    border.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(defaultColor));
+                }
+            }
+            catch { }
+        }
+
+        private void ApplyStatusFilter()
+        {
+            try
+            {
+                // Simply trigger the existing filter system
+                // The status filter will be applied in ApplyFilters via VM.ApplyFilters
+                ApplyFilters();
+            }
+            catch (Exception ex)
+            {
+                ShowToast($"Error applying status filter: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Filter predicate for status-based filtering (called by VM.ApplyFilters if needed)
+        /// </summary>
+        private bool MatchesStatusFilter(ReconciliationViewData row)
+        {
+            if (string.IsNullOrEmpty(_activeStatusFilter)) return true;
+
+            var color = row.StatusColor;
+            return _activeStatusFilter switch
+            {
+                "ToReview" => !row.IsReviewed,
+                "Reviewed" => row.IsReviewed,
+                "NotLinked" => color == "#F44336", // Red - No DWINGS link
+                "NotGrouped" => !row.IsMatchedAcrossAccounts, // NOT grouped (no "G" in grid)
+                "HasDifferences" => color == "#FFC107" || color == "#FF6F00", // Yellow or Dark Amber
+                "Discrepancy" => color == "#FFC107" || color == "#FF6F00", // Yellow or Dark Amber (legacy)
+                "Matched" => color == "#4CAF50", // Green - Balanced and grouped
+                "Balanced" => color == "#4CAF50", // Green (legacy)
+                _ => true
+            };
+        }
+
+        #endregion
+
+        #endregion
     }
 }
-#endregion

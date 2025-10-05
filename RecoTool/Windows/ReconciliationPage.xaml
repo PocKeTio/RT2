@@ -37,12 +37,12 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- View Management Section -->
-                <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="0,0,16,0">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="0,0,8,0">
                     <Border Background="{DynamicResource BNPMainGreenBrush}" CornerRadius="6" Padding="10,6" Effect="{StaticResource LightShadow}">
                         <Button Style="{StaticResource StandardButtonStyle}" Click="AddView_Click" IsEnabled="{Binding CanInteract}" Background="Transparent" BorderThickness="0">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="White" VerticalAlignment="Center" Margin="0,0,6,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                                <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center">
+                                <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center">
                                     <Run Text="Add View"/>
                                     <Run Text=" " />
                                     <Run Text="{Binding AddViewModeIndicator, Mode=OneWay}" FontSize="11" FontWeight="Normal"/>
@@ -53,7 +53,7 @@
                 </StackPanel>
 
                 <!-- ToDo Management Section -->
-                <Border Grid.Column="1" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,16,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
+                <Border Grid.Column="1" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,8,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}"/>
                         <TextBlock Text="ToDo:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"/>
@@ -70,7 +70,7 @@
                                 </Style>
                             </ComboBox.ItemContainerStyle>
                         </ComboBox>
-                        <TextBox x:Name="TodoNameTextBox" Width="92" Margin="8,0,0,0" Text="{Binding EditTodoName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBox x:Name="TodoNameTextBox" Width="80" Margin="8,0,0,0" MaxLines="1" VerticalContentAlignment="Center" Text="{Binding EditTodoName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                         <Button Style="{StaticResource StandardButtonStyle}" Margin="8,0,0,0" Height="26" Padding="10,0" Click="TodoAdd_Click"><TextBlock Text="Add"/></Button>
                         <Button Style="{StaticResource StandardButtonStyle}" Margin="4,0,0,0" Height="26" Padding="10,0" Click="TodoSave_Click"><TextBlock Text="Save"/></Button>
                         <Button Style="{StaticResource StandardButtonStyle}" Margin="4,0,0,0" Height="26" Padding="10,0" Click="TodoDelete_Click"><TextBlock Text="Delete"/></Button>
@@ -81,10 +81,10 @@
                 </Border>
 
                 <!-- Data Scope Section -->
-                <Border Grid.Column="2" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,16,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
+                <Border Grid.Column="2" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,8,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE8C9;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                        <ComboBox x:Name="AccountComboBox" Width="110" ItemsSource="{Binding Accounts}" SelectedItem="{Binding SelectedAccount, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanChangeAccount}"
+                        <ComboBox x:Name="AccountComboBox" Width="90" ItemsSource="{Binding Accounts}" SelectedItem="{Binding SelectedAccount, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanChangeAccount}"
                                   HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
                             <ComboBox.ItemContainerStyle>
                                 <Style TargetType="ComboBoxItem">
@@ -94,7 +94,7 @@
                             </ComboBox.ItemContainerStyle>
                         </ComboBox>
                         <Rectangle Width="1" Height="24" Fill="#DEE2E6" Margin="12,0"/>
-                        <ComboBox x:Name="StatusComboBoxInline" Width="100" ItemsSource="{Binding Statuses}" SelectedItem="{Binding SelectedStatus, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanChangeStatus}"
+                        <ComboBox x:Name="StatusComboBoxInline" Width="80" ItemsSource="{Binding Statuses}" SelectedItem="{Binding SelectedStatus, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanChangeStatus}"
                                   HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
                             <ComboBox.ItemContainerStyle>
                                 <Style TargetType="ComboBoxItem">
@@ -107,10 +107,9 @@
                 </Border>
 
                 <!-- Saved Items Section -->
-                <Border Grid.Column="3" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,16,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
+                <Border Grid.Column="3" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,8,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                        <TextBlock Text="Filter:" VerticalAlignment="Center" Margin="0,0,4,0" FontWeight="SemiBold"/>
                         <ComboBox x:Name="SavedFiltersComboBox" Width="130" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanUseSavedControls}"
                                   ItemsSource="{Binding SavedFilters}"
                                   DisplayMemberPath="UFI_Name"
@@ -142,10 +141,10 @@
                 </Border>
 
                 <!-- View Type & Tools Section -->
-                <Border Grid.Column="4" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,16,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
+                <Border Grid.Column="4" Background="#F8F9FA" CornerRadius="6" Padding="10,6" Margin="0,0,8,0" BorderBrush="#DEE2E6" BorderThickness="1" Effect="{StaticResource LightShadow}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE8A9;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource BNPMainGreenBrush}" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                        <ComboBox x:Name="ViewTypeComboBox" Width="110" ItemsSource="{Binding ViewTypes}" SelectedItem="{Binding SelectedViewType, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
+                        <ComboBox x:Name="ViewTypeComboBox" Width="90" ItemsSource="{Binding ViewTypes}" SelectedItem="{Binding SelectedViewType, Mode=TwoWay}" IsEditable="False" Style="{StaticResource ModernComboBoxStyle}" IsEnabled="{Binding CanInteract}"
                                   HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
                             <ComboBox.ItemContainerStyle>
                                 <Style TargetType="ComboBoxItem">

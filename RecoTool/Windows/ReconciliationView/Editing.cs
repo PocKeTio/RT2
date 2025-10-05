@@ -340,19 +340,24 @@ namespace RecoTool.Windows
                     }
                 }
                 
-                // Group by InternalInvoiceReference (only if DWINGS_InvoiceID is empty)
-                var byInternal = allData.Where(r => string.IsNullOrWhiteSpace(r.DWINGS_InvoiceID) 
-                                                     && !string.IsNullOrWhiteSpace(r.InternalInvoiceReference))
+                // Group by InternalInvoiceReference (INDEPENDENTLY - can coexist with DWINGS_InvoiceID)
+                // This allows a line to belong to multiple groups (BGI group + Internal ref group)
+                var byInternal = allData.Where(r => !string.IsNullOrWhiteSpace(r.InternalInvoiceReference))
                                         .GroupBy(r => r.InternalInvoiceReference, StringComparer.OrdinalIgnoreCase);
                 foreach (var g in byInternal)
                 {
                     bool hasP = g.Any(x => string.Equals(x.AccountSide, "P", StringComparison.OrdinalIgnoreCase));
                     bool hasR = g.Any(x => string.Equals(x.AccountSide, "R", StringComparison.OrdinalIgnoreCase));
                     
-                    foreach (var row in g)
+                    // If grouped by InternalInvoiceReference, mark as matched
+                    // This will override or combine with DWINGS_InvoiceID grouping
+                    if (hasP && hasR)
                     {
-                        rowsToRecalculate.Add(row);
-                        row.IsMatchedAcrossAccounts = hasP && hasR;
+                        foreach (var row in g)
+                        {
+                            rowsToRecalculate.Add(row);
+                            row.IsMatchedAcrossAccounts = true; // Set to true if matched in this group
+                        }
                     }
                 }
                 

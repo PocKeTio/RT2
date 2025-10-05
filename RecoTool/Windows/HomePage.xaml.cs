@@ -84,6 +84,14 @@ namespace RecoTool.Windows
             public string AccountLabel { get; set; }
             public string AmountsText { get; set; }
 
+            // Status indicators
+            public int NewCount { get; set; }           // New entries
+            public int UpdatedCount { get; set; }       // Updated entries
+            public int NotLinkedCount { get; set; }     // Red status
+            public int NotGroupedCount { get; set; }    // Orange status
+            public int DiscrepancyCount { get; set; }   // Yellow status
+            public int BalancedCount { get; set; }      // Green status
+
             // Total displayed = To Review + Reviewed (items with action only)
             // Note: ActualTotal may be higher if there are items without action
             public int TotalCount => Count + ReviewedCount;

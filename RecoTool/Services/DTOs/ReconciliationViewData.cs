@@ -94,7 +94,24 @@ namespace RecoTool.Services.DTOs
 
         // Propriétés de Reconciliation
         public string DWINGS_GuaranteeID { get; set; }
-        public string DWINGS_InvoiceID { get; set; }
+        
+        private string _dwingsInvoiceID;
+        public string DWINGS_InvoiceID 
+        { 
+            get => _dwingsInvoiceID;
+            set
+            {
+                if (_dwingsInvoiceID != value)
+                {
+                    _dwingsInvoiceID = value;
+                    OnPropertyChanged(nameof(DWINGS_InvoiceID));
+                    InvalidateStatusCache();
+                    OnPropertyChanged(nameof(StatusColor));
+                    OnPropertyChanged(nameof(StatusTooltip));
+                }
+            }
+        }
+        
         public string DWINGS_BGPMT { get; set; }
         private int? _action;
         public int? Action
@@ -147,7 +164,24 @@ namespace RecoTool.Services.DTOs
                 return string.Empty;
             }
         }
-        public string InternalInvoiceReference { get; set; }
+        
+        private string _internalInvoiceReference;
+        public string InternalInvoiceReference 
+        { 
+            get => _internalInvoiceReference;
+            set
+            {
+                if (_internalInvoiceReference != value)
+                {
+                    _internalInvoiceReference = value;
+                    OnPropertyChanged(nameof(InternalInvoiceReference));
+                    InvalidateStatusCache();
+                    OnPropertyChanged(nameof(StatusColor));
+                    OnPropertyChanged(nameof(StatusTooltip));
+                }
+            }
+        }
+        
         public DateTime? FirstClaimDate { get; set; }
         public DateTime? LastClaimDate { get; set; }
         private bool _toRemind;
@@ -313,6 +347,9 @@ namespace RecoTool.Services.DTOs
                 {
                     _isMatchedAcrossAccounts = value;
                     OnPropertyChanged(nameof(IsMatchedAcrossAccounts));
+                    InvalidateStatusCache();
+                    OnPropertyChanged(nameof(StatusColor));
+                    OnPropertyChanged(nameof(StatusTooltip));
                 }
             }
         }
@@ -427,6 +464,10 @@ namespace RecoTool.Services.DTOs
                 {
                     _isNewlyAdded = value;
                     OnPropertyChanged(nameof(IsNewlyAdded));
+                    OnPropertyChanged(nameof(StatusIndicator));
+                    OnPropertyChanged(nameof(HasStatusIndicator));
+                    InvalidateStatusCache();
+                    OnPropertyChanged(nameof(StatusTooltip));
                 }
             }
         }
@@ -444,8 +485,131 @@ namespace RecoTool.Services.DTOs
                 {
                     _isUpdated = value;
                     OnPropertyChanged(nameof(IsUpdated));
+                    OnPropertyChanged(nameof(StatusIndicator));
+                    OnPropertyChanged(nameof(HasStatusIndicator));
+                    InvalidateStatusCache();
+                    OnPropertyChanged(nameof(StatusTooltip));
                 }
             }
+        }
+
+        /// <summary>
+        /// Computed property for status indicator text
+        /// New takes precedence over Updated (if new, it's inherently updated)
+        /// </summary>
+        public string StatusIndicator
+        {
+            get
+            {
+                if (_isNewlyAdded) return "N";
+                if (_isUpdated) return "U";
+                return string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// Returns true if there's any status indicator to show
+        /// </summary>
+        public bool HasStatusIndicator => _isNewlyAdded || _isUpdated;
+
+        /// <summary>
+        /// Computed property for status color based on reconciliation completeness
+        /// Red: Not linked with DWINGS
+        /// Orange: Not grouped (IsMatchedAcrossAccounts = false)
+        /// Dark Amber: Large discrepancy (> 100)
+        /// Yellow: Small discrepancy
+        /// Green: Balanced and grouped
+        /// </summary>
+        public string StatusColor
+        {
+            get
+            {
+                if (_cachedStatusColor != null) return _cachedStatusColor;
+                return _cachedStatusColor = CalculateStatusColor();
+            }
+        }
+
+        private string _cachedStatusColor;
+        private string CalculateStatusColor()
+        {
+            // Red: No DWINGS link
+            if (string.IsNullOrWhiteSpace(DWINGS_InvoiceID) && string.IsNullOrWhiteSpace(InternalInvoiceReference))
+                return "#F44336"; // Red
+
+            // Orange: Not grouped (not matched across accounts)
+            if (!_isMatchedAcrossAccounts)
+                return "#FF9800"; // Orange
+
+            // Yellow/Amber: Grouped but missing amount != 0
+            if (_missingAmount.HasValue && _missingAmount.Value != 0)
+            {
+                // Dark amber for large discrepancies (> 100)
+                if (Math.Abs(_missingAmount.Value) > 100)
+                    return "#FF6F00"; // Dark Amber
+                // Light yellow for small discrepancies
+                return "#FFC107"; // Yellow
+            }
+
+            // Green: Balanced and grouped
+            return "#4CAF50"; // Green
+        }
+
+        /// <summary>
+        /// Tooltip explaining the status with actionable guidance
+        /// </summary>
+        public string StatusTooltip
+        {
+            get
+            {
+                if (_cachedStatusTooltip != null) return _cachedStatusTooltip;
+                return _cachedStatusTooltip = CalculateStatusTooltip();
+            }
+        }
+
+        private string _cachedStatusTooltip;
+        private string CalculateStatusTooltip()
+        {
+            var status = _isNewlyAdded ? "New" : (_isUpdated ? "Updated" : "");
+            var reconciliationStatus = "";
+            var action = "";
+
+            if (string.IsNullOrWhiteSpace(DWINGS_InvoiceID) && string.IsNullOrWhiteSpace(InternalInvoiceReference))
+            {
+                reconciliationStatus = "Not linked with DWINGS";
+                action = "→ Add DWINGS Invoice ID or Internal Reference";
+            }
+            else if (!_isMatchedAcrossAccounts)
+            {
+                reconciliationStatus = "Not grouped";
+                action = "→ Check if matching entry exists on other account side";
+            }
+            else if (_missingAmount.HasValue && _missingAmount.Value != 0)
+            {
+                reconciliationStatus = $"Missing amount: {_missingAmount.Value:N2}";
+                action = Math.Abs(_missingAmount.Value) > 100
+                    ? "→ Large discrepancy - verify amounts"
+                    : "→ Small discrepancy - may need adjustment";
+            }
+            else
+            {
+                reconciliationStatus = "Balanced and grouped";
+                action = "✓ Ready for review";
+            }
+
+            var tooltip = string.IsNullOrEmpty(status)
+                ? $"{reconciliationStatus}\n{action}"
+                : $"{status} - {reconciliationStatus}\n{action}";
+
+            return tooltip;
+        }
+
+        /// <summary>
+        /// Invalidate cached status values (call when properties change)
+        /// </summary>
+        private void InvalidateStatusCache()
+        {
+            _cachedStatusColor = null;
+            _cachedStatusTooltip = null;
         }
 
         private bool _isHighlighted;
@@ -513,6 +677,9 @@ namespace RecoTool.Services.DTOs
                 {
                     _missingAmount = value;
                     OnPropertyChanged(nameof(MissingAmount));
+                    InvalidateStatusCache();
+                    OnPropertyChanged(nameof(StatusColor));
+                    OnPropertyChanged(nameof(StatusTooltip));
                 }
             }
         }

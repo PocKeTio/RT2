@@ -63,11 +63,11 @@ namespace RecoTool.Services.Queries
                                 )
                                 LEFT JOIN 
                                     (
-                                        SELECT Event_Num, COUNT(*) AS DupCount 
+                                        SELECT Event_Num & Reconciliation_Num & Account_ID AS DupKey, COUNT(*) AS DupCount 
                                         FROM {ambreBase} 
-                                        GROUP BY Event_Num
+                                        GROUP BY Event_Num & Reconciliation_Num & Account_ID
                                     ) AS dup 
-                                    ON dup.Event_Num = a.Event_Num
+                                    ON dup.DupKey = (a.Event_Num & a.Reconciliation_Num & a.Account_ID)
                             )
                         WHERE 
                             a.DeleteDate IS NULL 
@@ -152,7 +152,7 @@ namespace RecoTool.Services.Queries
 
                            FROM ({ambreJoin}
                            LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID)
-                           LEFT JOIN (SELECT Event_Num, COUNT(*) AS DupCount FROM {ambreBase} GROUP BY Event_Num) AS dup ON dup.Event_Num = a.Event_Num
+                           LEFT JOIN (SELECT Event_Num & Reconciliation_Num & Account_ID AS DupKey, COUNT(*) AS DupCount FROM {ambreBase} GROUP BY Event_Num & Reconciliation_Num & Account_ID) AS dup ON dup.DupKey = (a.Event_Num & a.Reconciliation_Num & a.Account_ID)
                            WHERE 1=1";
         }
     }

@@ -13,11 +13,51 @@
         <local:AlertTypeToIconConverter x:Key="AlertTypeToIconConverter"/>
         <local:InverseBooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter"/>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+        
+        <!-- Transparent Card Button Style -->
+        <Style x:Key="TransparentCardButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="hoverOverlay" Background="#10005B46" CornerRadius="14" Opacity="0"/>
+                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="hoverOverlay" 
+                                                           Storyboard.TargetProperty="Opacity" 
+                                                           To="1" Duration="0:0:0.2"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="hoverOverlay" 
+                                                           Storyboard.TargetProperty="Opacity" 
+                                                           To="0" Duration="0:0:0.2"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
-    <ScrollViewer x:Name="MainScrollViewer" VerticalScrollBarVisibility="Auto" Background="{DynamicResource BNPBackground}">
-        <StackPanel Margin="16,16,16,16">
+    <ScrollViewer x:Name="MainScrollViewer" VerticalScrollBarVisibility="Auto" Background="{DynamicResource BNPBackground}" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="16">
             <!-- Header of the home page -->
-            <Grid Margin="0,0,0,20">
+            <Grid Margin="0,0,0,12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -51,7 +91,7 @@
             </Grid>
 
             <!-- DWINGS Data Warning -->
-            <Border Background="#FFF3CD" BorderBrush="#FF9800" BorderThickness="2" CornerRadius="8" Padding="16" Margin="0,0,0,20"
+            <Border Background="#FFF3CD" BorderBrush="#FF9800" BorderThickness="2" CornerRadius="8" Padding="12" Margin="0,0,0,12"
                     Visibility="{Binding IsDwingsDataFromToday, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
                 <StackPanel>
                     <TextBlock Text="⚠️ WARNING!" FontSize="18" FontWeight="Bold" Foreground="#D32F2F" Margin="0,0,0,8"/>
@@ -60,84 +100,206 @@
             </Border>
 
             <!-- KPI Cards -->
-            <TextBlock Text="KPI CARDS" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" Foreground="{DynamicResource BNPMainGreenBrush}"/>
-            <ItemsControl ItemsSource="{Binding TodoCards}">
+            <TextBlock Text="KPI CARDS" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+            <ItemsControl ItemsSource="{Binding TodoCards}" HorizontalAlignment="Left">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <WrapPanel />
+                        <WrapPanel Orientation="Horizontal"/>
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Border Margin="0,0,12,12" CornerRadius="10" BorderThickness="1" BorderBrush="#E0E0E0" Background="White" Effect="{StaticResource LightShadow}">
-                            <Button Style="{StaticResource StandardButtonStyle}" Click="OpenTodoCard_Click" Padding="0" MinWidth="280" MinHeight="140" Background="Transparent">
-                                <Grid>
+                        <Border Margin="0,8,15,30" CornerRadius="14" Background="White" BorderThickness="0" Width="200" x:Name="cardBorder">
+                            <Border.RenderTransformOrigin>0.5,0.5</Border.RenderTransformOrigin>
+                            <Border.RenderTransform>
+                                <ScaleTransform x:Name="cardScale" ScaleX="1" ScaleY="1"/>
+                            </Border.RenderTransform>
+                            <Border.Effect>
+                                <DropShadowEffect x:Name="cardShadow" BlurRadius="20" ShadowDepth="3" Opacity="0.3" Direction="270" Color="#1A237E"/>
+                            </Border.Effect>
+                            <Border.Triggers>
+                                <EventTrigger RoutedEvent="Border.MouseEnter">
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="cardScale" 
+                                                           Storyboard.TargetProperty="ScaleX" 
+                                                           To="1.05" Duration="0:0:0.2"/>
+                                            <DoubleAnimation Storyboard.TargetName="cardScale" 
+                                                           Storyboard.TargetProperty="ScaleY" 
+                                                           To="1.05" Duration="0:0:0.2"/>
+                                            <DoubleAnimation Storyboard.TargetName="cardShadow" 
+                                                           Storyboard.TargetProperty="BlurRadius" 
+                                                           To="30" Duration="0:0:0.2"/>
+                                            <DoubleAnimation Storyboard.TargetName="cardShadow" 
+                                                           Storyboard.TargetProperty="Opacity" 
+                                                           To="0.7" Duration="0:0:0.2"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                                <EventTrigger RoutedEvent="Border.MouseLeave">
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="cardScale" 
+                                                           Storyboard.TargetProperty="ScaleX" 
+                                                           To="1" Duration="0:0:0.2"/>
+                                            <DoubleAnimation Storyboard.TargetName="cardScale" 
+                                                           Storyboard.TargetProperty="ScaleY" 
+                                                           To="1" Duration="0:0:0.2"/>
+                                            <DoubleAnimation Storyboard.TargetName="cardShadow" 
+                                                           Storyboard.TargetProperty="BlurRadius" 
+                                                           To="20" Duration="0:0:0.2"/>
+                                            <DoubleAnimation Storyboard.TargetName="cardShadow" 
+                                                           Storyboard.TargetProperty="Opacity" 
+                                                           To="0.3" Duration="0:0:0.2"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                            </Border.Triggers>
+                            <Button Style="{StaticResource TransparentCardButtonStyle}" Click="OpenTodoCard_Click" Padding="0" Height="220" Background="LightGreen">
+                                <Grid Width="200">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="*"/>
                                         <RowDefinition Height="Auto"/>
                                     </Grid.RowDefinitions>
 
-                                    <!-- Header band with ToDo name and icon -->
-                                    <Border Grid.Row="0" Background="{DynamicResource BNPMainGreenBrush}" CornerRadius="10,10,0,0" Padding="12,10">
+                                    <!-- Header -->
+                                    <Border Grid.Row="0" CornerRadius="14,14,0,0" Padding="14,10">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                <GradientStop Color="{Binding Source={StaticResource BNPMainGreenBrush}, Path=Color}" Offset="0"/>
+                                                <GradientStop Color="#00897B" Offset="1"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="&#xE73A;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                            <TextBlock Grid.Column="1" Text="{Binding Item.TDL_Name}" Foreground="White" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                            <!-- Multi-user indicator -->
-                                            <Border Grid.Column="2" Background="LightYellow" CornerRadius="4" Padding="6,2" Margin="8,0,0,0" Visibility="{Binding HasActiveUsers, Converter={StaticResource BoolToVisibilityConverter}}">
-                                                <TextBlock Text="{Binding ActiveUsersText}" Foreground="Black" FontSize="11" FontWeight="SemiBold"/>
+                                            <Border Grid.Column="0" Background="LightBlue" CornerRadius="8" Padding="7" Margin="0,0,10,0" HorizontalAlignment="Center">
+                                                <TextBlock Text="&#xE73A;" FontFamily="Segoe MDL2 Assets" Foreground="#333" FontSize="14"  HorizontalAlignment="Center"/>
                                             </Border>
+                                            <TextBlock HorizontalAlignment="Center" Grid.Column="1" Text="{Binding Item.TDL_Name}" Foreground="White" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                                         </Grid>
                                     </Border>
 
-                                    <!-- Body: counts and progress -->
-                                    <StackPanel Grid.Row="1" Margin="12,12,12,8">
-                                        <!-- To Review / Reviewed counts -->
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0">
-                                                <TextBlock Text="To Review" FontSize="11" Foreground="#888888" Margin="0,0,0,2"/>
-                                                <TextBlock Text="{Binding Count, StringFormat='{}{0:N0}'}" FontSize="26" FontWeight="Bold" Foreground="#FF6B35"/>
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="1" HorizontalAlignment="Right">
-                                                <TextBlock Text="Reviewed" FontSize="11" Foreground="#888888" Margin="0,0,0,2" TextAlignment="Right"/>
-                                                <TextBlock Text="{Binding ReviewedCount, StringFormat='{}{0:N0}'}" FontSize="26" FontWeight="Bold" Foreground="#4CAF50" TextAlignment="Right"/>
-                                            </StackPanel>
-                                        </Grid>
+                                    <!-- Body: Key Metrics -->
+                                    <Grid Grid.Row="1" Margin="14,12,14,10">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="*"/>
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
                                         
-                                        <!-- Account label -->
-                                        <Border Background="#F5F5F5" CornerRadius="4" Padding="8,4" Margin="0,4,0,4">
-                                            <TextBlock Text="{Binding AccountLabel}" FontSize="11" Foreground="#555555" TextAlignment="Center"/>
+                                        <!-- New -->
+                                        <Border Grid.Row="0" Grid.Column="0" CornerRadius="10" Padding="8,6" Margin="0,0,5,5">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                    <GradientStop Color="#FFF9E6" Offset="0"/>
+                                                    <GradientStop Color="#FFECB3" Offset="1"/>
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="*"/>
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,3">
+                                                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" Foreground="#333333" FontSize="11" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="New" FontSize="9" Foreground="#333333" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <TextBlock  HorizontalAlignment="Center" Grid.Row="1" Text="{Binding NewCount}" FontSize="20" FontWeight="Bold" Foreground="#BF360C" VerticalAlignment="Center"/>
+                                            </Grid>
                                         </Border>
                                         
-                                        <!-- Amounts -->
-                                        <TextBlock Text="{Binding AmountsText}" FontSize="11" Foreground="#666666" TextWrapping="Wrap" TextAlignment="Center" Margin="0,4,0,0"/>
-                                    </StackPanel>
+                                        <!-- To Link -->
+                                        <Border Grid.Row="0" Grid.Column="1" CornerRadius="10" Padding="8,6" Margin="5,0,0,5">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                    <GradientStop Color="#FFEBEE" Offset="0"/>
+                                                    <GradientStop Color="#FFCDD2" Offset="1"/>
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="*"/>
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,3">
+                                                    <TextBlock Text="&#xE71B;" FontFamily="Segoe MDL2 Assets" Foreground="#C62828" FontSize="11" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="To Link" FontSize="9" Foreground="#C62828" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <TextBlock  HorizontalAlignment="Center" Grid.Row="1" Text="{Binding NotLinkedCount}" FontSize="20" FontWeight="Bold" Foreground="#C62828" VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                        
+                                        <!-- To Review -->
+                                        <Border Grid.Row="1" Grid.Column="0" CornerRadius="10" Padding="8,6" Margin="0,5,5,0">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                    <GradientStop Color="#FFF3E0" Offset="0"/>
+                                                    <GradientStop Color="#FFE0B2" Offset="1"/>
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="*"/>
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,3">
+                                                    <TextBlock Text="&#xE8A1;" FontFamily="Segoe MDL2 Assets" Foreground="#E65100" FontSize="11" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="To Review" FontSize="9" Foreground="#E65100" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <TextBlock  HorizontalAlignment="Center" Grid.Row="1" Text="{Binding Count, StringFormat='{}{0:N0}'}" FontSize="20" FontWeight="Bold" Foreground="#E65100" VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                        
+                                        <!-- Reviewed -->
+                                        <Border Grid.Row="1" Grid.Column="1" CornerRadius="10" Padding="8,6" Margin="5,5,0,0">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                    <GradientStop Color="#E8F5E9" Offset="0"/>
+                                                    <GradientStop Color="#C8E6C9" Offset="1"/>
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="*"/>
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,3">
+                                                    <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" Foreground="#2E7D32" FontSize="11" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="Done" FontSize="9" Foreground="#2E7D32" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <TextBlock  HorizontalAlignment="Center" Grid.Row="1" Text="{Binding ReviewedCount, StringFormat='{}{0:N0}'}" FontSize="20" FontWeight="Bold" Foreground="#2E7D32" VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                    </Grid>
 
-                                    <!-- Footer: visual progress indicator -->
-                                    <Border Grid.Row="2" Background="#F9F9F9" CornerRadius="0,0,10,10" Padding="12,8">
+                                    <!-- Footer: Total Lines & Amount -->
+                                    <Border Grid.Row="2" Background="AliceBlue" CornerRadius="0,0,14,14" Padding="14,9" BorderBrush="#E0E0E0" BorderThickness="0,1,0,0">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="&#xE9F3;" FontFamily="Segoe MDL2 Assets" Foreground="#4CAF50" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                            <TextBlock Grid.Column="1" FontSize="11" Foreground="#666666" VerticalAlignment="Center">
-                                                <TextBlock.Text>
-                                                    <MultiBinding StringFormat="{}{0:N0} total ({1:N0} done)">
-                                                        <Binding Path="ActualTotal"/>
-                                                        <Binding Path="ReviewedCount"/>
-                                                    </MultiBinding>
-                                                </TextBlock.Text>
-                                            </TextBlock>
+                                            <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="20,0,40,0">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                                                    <TextBlock Text="&#xE8EF;" FontFamily="Segoe MDL2 Assets" FontSize="9" Foreground="#666" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="Total" FontSize="8" Foreground="#666" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding ActualTotal, StringFormat='{}{0:N0}'}" FontSize="14" FontWeight="Bold" Foreground="#333"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                                                    <TextBlock Text="&#xE7BF;" FontFamily="Segoe MDL2 Assets" FontSize="9" Foreground="{DynamicResource BNPMainGreenBrush}" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="Amount" FontSize="8" Foreground="#666" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding AmountsText}" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource BNPMainGreenBrush}" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
                                         </Grid>
                                     </Border>
                                 </Grid>

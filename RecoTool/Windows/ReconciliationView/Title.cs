@@ -14,25 +14,13 @@ namespace RecoTool.Windows
             {
                 if (TitleText != null)
                 {
-                    // Construire un titre convivial selon l'état courant
-                    // 1) Nom du filtre (si défini)
+                    // Display only the view name (account info is shown on line 3 via AccountTypeText)
                     var hasNamedFilter = !string.IsNullOrWhiteSpace(_currentView) && !string.Equals(_currentView, "Default View", StringComparison.OrdinalIgnoreCase);
-
-                    // 2) Account
-                    var accId = VM?.FilterAccountId;
-                    var accPart = string.IsNullOrWhiteSpace(accId) ? "All" : accId;
-
-                    // 3) Status
-                    var stat = VM?.FilterStatus;
-                    var statPart = string.IsNullOrWhiteSpace(stat) ? "All" : stat;
-
-                    // 4) Construire le titre final
-                    // Format: "Account: {acc} | Status: {status}" et si filtre nommé: " - {filterName}"
-                    var baseTitle = $"Account: {accPart} | Status: {statPart}";
-                    var finalTitle = hasNamedFilter ? baseTitle + $" - {_currentView}" : baseTitle;
-
-                    TitleText.Text = finalTitle;
+                    TitleText.Text = hasNamedFilter ? _currentView : "Default View";
                 }
+                
+                // Update the account type display (line 3)
+                UpdateCountryPivotReceivableInfo();
             }
             catch (Exception ex)
             {

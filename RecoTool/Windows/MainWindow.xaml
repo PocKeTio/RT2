@@ -7,7 +7,7 @@
         xmlns:local="clr-namespace:RecoTool.Windows"
         xmlns:lvc="clr-namespace:LiveCharts.Wpf;assembly=LiveCharts.Wpf"
         mc:Ignorable="d"
-        Title="RecoTool" Height="900" Width="1600" WindowStartupLocation="CenterScreen" WindowStyle="None" 
+        Title="RecoTool" Height="900" Width="1800" WindowStartupLocation="CenterScreen" WindowStyle="None" 
         AllowsTransparency="True" ResizeMode="CanResizeWithGrip" Background="Transparent">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>

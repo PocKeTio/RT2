@@ -43,6 +43,8 @@ namespace RecoTool.Windows
 
         private readonly ReconciliationService _reconciliationService;
         private readonly OfflineFirstService _offlineFirstService;
+        private TodoListSessionTracker _todoSessionTracker; // Multi-user session tracking
+        private int _currentTodoId = 0; // Currently active TodoList ID
         // MVVM bridge: lightweight ViewModel holder to gradually migrate bindings
         public ReconciliationViewViewModel VM { get; } = new ReconciliationViewViewModel();
         private string _currentCountryId;
@@ -53,6 +55,7 @@ namespace RecoTool.Windows
         private DispatcherTimer _filterDebounceTimer;
         private DispatcherTimer _highlightClearTimer;
         private DispatcherTimer _toastTimer;
+        private DispatcherTimer _multiUserWarningRefreshTimer; // Timer to refresh multi-user warning
         private Action _toastClickAction;
         private string _toastTargetReconciliationId;
         private bool _isSyncRefreshInProgress;
@@ -775,6 +778,18 @@ namespace RecoTool.Windows
             OnPropertyChanged(nameof(CurrentCountryObject));
 
             InitializeFromServices();
+        }
+
+        /// <summary>
+        /// Sets the TodoList session tracker and TodoList ID for multi-user awareness
+        /// </summary>
+        public void SetTodoSessionTracker(TodoListSessionTracker tracker, int todoId)
+        {
+            _todoSessionTracker = tracker;
+            _currentTodoId = todoId;
+
+            // Setup refresh timer for multi-user warning
+            SetupMultiUserWarningRefreshTimer();
 
             // Subscribe to rule application events to show floating toasts (edit/run-now)
             try
@@ -1627,6 +1642,147 @@ namespace RecoTool.Windows
         
 
         /* moved to partial: Events.cs */
+
+        #region Multi-User Session Checks
+
+        /// <summary>
+        /// Checks if another user is editing the current TodoList and warns before modification.
+        /// Automatically marks the current user as editing and tracks activity.
+        /// </summary>
+        /// <returns>True if safe to proceed, False if user cancelled</returns>
+        private async Task<bool> CheckMultiUserBeforeEditAsync()
+        {
+            try
+            {
+                if (_todoSessionTracker == null || _currentTodoId <= 0)
+                    return true; // No tracking active, proceed
+
+                var sessions = await _todoSessionTracker.GetActiveSessionsAsync(_currentTodoId);
+                if (sessions == null || !sessions.Any())
+                {
+                    // No other users, but still notify edit activity
+                    await _todoSessionTracker.NotifyEditActivityAsync(_currentTodoId);
+                    return true;
+                }
+
+                // Check if anyone is editing (excluding current user)
+                var currentUserId = Environment.UserName;
+                var otherEditingSessions = sessions.Where(s => 
+                    s.IsEditing && 
+                    !string.Equals(s.UserId, currentUserId, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (otherEditingSessions.Any())
+                {
+                    // Show warning dialog
+                    var result = await MultiUserHelper.ShowEditWarningAsync(otherEditingSessions);
+                    if (!result)
+                        return false; // User cancelled
+                }
+
+                // Notify edit activity (marks as editing and updates timestamp)
+                await _todoSessionTracker.NotifyEditActivityAsync(_currentTodoId);
+
+                return true;
+            }
+            catch
+            {
+                // Best effort, don't block on error
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Setup timer to refresh multi-user warning banner
+        /// </summary>
+        private void SetupMultiUserWarningRefreshTimer()
+        {
+            _multiUserWarningRefreshTimer?.Stop();
+            _multiUserWarningRefreshTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(10) // Refresh every 10 seconds
+            };
+            _multiUserWarningRefreshTimer.Tick += async (s, e) => await UpdateMultiUserWarningAsync();
+            _multiUserWarningRefreshTimer.Start();
+
+            // Initial update
+            _ = UpdateMultiUserWarningAsync();
+        }
+
+        /// <summary>
+        /// Updates the multi-user warning banner based on active sessions
+        /// </summary>
+        private async Task UpdateMultiUserWarningAsync()
+        {
+            try
+            {
+                if (_todoSessionTracker == null || _currentTodoId <= 0)
+                {
+                    // Hide warning if no tracking
+                    Dispatcher.Invoke(() =>
+                    {
+                        MultiUserWarningBanner.Visibility = Visibility.Collapsed;
+                    });
+                    return;
+                }
+
+                var sessions = await _todoSessionTracker.GetActiveSessionsAsync(_currentTodoId);
+                var currentUserId = Environment.UserName;
+
+                // Filter out current user
+                var otherSessions = sessions?.Where(s => 
+                    !string.Equals(s.UserId, currentUserId, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (otherSessions == null || !otherSessions.Any())
+                {
+                    // No other users, hide warning
+                    Dispatcher.Invoke(() =>
+                    {
+                        MultiUserWarningBanner.Visibility = Visibility.Collapsed;
+                    });
+                    return;
+                }
+
+                // Check if anyone is editing
+                var editingSessions = otherSessions.Where(s => s.IsEditing).ToList();
+                var viewingSessions = otherSessions.Where(s => !s.IsEditing).ToList();
+
+                Dispatcher.Invoke(() =>
+                {
+                    if (editingSessions.Any())
+                    {
+                        // Red warning for editing
+                        MultiUserWarningBanner.Tag = "Editing";
+                        var userNames = string.Join(", ", editingSessions.Select(s => s.UserName));
+                        MultiUserWarningText.Text = editingSessions.Count == 1
+                            ? $"{userNames} is currently editing this TodoList"
+                            : $"{userNames} are currently editing this TodoList";
+                        MultiUserWarningBanner.Visibility = Visibility.Visible;
+                    }
+                    else if (viewingSessions.Any())
+                    {
+                        // Yellow warning for viewing
+                        MultiUserWarningBanner.Tag = "Viewing";
+                        var userNames = string.Join(", ", viewingSessions.Select(s => s.UserName));
+                        MultiUserWarningText.Text = viewingSessions.Count == 1
+                            ? $"{userNames} is viewing this TodoList"
+                            : $"{userNames} are viewing this TodoList";
+                        MultiUserWarningBanner.Visibility = Visibility.Visible;
+                    }
+                    else
+                    {
+                        MultiUserWarningBanner.Visibility = Visibility.Collapsed;
+                    }
+                });
+            }
+            catch
+            {
+                // Best effort, don't crash on error
+            }
+        }
+
+        #endregion
     }
 }
 #endregion

@@ -1,0 +1,50 @@
+<UserControl x:Class="RecoTool.Windows.TodoListSessionWarning"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d" 
+             d:DesignHeight="60" d:DesignWidth="400">
+
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+    </UserControl.Resources>
+
+    <Border x:Name="WarningBorder" Background="#FFF3CD" BorderBrush="#FFC107" BorderThickness="1" CornerRadius="4" Padding="12,8">
+        <StackPanel>
+            <!-- Warning Header -->
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" FontSize="16" 
+                           Foreground="#FF8C00" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Multi-User Warning" FontWeight="Bold" Foreground="#856404" VerticalAlignment="Center"/>
+            </StackPanel>
+            
+            <!-- Active Users List -->
+            <ItemsControl x:Name="SessionsList" ItemsSource="{Binding ActiveSessions}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal" Margin="24,2,0,2">
+                            <!-- User Icon -->
+                            <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="12" 
+                                       Foreground="#856404" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            
+                            <!-- User Info -->
+                            <TextBlock VerticalAlignment="Center">
+                                <Run Text="{Binding UserName, Mode=OneWay}" FontWeight="SemiBold"/>
+                                <Run Text="is" Foreground="#856404"/>
+                                <Run Text="{Binding StatusText, Mode=OneWay}" FontWeight="SemiBold" 
+                                     Foreground="{Binding StatusColor, Mode=OneWay}"/>
+                                <Run Text="this item" Foreground="#856404"/>
+                                <Run Text="{Binding DurationText, Mode=OneWay}" FontSize="10" Foreground="#999"/>
+                            </TextBlock>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            
+            <!-- Action Hint -->
+            <TextBlock x:Name="EditingWarning" Text="⚠️ Proceed with caution to avoid conflicts" 
+                       FontSize="10" Foreground="#856404" Margin="24,4,0,0" FontStyle="Italic"/>
+        </StackPanel>
+    </Border>
+</UserControl>

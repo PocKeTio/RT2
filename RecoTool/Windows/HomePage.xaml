@@ -11,6 +11,8 @@
     <UserControl.Resources>
         <local:AlertTypeToBorderColorConverter x:Key="AlertTypeToBorderColorConverter"/>
         <local:AlertTypeToIconConverter x:Key="AlertTypeToIconConverter"/>
+        <local:InverseBooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter"/>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
     </UserControl.Resources>
     <ScrollViewer x:Name="MainScrollViewer" VerticalScrollBarVisibility="Auto" Background="{DynamicResource BNPBackground}">
         <StackPanel Margin="16,16,16,16">
@@ -48,8 +50,17 @@
                 </WrapPanel>
             </Grid>
 
-            <!-- ToDo Lists -->
-            <TextBlock Text="TODO LISTS" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" Foreground="{DynamicResource BNPMainGreenBrush}"/>
+            <!-- DWINGS Data Warning -->
+            <Border Background="#FFF3CD" BorderBrush="#FF9800" BorderThickness="2" CornerRadius="8" Padding="16" Margin="0,0,0,20"
+                    Visibility="{Binding IsDwingsDataFromToday, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                <StackPanel>
+                    <TextBlock Text="⚠️ WARNING!" FontSize="18" FontWeight="Bold" Foreground="#D32F2F" Margin="0,0,0,8"/>
+                    <TextBlock Text="{Binding DwingsWarningMessage}" FontSize="14" Foreground="#333" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <!-- KPI Cards -->
+            <TextBlock Text="KPI CARDS" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" Foreground="{DynamicResource BNPMainGreenBrush}"/>
             <ItemsControl ItemsSource="{Binding TodoCards}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
@@ -73,9 +84,14 @@
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="0" Text="&#xE73A;" FontFamily="Segoe MDL2 Assets" Foreground="White" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                             <TextBlock Grid.Column="1" Text="{Binding Item.TDL_Name}" Foreground="White" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                            <!-- Multi-user indicator -->
+                                            <Border Grid.Column="2" Background="LightYellow" CornerRadius="4" Padding="6,2" Margin="8,0,0,0" Visibility="{Binding HasActiveUsers, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                <TextBlock Text="{Binding ActiveUsersText}" Foreground="Black" FontSize="11" FontWeight="SemiBold"/>
+                                            </Border>
                                         </Grid>
                                     </Border>
 

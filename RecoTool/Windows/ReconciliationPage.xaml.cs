@@ -14,6 +14,7 @@ using RecoTool.Services;
 using System.Windows.Threading;
 using System.Windows.Controls.Primitives;
 using System.Threading;
+using RecoTool.Helpers;
 
 namespace RecoTool.Windows
 {
@@ -54,6 +55,9 @@ namespace RecoTool.Windows
         private CancellationTokenSource _pageCts; // Cancellation for page-level long operations
         private int _syncInFlightFlag; // 0 = idle, 1 = syncing
         private InvoiceFinderWindow _invoiceFinderWindow; // modeless invoice finder
+        private TodoListSessionTracker _todoSessionTracker; // Multi-user session tracking
+        private HashSet<int> _warnedTodoIds = new HashSet<int>(); // Track which TodoLists we've warned about
+        private Dictionary<ReconciliationView, int> _viewTodoIds = new Dictionary<ReconciliationView, int>(); // Map views to their TodoList IDs
 
         /// <summary>
         /// Effectue une réconciliation après une publication d'import (fin de verrou global):
@@ -389,6 +393,10 @@ namespace RecoTool.Windows
             // Synchroniser avec la country courante du service
             _currentCountryId = _offlineFirstService?.CurrentCountry?.CNT_Id;
             LoadAvailableCountries();
+            
+            // Initialize TodoList session tracker
+            InitializeTodoSessionTracker();
+            
             // Le chargement initial est confirmé dans l'événement Loaded pour garantir que le pays a été initialisé
         }
 
@@ -1235,23 +1243,42 @@ namespace RecoTool.Windows
         /// Enables ToDo mode, applies the provided ToDo, and opens a reconciliation view accordingly.
         /// Used when navigating from HomePage Todo cards.
         /// </summary>
+        /// <summary>
+        /// Opens a view for a TodoList item. This is the centralized entry point for TodoList-based views.
+        /// Handles multi-user warnings and session tracking.
+        /// </summary>
         public async Task OpenViewForTodoAsync(TodoListItem todo)
         {
             try
             {
+                if (todo == null) return;
+
+                // Check multi-user conflicts BEFORE opening
+                var canProceed = await CheckAndWarnMultiUserBeforeOpeningTodoAsync(todo.TDL_id);
+                if (!canProceed)
+                    return; // User cancelled
+
+                // Switch to TodoList mode
                 IsTodoMode = true;
                 SelectedStatus = "Live";
+                
+                // Load TodoList if not already loaded
                 if (TodoItems == null || TodoItems.Count == 0)
                 {
                     await LoadTodoListAsync().ConfigureAwait(false);
                 }
-                if (todo != null)
-                {
-                    SelectedTodoItem = todo;
-                    await ApplyTodoToNextViewAsync(todo).ConfigureAwait(false);
-                }
+                
+                // Select the TodoList item
+                SelectedTodoItem = todo;
+                
+                // Apply the TodoList filter to prepare for the next view
+                await ApplyTodoToNextViewAsync(todo).ConfigureAwait(false);
+                
+                // Now use the common AddView flow (which handles session registration)
                 await AwaitSafeToOpenViewAsync().ConfigureAwait(false);
-                await AddReconciliationView(false).ConfigureAwait(false);
+                
+                // Trigger AddView_Click logic programmatically
+                await AddViewForCurrentSelectionAsync(asPopup: false);
             }
             catch { }
         }
@@ -1319,6 +1346,8 @@ namespace RecoTool.Windows
         private async void ReconciliationPage_Unloaded(object sender, RoutedEventArgs e)
         {
             try { StopLockPolling(); } catch { }
+            // Cleanup TodoList session tracker
+            CleanupTodoSessionTracker();
             // Do not sync on page unload: navigation to Reconciliation replaces the page and fires Unloaded,
             // which was causing an unintended synchronization on click. We keep sync only on explicit events
             // (country change and app/window close handled elsewhere).
@@ -1804,24 +1833,47 @@ namespace RecoTool.Windows
                     }
                 }
                 catch { }
-                // Hard guard: if sync or page load in progress, block and inform user
-                try
-                {
-                    var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
-                    if (IsLoading || (!string.IsNullOrWhiteSpace(countryId) && _offlineFirstService != null && _offlineFirstService.IsSynchronizationInProgress(countryId)))
-                    {
-                        ShowWarning("Synchronization in progress. Please wait until it finishes before adding a view.");
-                        return;
-                    }
-                }
-                catch { }
-                await AwaitSafeToOpenViewAsync();
-                await AddReconciliationView(popup);
+                
+                await AddViewForCurrentSelectionAsync(popup);
             }
             catch (Exception ex)
             {
                 ShowError($"Error adding view: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Common method to add a view for the current selection (TodoList or Filter).
+        /// Handles session registration and validation.
+        /// </summary>
+        private async Task AddViewForCurrentSelectionAsync(bool asPopup)
+        {
+            // Hard guard: if sync or page load in progress, block and inform user
+            try
+            {
+                var countryId = _offlineFirstService?.CurrentCountryId ?? _offlineFirstService?.CurrentCountry?.CNT_Id;
+                if (IsLoading || (!string.IsNullOrWhiteSpace(countryId) && _offlineFirstService != null && _offlineFirstService.IsSynchronizationInProgress(countryId)))
+                {
+                    ShowWarning("Synchronization in progress. Please wait until it finishes before adding a view.");
+                    return;
+                }
+            }
+            catch { }
+            
+            // Register session if in TodoList mode (only if not already registered)
+            if (IsTodoMode && SelectedTodoItem != null)
+            {
+                var todoId = SelectedTodoItem.TDL_id;
+                // Check if we already have a view with this TodoId
+                var alreadyRegistered = _viewTodoIds.Values.Contains(todoId);
+                if (!alreadyRegistered)
+                {
+                    await RegisterTodoSessionAsync(todoId);
+                }
+            }
+            
+            await AwaitSafeToOpenViewAsync();
+            await AddReconciliationView(asPopup);
         }
 
         private async Task AddReconciliationView(bool asPopup = false)
@@ -1841,6 +1893,17 @@ namespace RecoTool.Windows
             {
                 Margin = new Thickness(0)
             };
+            
+            // Get the TodoId for this specific view from SelectedTodoItem
+            int viewTodoId = SelectedTodoItem?.TDL_id ?? 0;
+            
+            // Pass TodoList session tracker to the view for multi-user awareness
+            if (_todoSessionTracker != null && viewTodoId > 0)
+            {
+                view.SetTodoSessionTracker(_todoSessionTracker, viewTodoId);
+                _viewTodoIds[view] = viewTodoId;
+            }
+            
             // Ne pas créer de conteneur si on ouvre en popup (évite l'erreur de parent visuel)
 
             if (asPopup)
@@ -1855,7 +1918,27 @@ namespace RecoTool.Windows
                     WindowStartupLocation = WindowStartupLocation.CenterOwner
                 };
                 // Fermer la fenêtre quand la vue demande la fermeture
-                view.CloseRequested += (s, e) => { try { wnd.Close(); } catch { } };
+                view.CloseRequested += async (s, e) => 
+                { 
+                    try 
+                    { 
+                        // Unregister the TodoList session only if this is the last view for this TodoId
+                        if (_viewTodoIds.TryGetValue(view, out int todoId))
+                        {
+                            _viewTodoIds.Remove(view);
+                            
+                            // Check if there are other views with the same TodoId
+                            var otherViewsWithSameTodo = _viewTodoIds.Values.Count(id => id == todoId);
+                            if (otherViewsWithSameTodo == 0 && _todoSessionTracker != null && todoId > 0)
+                            {
+                                // This was the last view for this TodoId, unregister the session
+                                await _todoSessionTracker.UnregisterViewingAsync(todoId);
+                            }
+                        }
+                        wnd.Close(); 
+                    } 
+                    catch { } 
+                };
                 await ConfigureAndPreloadView(view);
                 wnd.Show();
                 return;
@@ -1875,10 +1958,24 @@ namespace RecoTool.Windows
             panel.Children.Add(container);
 
             // Abonner la fermeture pour retirer la vue intégrée
-            view.CloseRequested += (s, e) =>
+            view.CloseRequested += async (s, e) =>
             {
                 try
                 {
+                    // Unregister the TodoList session only if this is the last view for this TodoId
+                    if (_viewTodoIds.TryGetValue(view, out int todoId))
+                    {
+                        _viewTodoIds.Remove(view);
+                        
+                        // Check if there are other views with the same TodoId
+                        var otherViewsWithSameTodo = _viewTodoIds.Values.Count(id => id == todoId);
+                        if (otherViewsWithSameTodo == 0 && _todoSessionTracker != null && todoId > 0)
+                        {
+                            // This was the last view for this TodoId, unregister the session
+                            await _todoSessionTracker.UnregisterViewingAsync(todoId);
+                        }
+                    }
+
                     var p = FindName("ViewsPanel") as StackPanel;
                     if (p != null && p.Children.Contains(container))
                     {
@@ -2202,6 +2299,166 @@ namespace RecoTool.Windows
             }
             catch { }
         }
+
+        #endregion
+
+        #region TodoList Multi-User Session Tracking
+
+        /// <summary>
+        /// Initializes the TodoList session tracker for multi-user awareness
+        /// </summary>
+        private void InitializeTodoSessionTracker()
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine($"[InitializeTodoSessionTracker] START");
+                
+                // Dispose existing tracker if any
+                _todoSessionTracker?.Dispose();
+                _todoSessionTracker = null;
+
+                // Get current country
+                var country = _offlineFirstService?.CurrentCountry;
+                if (country == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[InitializeTodoSessionTracker] No country");
+                    return;
+                }
+                System.Diagnostics.Debug.WriteLine($"[InitializeTodoSessionTracker] Country: {country.CNT_Id}");
+
+                // Get Lock DB connection string for this country
+                var lockDbConnString = _offlineFirstService?.GetControlConnectionString(country.CNT_Id);
+                if (string.IsNullOrEmpty(lockDbConnString))
+                {
+                    System.Diagnostics.Debug.WriteLine($"[InitializeTodoSessionTracker] No lock DB connection string");
+                    return;
+                }
+                System.Diagnostics.Debug.WriteLine($"[InitializeTodoSessionTracker] LockDB: {lockDbConnString}");
+                
+                // Get current user ID
+                var currentUserId = Environment.UserName;
+                System.Diagnostics.Debug.WriteLine($"[InitializeTodoSessionTracker] User: {currentUserId}");
+
+                // Create tracker
+                _todoSessionTracker = new TodoListSessionTracker(lockDbConnString, currentUserId);
+                System.Diagnostics.Debug.WriteLine($"[InitializeTodoSessionTracker] Tracker created");
+
+                // Ensure table exists
+                _ = _todoSessionTracker.EnsureTableAsync();
+                System.Diagnostics.Debug.WriteLine($"[InitializeTodoSessionTracker] SUCCESS");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[InitializeTodoSessionTracker] ERROR: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Centralized method to check multi-user conflicts before opening a TodoList.
+        /// Shows a warning if other users are editing and asks for confirmation.
+        /// Returns true if safe to proceed, false if user cancelled.
+        /// </summary>
+        private async Task<bool> CheckAndWarnMultiUserBeforeOpeningTodoAsync(int todoId)
+        {
+            try
+            {
+                if (_todoSessionTracker == null || todoId <= 0)
+                    return true;
+
+                // Check if we already warned about this TodoList in this session
+                if (_warnedTodoIds.Contains(todoId))
+                    return true; // Already warned, proceed
+
+                var sessions = await _todoSessionTracker.GetActiveSessionsAsync(todoId);
+                if (sessions == null || !sessions.Any())
+                    return true; // No other users
+
+                var currentUserId = Environment.UserName;
+                var otherEditingSessions = sessions.Where(s => 
+                    s.IsEditing && 
+                    !string.Equals(s.UserId, currentUserId, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (otherEditingSessions.Any())
+                {
+                    // Show warning dialog
+                    var result = await MultiUserHelper.ShowEditWarningAsync(otherEditingSessions);
+                    if (!result)
+                        return false; // User cancelled
+
+                    // Mark as warned
+                    _warnedTodoIds.Add(todoId);
+                }
+
+                return true;
+            }
+            catch
+            {
+                // Best effort, don't block on error
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Registers a viewing session for a TodoList
+        /// </summary>
+        private async Task RegisterTodoSessionAsync(int todoId)
+        {
+            try
+            {
+                if (_todoSessionTracker == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[RegisterTodoSession] Tracker is NULL");
+                    return;
+                }
+                
+                if (todoId <= 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[RegisterTodoSession] Invalid TodoId: {todoId}");
+                    return;
+                }
+
+                var userName = _offlineFirstService?.CurrentUser ?? Environment.UserName;
+                System.Diagnostics.Debug.WriteLine($"[RegisterTodoSession] Registering TodoId={todoId}, User={userName}");
+                var success = await _todoSessionTracker.RegisterViewingAsync(todoId, userName, isEditing: false);
+                System.Diagnostics.Debug.WriteLine($"[RegisterTodoSession] Result: {success}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[RegisterTodoSession] ERROR: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Cleanup method to be called when ReconciliationPage is unloaded
+        /// </summary>
+        private async void CleanupTodoSessionTracker()
+        {
+            try
+            {
+                // Unregister all TodoLists from all views
+                if (_todoSessionTracker != null)
+                {
+                    foreach (var todoId in _viewTodoIds.Values.Distinct())
+                    {
+                        if (todoId > 0)
+                        {
+                            await _todoSessionTracker.UnregisterViewingAsync(todoId);
+                        }
+                    }
+                    _viewTodoIds.Clear();
+                }
+
+                _todoSessionTracker?.Dispose();
+                _todoSessionTracker = null;
+            }
+            catch
+            {
+                // Best effort cleanup
+            }
+        }
+
+        #endregion
     }
 
     #region Helper Classes
@@ -2235,7 +2492,5 @@ namespace RecoTool.Windows
             Content = grid;
         }
     }
-
-    #endregion
 }
 #endregion

@@ -19,6 +19,7 @@ using System.Text.Json;
 using System.Text;
 using System.Globalization;
 using RecoTool.Services.DTOs;
+using RecoTool.Helpers;
 
 namespace RecoTool.Windows
 {
@@ -33,11 +34,16 @@ namespace RecoTool.Windows
         private ReconciliationService _reconciliationService;
         private OfflineFirstService _offlineFirstService;
         private KpiSnapshotService _kpiSnapshotService;
+        private TodoListSessionTracker _todoSessionTracker; // Used only for multi-user checks, not for session tracking
         private bool _isLoading;
         private bool _canRefresh = true;
         private List<ReconciliationViewData> _reconciliationViewData;
         private Brush _defaultBackground;
-        
+        private System.Windows.Threading.DispatcherTimer _dwingsCheckTimer;
+        private System.Windows.Threading.DispatcherTimer _todoSessionRefreshTimer;
+        private bool _isDwingsDataFromToday = true;
+        private string _dwingsWarningMessage;
+
         // Champs pour les propriÃ©tÃ©s de binding
         private List<Country> _availableCountries;
         private int _missingInvoicesCount;
@@ -52,7 +58,7 @@ namespace RecoTool.Windows
         private SeriesCollection _kpiRiskSeries;
         private string _statusMessage;
         private string _lastUpdateTime;
-        
+
         // Champs pour les propriÃ©tÃ©s de graphiques manquantes
         private ChartValues<double> _receivableChartData;
         private ChartValues<double> _pivotChartData;
@@ -62,13 +68,13 @@ namespace RecoTool.Windows
         private List<string> _receivablePivotByActionLabels;
         private SeriesCollection _deletionDelaySeries;
         private List<string> _deletionDelayLabels;
-        private SeriesCollection _newDeletedDailySeries;
         private List<string> _newDeletedDailyLabels;
+        private LiveCharts.SeriesCollection _newDeletedDailySeries;
         // New: Receivable vs Pivot by Currency
         private SeriesCollection _receivablePivotByCurrencySeries;
         private List<string> _receivablePivotByCurrencyLabels;
         // ToDo cards (name + Live count and share of total Live)
-        public sealed class TodoCard
+        public sealed class TodoCard : INotifyPropertyChanged
         {
             public TodoListItem Item { get; set; }
             public int Count { get; set; }           // To Review (Action Pending)
@@ -77,10 +83,43 @@ namespace RecoTool.Windows
             public double Percent { get; set; }
             public string AccountLabel { get; set; }
             public string AmountsText { get; set; }
-            
+
             // Total displayed = To Review + Reviewed (items with action only)
             // Note: ActualTotal may be higher if there are items without action
             public int TotalCount => Count + ReviewedCount;
+
+            // Multi-user properties
+            private int _activeUsersCount;
+            public int ActiveUsersCount
+            {
+                get => _activeUsersCount;
+                set { _activeUsersCount = value; OnPropertyChanged(nameof(ActiveUsersCount)); OnPropertyChanged(nameof(HasActiveUsers)); OnPropertyChanged(nameof(ActiveUsersText)); }
+            }
+
+            private bool _isBeingEdited;
+            public bool IsBeingEdited
+            {
+                get => _isBeingEdited;
+                set { _isBeingEdited = value; OnPropertyChanged(nameof(IsBeingEdited)); OnPropertyChanged(nameof(ActiveUsersText)); }
+            }
+
+            public bool HasActiveUsers => _activeUsersCount > 0;
+
+            public string ActiveUsersText
+            {
+                get
+                {
+                    if (_activeUsersCount == 0) return "";
+                    if (_isBeingEdited) return $"🔴 {_activeUsersCount} editing";
+                    return $"👁️ {_activeUsersCount}";
+                }
+            }
+
+            public event PropertyChangedEventHandler PropertyChanged;
+            private void OnPropertyChanged(string propertyName)
+            {
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            }
         }
 
         /// <summary>
@@ -227,6 +266,7 @@ namespace RecoTool.Windows
             {
                 if (sender is Button btn && btn.DataContext is TodoCard card && card?.Item != null)
                 {
+                    // Navigate to ReconciliationPage - it will handle multi-user checks and session registration
                     var win = Window.GetWindow(this) as MainWindow;
                     if (win == null) return;
                     await win.OpenReconciliationWithTodoAsync(card.Item);
@@ -509,6 +549,15 @@ namespace RecoTool.Windows
                 _kpiSnapshotService = new KpiSnapshotService(_offlineFirstService, _reconciliationService);
             DataContext = this;
             _defaultBackground = MainScrollViewer?.Background;
+
+            // Setup DWINGS data check timer
+            SetupDwingsCheckTimer();
+
+            // Initialize TodoList session tracker
+            InitializeTodoSessionTracker();
+
+            // Setup TodoCard session refresh timer
+            SetupTodoSessionRefreshTimer();
         }
 
         /// <summary>
@@ -523,6 +572,10 @@ namespace RecoTool.Windows
             if (_offlineFirstService != null && _reconciliationService != null)
                 _kpiSnapshotService = new KpiSnapshotService(_offlineFirstService, _reconciliationService);
             DataContext = this;
+
+            // Reinitialize TodoList session tracker for new country
+            CleanupTodoSessionTracker();
+            InitializeTodoSessionTracker();
         }
 
         /// <summary>
@@ -543,7 +596,9 @@ namespace RecoTool.Windows
             _kpiRiskSeries = new SeriesCollection();
             _statusMessage = "Ready";
             _lastUpdateTime = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
-            
+            _isDwingsDataFromToday = true;
+            _dwingsWarningMessage = string.Empty;
+
             // Initialiser les nouvelles propriÃ©tÃ©s de graphiques
             _receivableChartData = new ChartValues<double>();
             _pivotChartData = new ChartValues<double>();
@@ -841,7 +896,7 @@ namespace RecoTool.Windows
                 ShowError($"Error opening help: {ex.Message}");
             }
         }
-        
+
 
         public List<string> ActionLabels
         {
@@ -1001,7 +1056,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Charge les donnÃ©es live et met Ã  jour KPIs, graphes et infos pays.
+        /// Charge les données live et met à jour KPIs, graphes et infos pays.
         /// </summary>
         private async Task LoadLiveDashboardAsync()
         {
@@ -1011,8 +1066,10 @@ namespace RecoTool.Windows
             UpdateCountryInfo();
             await LoadTodoCardsAsync();
             UpdateAnalytics();
+            
+            // Immediately refresh TodoCard multi-user indicators after loading
+            await RefreshTodoCardSessionsAsync();
         }
-
 
         private async void ExportDailyKpi_Click(object sender, RoutedEventArgs e)
         {
@@ -1604,7 +1661,7 @@ namespace RecoTool.Windows
             if (currentCountry == null) return;
 
             var totalLines = _reconciliationViewData.Count;
-            
+
             // SÃ©parer les comptes Receivable et Pivot selon la configuration de la country
             var receivableData = _reconciliationViewData.Where(r => r.Account_ID == currentCountry.CNT_AmbreReceivable).ToList();
             var pivotData = _reconciliationViewData.Where(r => r.Account_ID == currentCountry.CNT_AmbrePivot).ToList();
@@ -1737,13 +1794,14 @@ namespace RecoTool.Windows
                 var receivableData = _reconciliationViewData
                     .Where(r => r.Account_ID == _offlineFirstService?.CurrentCountry?.CNT_AmbreReceivable)
                     .ToList();
-                
+
                 // KPI breakdown: use ABSOLUTE values to show volume (not net balance)
                 var kpiData = receivableData
                     .Where(r => r.KPI.HasValue)
                     .GroupBy(r => r.KPI.Value)
-                    .Select(g => new { 
-                        KPI = g.Key, 
+                    .Select(g => new
+                    {
+                        KPI = g.Key,
                         Count = g.Count(),
                         // Abs() = volume total des transactions, pas le solde net
                         TotalAmount = g.Sum(x => Math.Abs(x.SignedAmount))
@@ -1791,8 +1849,9 @@ namespace RecoTool.Windows
                 var currencyData = _reconciliationViewData
                     .Where(r => !string.IsNullOrEmpty(r.CCY) && r.SignedAmount != 0)
                     .GroupBy(r => r.CCY)
-                    .Select(g => new { 
-                        Currency = g.Key, 
+                    .Select(g => new
+                    {
+                        Currency = g.Key,
                         Amount = Math.Abs(g.Sum(x => x.SignedAmount)), // Abs du SOLDE NET
                         Count = g.Count()
                     })
@@ -1843,8 +1902,9 @@ namespace RecoTool.Windows
                 var actionData = _reconciliationViewData
                     .Where(r => r.Action.HasValue)
                     .GroupBy(r => r.Action.Value)
-                    .Select(g => new { 
-                        Action = g.Key, 
+                    .Select(g => new
+                    {
+                        Action = g.Key,
                         Count = g.Count(),
                         TotalAmount = g.Sum(x => Math.Abs(x.SignedAmount))
                     })
@@ -2064,7 +2124,7 @@ namespace RecoTool.Windows
 
                 var receivableData = _reconciliationViewData.Where(r => r.Account_ID == currentCountry.CNT_AmbreReceivable).ToList();
                 var pivotData = _reconciliationViewData.Where(r => r.Account_ID == currentCountry.CNT_AmbrePivot).ToList();
-                var otherData = _reconciliationViewData.Where(r => r.Account_ID != currentCountry.CNT_AmbreReceivable && 
+                var otherData = _reconciliationViewData.Where(r => r.Account_ID != currentCountry.CNT_AmbreReceivable &&
                                                               r.Account_ID != currentCountry.CNT_AmbrePivot).ToList();
 
                 // Log pour diagnostic
@@ -2166,7 +2226,7 @@ namespace RecoTool.Windows
             }
         }
 
-        
+
 
         /// <summary>
         /// Affiche un message d'erreur
@@ -2199,7 +2259,7 @@ namespace RecoTool.Windows
                 // Utiliser le DI container pour obtenir ImportAmbreWindow avec toutes ses dÃ©pendances
                 var importWindow = App.ServiceProvider.GetRequiredService<ImportAmbreWindow>();
                 importWindow.ShowDialog();
-                
+
                 // Actualiser les donnÃ©es aprÃ¨s import
                 _ = RefreshAsync();
             }
@@ -2226,7 +2286,206 @@ namespace RecoTool.Windows
         }
 
         #endregion
+
+        #region DWINGS Data Check
+
+        public bool IsDwingsDataFromToday
+        {
+            get => _isDwingsDataFromToday;
+            set
+            {
+                if (_isDwingsDataFromToday != value)
+                {
+                    _isDwingsDataFromToday = value;
+                    OnPropertyChanged(nameof(IsDwingsDataFromToday));
+                }
+            }
+        }
+
+        public string DwingsWarningMessage
+        {
+            get => _dwingsWarningMessage;
+            set
+            {
+                if (_dwingsWarningMessage != value)
+                {
+                    _dwingsWarningMessage = value;
+                    OnPropertyChanged(nameof(DwingsWarningMessage));
+                }
+            }
+        }
+
+        private void SetupDwingsCheckTimer()
+        {
+            // Check immediately
+            CheckDwingsDataStatus();
+
+            // Setup timer to check every minute
+            _dwingsCheckTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMinutes(1)
+            };
+            _dwingsCheckTimer.Tick += (s, e) => CheckDwingsDataStatus();
+            _dwingsCheckTimer.Start();
+        }
+
+        /// <summary>
+        /// Public method to force DWINGS data check (called from MainWindow on country change)
+        /// </summary>
+        public void ForceCheckDwingsDataStatus()
+        {
+            CheckDwingsDataStatus();
+        }
+
+        private void CheckDwingsDataStatus()
+        {
+            try
+            {
+                var countryId = _offlineFirstService?.CurrentCountryId;
+                if (string.IsNullOrWhiteSpace(countryId))
+                {
+                    IsDwingsDataFromToday = true;
+                    DwingsWarningMessage = string.Empty;
+                    return;
+                }
+
+                bool isToday = _offlineFirstService?.IsNetworkDwDatabaseFromToday(countryId) == true;
+                IsDwingsDataFromToday = isToday;
+
+                if (!isToday)
+                {
+                    var lastUpdate = _offlineFirstService?.GetNetworkDwDatabaseLastWriteDate(countryId);
+                    var lastUpdateStr = lastUpdate.HasValue ? lastUpdate.Value.ToString("yyyy-MM-dd HH:mm") : "unknown";
+                    DwingsWarningMessage = $"⚠️ WARNING! The DWINGS data of today is not yet available.\nLast update: {lastUpdateStr}\nChecking every minute...";
+                }
+                else
+                {
+                    DwingsWarningMessage = string.Empty;
+                    // Stop timer if data is now available
+                    if (_dwingsCheckTimer != null && _dwingsCheckTimer.IsEnabled)
+                    {
+                        _dwingsCheckTimer.Stop();
+                    }
+                }
+            }
+            catch
+            {
+                IsDwingsDataFromToday = true;
+                DwingsWarningMessage = string.Empty;
+            }
+        }
+
+        #endregion
+
+        #region TodoCard Multi-User Indicators
+
+        /// <summary>
+        /// Setup timer to refresh TodoCard multi-user indicators
+        /// </summary>
+        private void SetupTodoSessionRefreshTimer()
+        {
+            _todoSessionRefreshTimer?.Stop();
+            _todoSessionRefreshTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(10) // Refresh every 10 seconds (aligned with session check)
+            };
+            _todoSessionRefreshTimer.Tick += async (s, e) => await RefreshTodoCardSessionsAsync();
+            _todoSessionRefreshTimer.Start();
+        }
+
+        /// <summary>
+        /// Refresh multi-user indicators on all TodoCards
+        /// </summary>
+        private async Task RefreshTodoCardSessionsAsync()
+        {
+            if (_todoSessionTracker == null || TodoCards == null) return;
+
+            try
+            {
+                foreach (var card in TodoCards)
+                {
+                    if (card?.Item == null || card.Item.TDL_id <= 0) continue;
+
+                    var sessions = await _todoSessionTracker.GetActiveSessionsAsync(card.Item.TDL_id);
+                    if (sessions != null && sessions.Any())
+                    {
+                        card.ActiveUsersCount = sessions.Count;
+                        card.IsBeingEdited = sessions.Any(s => s.IsEditing);
+                    }
+                    else
+                    {
+                        card.ActiveUsersCount = 0;
+                        card.IsBeingEdited = false;
+                    }
+                }
+            }
+            catch
+            {
+                // Best effort, don't break UI
+            }
+        }
+
+        #endregion
+
+        #region TodoList Multi-User Session Tracking
+
+        /// <summary>
+        /// Initializes the TodoList session tracker for multi-user awareness
+        /// </summary>
+        private void InitializeTodoSessionTracker()
+        {
+            try
+            {
+                // Dispose existing tracker if any
+                _todoSessionTracker?.Dispose();
+                _todoSessionTracker = null;
+
+                // Get current country
+                var country = _offlineFirstService?.CurrentCountry;
+                if (country == null) return;
+
+                // Get Lock DB connection string for this country (already a full connection string)
+                var lockDbConnString = _offlineFirstService?.GetControlConnectionString(country.CNT_Id);
+                if (string.IsNullOrEmpty(lockDbConnString)) return;
+
+                // Get current user ID (Windows username)
+                var currentUserId = Environment.UserName;
+
+                // Create tracker
+                _todoSessionTracker = new TodoListSessionTracker(lockDbConnString, currentUserId);
+
+                // Ensure table exists
+                _ = _todoSessionTracker.EnsureTableAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to initialize TodoList session tracker: {ex.Message}");
+                // Non-critical, continue without multi-user features
+            }
+        }
+
+        /// <summary>
+        /// Gets the current TodoList session tracker (may be null if not initialized)
+        /// </summary>
+        public TodoListSessionTracker GetTodoSessionTracker()
+        {
+            return _todoSessionTracker;
+        }
+
+        /// <summary>
+        /// Cleanup method to be called when HomePage is unloaded or country changes
+        /// </summary>
+        private void CleanupTodoSessionTracker()
+        {
+            try
+            {
+                // HomePage no longer tracks sessions - ReconciliationPage handles all session management
+                // We only keep the tracker for multi-user conflict checks before navigation
+                _todoSessionTracker?.Dispose();
+                _todoSessionTracker = null;
+            }
+            catch { /* best effort */ }
+        }
     }
+    #endregion
 }
-
-

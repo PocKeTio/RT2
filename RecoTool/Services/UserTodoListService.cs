@@ -109,26 +109,17 @@ TDL_CountryId TEXT(20)
             await Ensure("TDL_ViewName", "TEXT(100)");
             await Ensure("TDL_Account", "TEXT(50)");
             await Ensure("TDL_Order", "INTEGER");
-            await Ensure("TDL_Active", "YESNO");
-            await Ensure("TDL_CountryId", "TEXT(20)");
+            await Ensure("TDL_CountryId", "TEXT(20)"); // Kept for backward compatibility but not used in filters
         }
 
         public async Task<List<TodoListItem>> ListAsync(string countryId)
         {
-            var list = new List<TodoListItem>();
+            var list = new List<TodoListItem>();    
             using (var conn = new OleDbConnection(_connString))
             {
                 await conn.OpenAsync().ConfigureAwait(false);
-                OleDbCommand cmd;
-                if (string.IsNullOrWhiteSpace(countryId))
-                {
-                    cmd = new OleDbCommand($"SELECT TDL_id, TDL_Name, TDL_FilterName, TDL_ViewName, TDL_Account, TDL_Order, TDL_Active, TDL_CountryId FROM T_Ref_TodoList WHERE (TDL_Active <> 0 OR TDL_Active IS NULL) ORDER BY TDL_Order, TDL_Name", conn);
-                }
-                else
-                {
-                    cmd = new OleDbCommand($"SELECT TDL_id, TDL_Name, TDL_FilterName, TDL_ViewName, TDL_Account, TDL_Order, TDL_Active, TDL_CountryId FROM T_Ref_TodoList WHERE (TDL_Active <> 0 OR TDL_Active IS NULL) AND (TDL_CountryId IS NULL OR TDL_CountryId = ?) ORDER BY TDL_Order, TDL_Name", conn);
-                    cmd.Parameters.AddWithValue("@p1", countryId);
-                }
+                // No filter on TDL_CountryId: all todos are shared across countries
+                var cmd = new OleDbCommand($"SELECT TDL_id, TDL_Name, TDL_FilterName, TDL_ViewName, TDL_Account, TDL_Order, TDL_Active, TDL_CountryId FROM T_Ref_TodoList WHERE (TDL_Active <> 0 OR TDL_Active IS NULL) ORDER BY TDL_Order, TDL_Name", conn);
                 using (var rdr = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
                 {
                     while (await rdr.ReadAsync().ConfigureAwait(false))
@@ -157,25 +148,13 @@ TDL_CountryId TEXT(20)
             {
                 await conn.OpenAsync().ConfigureAwait(false);
 
+                // Check by name only (no country filter)
                 int? existingId = null;
-                if (string.IsNullOrWhiteSpace(item.TDL_CountryId))
+                using (var check = new OleDbCommand("SELECT TOP 1 TDL_id FROM T_Ref_TodoList WHERE TDL_Name = ?", conn))
                 {
-                    using (var check = new OleDbCommand("SELECT TOP 1 TDL_id FROM T_Ref_TodoList WHERE TDL_Name = ? AND TDL_CountryId IS NULL", conn))
-                    {
-                        check.Parameters.AddWithValue("@p1", item.TDL_Name);
-                        var obj = await check.ExecuteScalarAsync().ConfigureAwait(false);
-                        if (obj != null && obj != DBNull.Value) existingId = Convert.ToInt32(obj);
-                    }
-                }
-                else
-                {
-                    using (var check = new OleDbCommand("SELECT TOP 1 TDL_id FROM T_Ref_TodoList WHERE TDL_Name = ? AND TDL_CountryId = ?", conn))
-                    {
-                        check.Parameters.AddWithValue("@p1", item.TDL_Name);
-                        check.Parameters.AddWithValue("@p2", item.TDL_CountryId);
-                        var obj = await check.ExecuteScalarAsync().ConfigureAwait(false);
-                        if (obj != null && obj != DBNull.Value) existingId = Convert.ToInt32(obj);
-                    }
+                    check.Parameters.AddWithValue("@p1", item.TDL_Name);
+                    var obj = await check.ExecuteScalarAsync().ConfigureAwait(false);
+                    if (obj != null && obj != DBNull.Value) existingId = Convert.ToInt32(obj);
                 }
 
                 if (existingId.HasValue)

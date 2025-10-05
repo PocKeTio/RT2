@@ -806,6 +806,16 @@ namespace RecoTool.Windows
                         NetworkStatusBrush = online ? Brushes.MediumSeaGreen : Brushes.OrangeRed;
                     }
                     catch { }
+
+                    // Force DWINGS data check immediately after country change
+                    try
+                    {
+                        if (MainContent?.Content is HomePage homePage)
+                        {
+                            homePage.ForceCheckDwingsDataStatus();
+                        }
+                    }
+                    catch { }
                     // If policy allows, perform a one-shot push right after country change (without enabling background pushes)
                     try
                     {

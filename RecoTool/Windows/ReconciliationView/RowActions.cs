@@ -145,6 +145,10 @@ namespace RecoTool.Windows
         {
             try
             {
+                // Check multi-user before editing
+                if (!await CheckMultiUserBeforeEditAsync())
+                    return;
+
                 var mi = sender as MenuItem;
                 if (mi == null) return;
 
@@ -353,6 +357,10 @@ namespace RecoTool.Windows
         {
             try
             {
+                // Check multi-user before editing
+                if (!await CheckMultiUserBeforeEditAsync())
+                    return;
+
                 var dg = this.FindName("ResultsDataGrid") as DataGrid;
                 if (dg == null || _reconciliationService == null) return;
 
@@ -430,6 +438,10 @@ namespace RecoTool.Windows
         {
             try
             {
+                // Check multi-user before editing
+                if (!await CheckMultiUserBeforeEditAsync())
+                    return;
+
                 var dg = this.FindName("ResultsDataGrid") as DataGrid;
                 if (dg == null || _reconciliationService == null) return;
                 var rowCtx = (sender as FrameworkElement)?.DataContext as ReconciliationViewData;
@@ -468,6 +480,10 @@ namespace RecoTool.Windows
         {
             try
             {
+                // Check multi-user before editing
+                if (!await CheckMultiUserBeforeEditAsync())
+                    return;
+
                 var dg = this.FindName("ResultsDataGrid") as DataGrid;
                 if (dg == null) return;
                 var rowCtx = (sender as FrameworkElement)?.DataContext as ReconciliationViewData;
@@ -503,6 +519,10 @@ namespace RecoTool.Windows
         {
             try
             {
+                // Check multi-user before editing
+                if (!await CheckMultiUserBeforeEditAsync())
+                    return;
+
                 var dg = this.FindName("ResultsDataGrid") as DataGrid;
                 if (dg == null) return;
                 var rowCtx = (sender as FrameworkElement)?.DataContext as ReconciliationViewData;

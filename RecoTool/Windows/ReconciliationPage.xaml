@@ -192,32 +192,10 @@
                 </StackPanel>
             </Border>
             <!-- Views Container - Horizontal stacking of multiple views -->
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel x:Name="ViewsPanel" Orientation="Vertical" Visibility="Collapsed" HorizontalAlignment="Stretch" />
             </ScrollViewer>
 
-            <!-- Floating Add Button - Visible when at least one view is open -->
-            <Button x:Name="FloatingAddButton" Style="{StaticResource StandardButtonStyle}" Width="50" Height="50" 
-                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,20,20" 
-                    Click="AddView_Click" Visibility="Collapsed" Padding="0" ToolTip="Add another view" IsEnabled="{Binding CanInteract}">
-                <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="20" />
-            </Button>
-
-            <!-- Empty State - Shown when no views are open -->
-            <Border x:Name="EmptyStatePanel" Margin="30" Background="{DynamicResource BNPSectionBackground}" CornerRadius="8" BorderBrush="{DynamicResource BNPBorderBrush}" BorderThickness="1" Effect="{StaticResource LightShadow}">
-                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                    <Ellipse Width="100" Height="100" Fill="{DynamicResource BNPLightGreenBrush}" Opacity="0.2" Margin="0,0,0,10"/>
-                    <TextBlock Text="&#xE8A5;" FontFamily="Segoe MDL2 Assets" FontSize="48" Foreground="{DynamicResource BNPMainGreenBrush}" HorizontalAlignment="Center" Margin="0,-85,0,40"/>
-                    <TextBlock Text="No reconciliation views open" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource BNPMainGreenBrush}" Margin="0,0,0,10"/>
-                    <TextBlock Text="Click the button below to start reconciling accounts" FontSize="14" Foreground="#666666" HorizontalAlignment="Center" TextWrapping="Wrap" MaxWidth="400" TextAlignment="Center"/>
-                    <Button Style="{StaticResource StandardButtonStyle}" Margin="0,30,0,0" Width="180" Height="42" Click="AddView_Click">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                            <TextBlock Text="Add Reconciliation View" FontSize="14" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
-            </Border>
         </Grid>
     </Grid>
 </UserControl>

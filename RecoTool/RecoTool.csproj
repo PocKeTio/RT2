@@ -79,6 +79,7 @@
     <Compile Include="App.xaml.cs">
       <DependentUpon>App.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Helpers\MultiUserHelper.cs" />
     <Compile Include="Models\TodoListItem.cs" />
     <Compile Include="Services\Ambre\AmbreConfigurationLoader.cs" />
     <Compile Include="Services\Ambre\AmbreDatabaseSynchronizer.cs" />
@@ -120,6 +121,7 @@
     <Compile Include="Services\ReferentialService.cs" />
     <Compile Include="Services\Queries\ReconciliationViewQueryBuilder.cs" />
     <Compile Include="Services\ThemeManager.cs" />
+    <Compile Include="Services\TodoListSessionTracker.cs" />
     <Compile Include="Services\UserTodoListService.cs" />
     <Compile Include="Services\UserViewPreferenceService.cs" />
     <Compile Include="Services\OptionsService.cs" />
@@ -234,6 +236,9 @@
     <Compile Include="Windows\RulesAdminWindow.xaml.cs">
       <DependentUpon>RulesAdminWindow.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Windows\TodoListSessionWarning.xaml.cs">
+      <DependentUpon>TodoListSessionWarning.xaml</DependentUpon>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <Page Include="App.xaml">
@@ -297,6 +302,10 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Include="Windows\RulesAdminWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Windows\TodoListSessionWarning.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

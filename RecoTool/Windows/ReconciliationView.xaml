@@ -53,16 +53,59 @@
         <local:IsPositiveConverter x:Key="IsPositiveConverter"/>
         <local:IsNegativeConverter x:Key="IsNegativeConverter"/>
         <local:PluralConverter x:Key="PluralConverter"/>
+        <local:ReconciliationStatusColorConverter x:Key="ReconciliationStatusColorConverter"/>
+        <local:ReconciliationStatusTooltipConverter x:Key="ReconciliationStatusTooltipConverter"/>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
     </UserControl.Resources>
     <Grid Background="{DynamicResource BNPBackground}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
+        <!-- Multi-User Warning Banner (Discrete) -->
+        <Border x:Name="MultiUserWarningBanner" Grid.Row="0" Visibility="Collapsed" Padding="8,4" Margin="0">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Background" Value="#FFF9E6"/> <!-- Yellow for viewing -->
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding ElementName=MultiUserWarningBanner, Path=Tag}" Value="Editing">
+                            <Setter Property="Background" Value="#FFE6E6"/> <!-- Red for editing -->
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#CC8800"/> <!-- Dark yellow -->
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ElementName=MultiUserWarningBanner, Path=Tag}" Value="Editing">
+                                    <Setter Property="Foreground" Value="#CC0000"/> <!-- Dark red -->
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <TextBlock x:Name="MultiUserWarningText" FontSize="11" VerticalAlignment="Center">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#CC8800"/> <!-- Dark yellow -->
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ElementName=MultiUserWarningBanner, Path=Tag}" Value="Editing">
+                                    <Setter Property="Foreground" Value="#CC0000"/> <!-- Dark red -->
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </StackPanel>
+        </Border>
+
         <!-- Compact Modern Header with Integrated KPIs -->
-        <Border x:Name="HeaderBorder" Grid.Row="0" Background="White" Padding="12,8" Effect="{StaticResource StandardShadow}" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1">
+        <Border x:Name="HeaderBorder" Grid.Row="1" Background="White" Padding="12,8" Effect="{StaticResource StandardShadow}" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -232,7 +275,7 @@
         </Border>
 
         <!-- Main Content with Filters and Data -->
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="2">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" x:Name="FiltersRow"/>
                 <RowDefinition Height="Auto"/>
@@ -664,15 +707,39 @@
                 </Border>
             </Expander>
 
-            <!-- KPI Summary Bar - Now integrated in header above -->
-
             <!-- Data Grid Section -->
-            <Border Grid.Row="2" Margin="15" Background="White" BorderBrush="#DDDDDD" BorderThickness="1" CornerRadius="8">
+            <Border Grid.Row="2" Margin="5" Background="White" BorderBrush="#DDDDDD" BorderThickness="1" CornerRadius="8">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
+
+                    <!-- Loading Overlay -->
+                    <Border Grid.RowSpan="2" Background="#80FFFFFF" 
+                Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}"
+                Panel.ZIndex="1000">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <TextBlock Text="⏳" FontSize="48" HorizontalAlignment="Center" Margin="0,0,0,16">
+                                <TextBlock.RenderTransform>
+                                    <RotateTransform x:Name="LoadingRotation" CenterX="24" CenterY="24"/>
+                                </TextBlock.RenderTransform>
+                                <TextBlock.Triggers>
+                                    <EventTrigger RoutedEvent="Loaded">
+                                        <BeginStoryboard>
+                                            <Storyboard RepeatBehavior="Forever">
+                                                <DoubleAnimation Storyboard.TargetName="LoadingRotation"
+                                                   Storyboard.TargetProperty="Angle"
+                                                   From="0" To="360" Duration="0:0:2"/>
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </EventTrigger>
+                                </TextBlock.Triggers>
+                            </TextBlock>
+                            <TextBlock Text="Loading data..." FontSize="16" FontWeight="SemiBold" 
+                          Foreground="{DynamicResource BNPMainGreenBrush}" HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
 
                     <!-- Results Grid -->
                     <DataGrid x:Name="ResultsDataGrid" Grid.Row="0"
@@ -815,22 +882,50 @@
                             </Style>
                         </DataGrid.RowStyle>
                         <DataGrid.Columns>
-                            <!-- New/Updated indicators placed first -->
+                            <!-- New/Updated indicators with color coding based on reconciliation status -->
                             <DataGridTemplateColumn Header="" Width="30" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource ReviewedTodayHighlight}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="N" Foreground="Red" FontWeight="Bold" HorizontalAlignment="Center"
-                                                   ToolTip="New line imported (not present previously)"
-                                                   Visibility="{Binding IsNewlyAdded, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                                        <TextBlock Text="N" FontWeight="Bold" HorizontalAlignment="Center"
+                                                   Visibility="{Binding IsNewlyAdded, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <TextBlock.Foreground>
+                                                <MultiBinding Converter="{StaticResource ReconciliationStatusColorConverter}">
+                                                    <Binding Path="DWINGS_InvoiceID"/>
+                                                    <Binding Path="InternalInvoiceReference"/>
+                                                    <Binding Path="IsMatchedAcrossAccounts"/>
+                                                </MultiBinding>
+                                            </TextBlock.Foreground>
+                                            <TextBlock.ToolTip>
+                                                <MultiBinding Converter="{StaticResource ReconciliationStatusTooltipConverter}">
+                                                    <Binding Path="DWINGS_InvoiceID"/>
+                                                    <Binding Path="InternalInvoiceReference"/>
+                                                    <Binding Path="IsMatchedAcrossAccounts"/>
+                                                </MultiBinding>
+                                            </TextBlock.ToolTip>
+                                        </TextBlock>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <DataGridTemplateColumn Header="" Width="36" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource ReviewedTodayHighlight}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="U" Foreground="#1976D2" FontWeight="Bold" HorizontalAlignment="Center"
-                                                   ToolTip="Updated since last import"
-                                                   Visibility="{Binding IsUpdated, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                                        <TextBlock Text="U" FontWeight="Bold" HorizontalAlignment="Center"
+                                                   Visibility="{Binding IsUpdated, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <TextBlock.Foreground>
+                                                <MultiBinding Converter="{StaticResource ReconciliationStatusColorConverter}">
+                                                    <Binding Path="DWINGS_InvoiceID"/>
+                                                    <Binding Path="InternalInvoiceReference"/>
+                                                    <Binding Path="IsMatchedAcrossAccounts"/>
+                                                </MultiBinding>
+                                            </TextBlock.Foreground>
+                                            <TextBlock.ToolTip>
+                                                <MultiBinding Converter="{StaticResource ReconciliationStatusTooltipConverter}">
+                                                    <Binding Path="DWINGS_InvoiceID"/>
+                                                    <Binding Path="InternalInvoiceReference"/>
+                                                    <Binding Path="IsMatchedAcrossAccounts"/>
+                                                </MultiBinding>
+                                            </TextBlock.ToolTip>
+                                        </TextBlock>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -1426,32 +1521,6 @@
                 <TextBlock Text="✨" FontSize="16" Foreground="#4CAF50" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <TextBlock x:Name="ToastText" Text="" Foreground="White" FontWeight="SemiBold" TextWrapping="Wrap" MaxWidth="400"/>
                 <TextBlock Text="→" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4CAF50" VerticalAlignment="Center" Margin="8,0,0,0"/>
-            </StackPanel>
-        </Border>
-        
-        <!-- Loading Overlay -->
-        <Border Grid.RowSpan="2" Background="#80FFFFFF" 
-                Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}"
-                Panel.ZIndex="1000">
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Text="⏳" FontSize="48" HorizontalAlignment="Center" Margin="0,0,0,16">
-                    <TextBlock.RenderTransform>
-                        <RotateTransform x:Name="LoadingRotation" CenterX="24" CenterY="24"/>
-                    </TextBlock.RenderTransform>
-                    <TextBlock.Triggers>
-                        <EventTrigger RoutedEvent="Loaded">
-                            <BeginStoryboard>
-                                <Storyboard RepeatBehavior="Forever">
-                                    <DoubleAnimation Storyboard.TargetName="LoadingRotation"
-                                                   Storyboard.TargetProperty="Angle"
-                                                   From="0" To="360" Duration="0:0:2"/>
-                                </Storyboard>
-                            </BeginStoryboard>
-                        </EventTrigger>
-                    </TextBlock.Triggers>
-                </TextBlock>
-                <TextBlock Text="Loading data..." FontSize="16" FontWeight="SemiBold" 
-                          Foreground="{DynamicResource BNPMainGreenBrush}" HorizontalAlignment="Center"/>
             </StackPanel>
         </Border>
     </Grid>

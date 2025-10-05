@@ -149,10 +149,10 @@ namespace RecoTool.Services.Helpers
                 var receivableTotal = receivableLines.Sum(r => r.SignedAmount);
                 var pivotTotal = pivotLines.Sum(r => r.SignedAmount);
                 
-                // Missing amount = Receivable - Pivot
-                // Positive = waiting for more payments
-                // Negative = overpayment
-                var missing = receivableTotal - pivotTotal;
+                // Missing amount = Receivable + Pivot (should sum to 0 when balanced)
+                // Receivable is typically negative, Pivot is positive
+                // When balanced: Receivable + Pivot = 0
+                var missing = receivableTotal + pivotTotal;
                 
                 // Enrich Receivable lines with counterpart info
                 foreach (var r in receivableLines)
@@ -167,7 +167,7 @@ namespace RecoTool.Services.Helpers
                 {
                     p.CounterpartTotalAmount = receivableTotal;
                     p.CounterpartCount = receivableLines.Count;
-                    p.MissingAmount = -missing; // Inverted for Pivot perspective
+                    p.MissingAmount = missing; // Same value for both sides
                 }
             }
         }
@@ -217,7 +217,7 @@ namespace RecoTool.Services.Helpers
                 {
                     var receivableTotal = receivableLines.Sum(r => r.SignedAmount);
                     var pivotTotal = pivotLines.Sum(r => r.SignedAmount);
-                    var missing = receivableTotal - pivotTotal;
+                    var missing = receivableTotal + pivotTotal; // Addition: should be 0 when balanced
                     
                     // Enrich Receivable lines
                     foreach (var r in receivableLines)
@@ -232,7 +232,7 @@ namespace RecoTool.Services.Helpers
                     {
                         p.CounterpartTotalAmount = receivableTotal;
                         p.CounterpartCount = receivableLines.Count;
-                        p.MissingAmount = -missing;
+                        p.MissingAmount = missing; // Same value for both sides (not inverted)
                     }
                 }
             }

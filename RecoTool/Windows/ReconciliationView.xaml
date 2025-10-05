@@ -55,6 +55,7 @@
         <local:PluralConverter x:Key="PluralConverter"/>
         <local:ReconciliationStatusColorConverter x:Key="ReconciliationStatusColorConverter"/>
         <local:ReconciliationStatusTooltipConverter x:Key="ReconciliationStatusTooltipConverter"/>
+        <local:ReconciliationStatusTextColorConverter x:Key="ReconciliationStatusTextColorConverter"/>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
     </UserControl.Resources>
     <Grid Background="{DynamicResource BNPBackground}">
@@ -720,9 +721,9 @@
                 Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}"
                 Panel.ZIndex="1000">
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <TextBlock Text="⏳" FontSize="48" HorizontalAlignment="Center" Margin="0,0,0,16">
+                            <TextBlock Text="⏳" FontSize="48" HorizontalAlignment="Center" Margin="0,0,0,16" RenderTransformOrigin="0.5,0.5">
                                 <TextBlock.RenderTransform>
-                                    <RotateTransform x:Name="LoadingRotation" CenterX="24" CenterY="24"/>
+                                    <RotateTransform x:Name="LoadingRotation"/>
                                 </TextBlock.RenderTransform>
                                 <TextBlock.Triggers>
                                     <EventTrigger RoutedEvent="Loaded">
@@ -883,13 +884,32 @@
                         </DataGrid.RowStyle>
                         <DataGrid.Columns>
                             <!-- New/Updated indicators with color coding based on reconciliation status -->
-                            <DataGridTemplateColumn Header="" Width="30" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource ReviewedTodayHighlight}">
+                            <DataGridTemplateColumn Header="" Width="30" IsReadOnly="True" CanUserResize="False" CanUserReorder="False">
+                                <DataGridTemplateColumn.CellStyle>
+                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                        <Setter Property="Background">
+                                            <Setter.Value>
+                                                <MultiBinding Converter="{StaticResource ReconciliationStatusColorConverter}">
+                                                    <Binding Path="DWINGS_InvoiceID"/>
+                                                    <Binding Path="InternalInvoiceReference"/>
+                                                    <Binding Path="IsMatchedAcrossAccounts"/>
+                                                </MultiBinding>
+                                            </Setter.Value>
+                                        </Setter>
+                                        <Style.Triggers>
+                                            <!-- Override background when cell is selected -->
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGridTemplateColumn.CellStyle>
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="N" FontWeight="Bold" HorizontalAlignment="Center"
                                                    Visibility="{Binding IsNewlyAdded, Converter={StaticResource BoolToVisibilityConverter}}">
                                             <TextBlock.Foreground>
-                                                <MultiBinding Converter="{StaticResource ReconciliationStatusColorConverter}">
+                                                <MultiBinding Converter="{StaticResource ReconciliationStatusTextColorConverter}">
                                                     <Binding Path="DWINGS_InvoiceID"/>
                                                     <Binding Path="InternalInvoiceReference"/>
                                                     <Binding Path="IsMatchedAcrossAccounts"/>
@@ -906,13 +926,32 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="" Width="36" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource ReviewedTodayHighlight}">
+                            <DataGridTemplateColumn Header="" Width="36" IsReadOnly="True" CanUserResize="False" CanUserReorder="False">
+                                <DataGridTemplateColumn.CellStyle>
+                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                        <Setter Property="Background">
+                                            <Setter.Value>
+                                                <MultiBinding Converter="{StaticResource ReconciliationStatusColorConverter}">
+                                                    <Binding Path="DWINGS_InvoiceID"/>
+                                                    <Binding Path="InternalInvoiceReference"/>
+                                                    <Binding Path="IsMatchedAcrossAccounts"/>
+                                                </MultiBinding>
+                                            </Setter.Value>
+                                        </Setter>
+                                        <Style.Triggers>
+                                            <!-- Override background when cell is selected -->
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGridTemplateColumn.CellStyle>
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="U" FontWeight="Bold" HorizontalAlignment="Center"
                                                    Visibility="{Binding IsUpdated, Converter={StaticResource BoolToVisibilityConverter}}">
                                             <TextBlock.Foreground>
-                                                <MultiBinding Converter="{StaticResource ReconciliationStatusColorConverter}">
+                                                <MultiBinding Converter="{StaticResource ReconciliationStatusTextColorConverter}">
                                                     <Binding Path="DWINGS_InvoiceID"/>
                                                     <Binding Path="InternalInvoiceReference"/>
                                                     <Binding Path="IsMatchedAcrossAccounts"/>

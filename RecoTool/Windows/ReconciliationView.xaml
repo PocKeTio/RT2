@@ -55,7 +55,7 @@
         <local:PluralConverter x:Key="PluralConverter"/>
         <local:ReconciliationStatusColorConverter x:Key="ReconciliationStatusColorConverter"/>
         <local:ReconciliationStatusTooltipConverter x:Key="ReconciliationStatusTooltipConverter"/>
-        <local:ReconciliationStatusTextColorConverter x:Key="ReconciliationStatusTextColorConverter"/>
+        <local:IsNotNullOrEmptyConverter x:Key="IsNotNullOrEmptyConverter"/>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
     </UserControl.Resources>
     <Grid Background="{DynamicResource BNPBackground}">
@@ -798,6 +798,32 @@
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
+                            <!-- Cell Style for Reconciliation Status Indicator (N/U columns) -->
+                            <Style x:Key="ReconciliationStatusCellStyle" TargetType="DataGridCell" BasedOn="{StaticResource ReviewedTodayHighlight}">
+                                <Style.Triggers>
+                                    <!-- Reconciled: Green background -->
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding DWINGS_InvoiceID, Converter={StaticResource IsNotNullOrEmptyConverter}}" Value="True"/>
+                                            <Condition Binding="{Binding InternalInvoiceReference, Converter={StaticResource IsNotNullOrEmptyConverter}}" Value="True"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Background" Value="#C8E6C9"/>
+                                    </MultiDataTrigger>
+                                    <!-- Matched Across Accounts: Blue background -->
+                                    <DataTrigger Binding="{Binding IsMatchedAcrossAccounts}" Value="True">
+                                        <Setter Property="Background" Value="#BBDEFB"/>
+                                    </DataTrigger>
+                                    <!-- Not Reconciled: Orange background -->
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding DWINGS_InvoiceID, Converter={StaticResource IsNotNullOrEmptyConverter}}" Value="False"/>
+                                            <Condition Binding="{Binding InternalInvoiceReference, Converter={StaticResource IsNotNullOrEmptyConverter}}" Value="False"/>
+                                            <Condition Binding="{Binding IsMatchedAcrossAccounts}" Value="False"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Background" Value="#FFE0B2"/>
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
+                            </Style>
                         </DataGrid.Resources>
                         <DataGrid.ColumnHeaderStyle>
                             <Style TargetType="DataGridColumnHeader">
@@ -884,32 +910,13 @@
                         </DataGrid.RowStyle>
                         <DataGrid.Columns>
                             <!-- New/Updated indicators with color coding based on reconciliation status -->
-                            <DataGridTemplateColumn Header="" Width="30" IsReadOnly="True" CanUserResize="False" CanUserReorder="False">
-                                <DataGridTemplateColumn.CellStyle>
-                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
-                                        <Setter Property="Background">
-                                            <Setter.Value>
-                                                <MultiBinding Converter="{StaticResource ReconciliationStatusColorConverter}">
-                                                    <Binding Path="DWINGS_InvoiceID"/>
-                                                    <Binding Path="InternalInvoiceReference"/>
-                                                    <Binding Path="IsMatchedAcrossAccounts"/>
-                                                </MultiBinding>
-                                            </Setter.Value>
-                                        </Setter>
-                                        <Style.Triggers>
-                                            <!-- Override background when cell is selected -->
-                                            <Trigger Property="IsSelected" Value="True">
-                                                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </DataGridTemplateColumn.CellStyle>
+                            <DataGridTemplateColumn Header="" Width="30" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource ReconciliationStatusCellStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="N" FontWeight="Bold" HorizontalAlignment="Center"
                                                    Visibility="{Binding IsNewlyAdded, Converter={StaticResource BoolToVisibilityConverter}}">
                                             <TextBlock.Foreground>
-                                                <MultiBinding Converter="{StaticResource ReconciliationStatusTextColorConverter}">
+                                                <MultiBinding Converter="{StaticResource ReconciliationStatusColorConverter}">
                                                     <Binding Path="DWINGS_InvoiceID"/>
                                                     <Binding Path="InternalInvoiceReference"/>
                                                     <Binding Path="IsMatchedAcrossAccounts"/>
@@ -926,32 +933,13 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="" Width="36" IsReadOnly="True" CanUserResize="False" CanUserReorder="False">
-                                <DataGridTemplateColumn.CellStyle>
-                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
-                                        <Setter Property="Background">
-                                            <Setter.Value>
-                                                <MultiBinding Converter="{StaticResource ReconciliationStatusColorConverter}">
-                                                    <Binding Path="DWINGS_InvoiceID"/>
-                                                    <Binding Path="InternalInvoiceReference"/>
-                                                    <Binding Path="IsMatchedAcrossAccounts"/>
-                                                </MultiBinding>
-                                            </Setter.Value>
-                                        </Setter>
-                                        <Style.Triggers>
-                                            <!-- Override background when cell is selected -->
-                                            <Trigger Property="IsSelected" Value="True">
-                                                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </DataGridTemplateColumn.CellStyle>
+                            <DataGridTemplateColumn Header="" Width="36" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource ReconciliationStatusCellStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="U" FontWeight="Bold" HorizontalAlignment="Center"
                                                    Visibility="{Binding IsUpdated, Converter={StaticResource BoolToVisibilityConverter}}">
                                             <TextBlock.Foreground>
-                                                <MultiBinding Converter="{StaticResource ReconciliationStatusTextColorConverter}">
+                                                <MultiBinding Converter="{StaticResource ReconciliationStatusColorConverter}">
                                                     <Binding Path="DWINGS_InvoiceID"/>
                                                     <Binding Path="InternalInvoiceReference"/>
                                                     <Binding Path="IsMatchedAcrossAccounts"/>

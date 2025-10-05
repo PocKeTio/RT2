@@ -157,42 +157,13 @@ namespace RecoTool.Windows
                     return BrushCache.Red;
 
                 // YELLOW: Linked to DWINGS but not grouped (no counterpart)
+                if (!isMatched)
                     return BrushCache.Yellow;
 
                 // GREEN: Fully reconciled (linked and grouped)
                 return BrushCache.Green;
             }
-            public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
-        {
-            throw new NotImplementedException();
-        }
-    }
-
-    /// <summary>
-{{ ... }}
-        // values[2] = IsMatchedAcrossAccounts (bool)
-        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
-        {
-            try
-            {
-                if (values == null || values.Length < 3) return Brushes.Black;
-
-                var dwingsInvoiceId = values[0] as string;
-                var internalInvoiceRef = values[1] as string;
-                var isMatched = values[2] is bool matched && matched;
-
-                // RED: Not linked to DWINGS at all (dark red background)
-                if (string.IsNullOrWhiteSpace(dwingsInvoiceId) && string.IsNullOrWhiteSpace(internalInvoiceRef))
-                    return Brushes.White;
-
-                // YELLOW: Linked to DWINGS but not grouped (yellow background)
-                if (!isMatched)
-                    return Brushes.Black;
-
-                // GREEN: Fully reconciled (green background)
-                return Brushes.White;
-            }
-            catch { return Brushes.Black; }
+            catch { return BrushCache.Transparent; }
         }
 
         public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
@@ -243,50 +214,12 @@ namespace RecoTool.Windows
         }
     }
 
-    /// <summary>
-    /// Converter for N/U column text color based on background color for good contrast.
-    /// Returns white text for dark backgrounds, black text for light backgrounds.
-    /// </summary>
-    public class ReconciliationStatusTextColorConverter : IMultiValueConverter
-    {
-        // values[0] = DWINGS_InvoiceID (string)
-        // values[1] = InternalInvoiceReference (string)
-        // values[2] = IsMatchedAcrossAccounts (bool)
-        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
-        {
-            try
-            {
-                if (values == null || values.Length < 3) return Brushes.Black;
-
-                var dwingsInvoiceId = values[0] as string;
-                var internalInvoiceRef = values[1] as string;
-                var isMatched = values[2] is bool matched && matched;
-
-                // RED: Not linked to DWINGS at all (dark red background)
-                if (string.IsNullOrWhiteSpace(dwingsInvoiceId) && string.IsNullOrWhiteSpace(internalInvoiceRef))
-                    return Brushes.White;
-
-                // YELLOW: Linked to DWINGS but not grouped (yellow background)
-                if (!isMatched)
-                    return Brushes.Black;
-
-                // GREEN: Fully reconciled (green background)
-                return Brushes.White;
-            }
-            catch { return Brushes.Black; }
-        }
-
-        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
-        {
-            throw new NotImplementedException();
-        }
-    }
-
     #endregion
 
+    #region User Field Converters
+
     /// <summary>
-    /// Generates filtered UserField options for comboBoxes based on category and account side
-{{ ... }}
+    /// Generates filtered UserField options for ComboBoxes based on category and account side
     /// </summary>
     public class UserFieldOptionsConverter : IMultiValueConverter
     {
@@ -834,7 +767,7 @@ namespace RecoTool.Windows
         public static readonly IValueConverter TransactionTypeToFriendly = new TransactionTypeToFriendlyConverter();
         public static readonly IValueConverter ApplyToToFriendly = new ApplyToToFriendlyConverter();
         public static readonly IValueConverter NullableIdToSentinel = new NullableIdSentinelConverter { Sentinel = -1 };
+        public static readonly IValueConverter IsNotNullOrEmpty = new IsNotNullOrEmptyConverter();
     }
 
     #endregion
-}

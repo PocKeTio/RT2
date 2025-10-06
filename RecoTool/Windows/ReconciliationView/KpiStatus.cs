@@ -18,6 +18,7 @@ namespace RecoTool.Windows
                 // Calculate KPI counts
                 int toReview = list.Count(a => !a.IsReviewed);
                 int reviewed = list.Count(a => a.IsReviewed);
+                int toRemind = list.Count(a => a.HasActiveReminder); // Active reminders (ToRemind = true and ToRemindDate <= today)
                 int notLinkedCount = list.Count(a => a.StatusColor == "#F44336"); // Red - No DWINGS link
                 int notGroupedCount = list.Count(a => !a.IsMatchedAcrossAccounts); // NOT grouped (no "G" in grid)
                 int discrepancyCount = list.Count(a => a.StatusColor == "#FFC107" || a.StatusColor == "#FF6F00"); // Yellow or Dark Amber
@@ -32,12 +33,14 @@ namespace RecoTool.Windows
                 
                 // Update new KPI indicators
                 var reviewedText = this.FindName("KpiReviewedCountText") as System.Windows.Controls.TextBlock;
+                var toRemindText = this.FindName("KpiToRemindCountText") as System.Windows.Controls.TextBlock;
                 var notLinkedText = this.FindName("KpiNotLinkedCountText") as System.Windows.Controls.TextBlock;
                 var notGroupedText = this.FindName("KpiNotGroupedCountText") as System.Windows.Controls.TextBlock;
                 var discrepancyText = this.FindName("KpiDiscrepancyCountText") as System.Windows.Controls.TextBlock;
                 var matchedText = this.FindName("KpiMatchedCountText") as System.Windows.Controls.TextBlock;
                 
                 if (reviewedText != null) reviewedText.Text = reviewed.ToString();
+                if (toRemindText != null) toRemindText.Text = toRemind.ToString();
                 if (notLinkedText != null) notLinkedText.Text = notLinkedCount.ToString();
                 if (notGroupedText != null) notGroupedText.Text = notGroupedCount.ToString();
                 if (discrepancyText != null) discrepancyText.Text = discrepancyCount.ToString();

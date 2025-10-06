@@ -1711,13 +1711,13 @@ namespace RecoTool.Windows
                 ShowToast($"Error applying KPI filter: {ex.Message}");
             }
         }
-
         private void UpdateKpiFilterVisuals()
         {
             try
             {
                 // Reset all KPI borders to default
                 ResetKpiBorder("KpiToReviewBorder", "#FFEDD5", 1);
+                ResetKpiBorder("KpiToRemindBorder", "#FFCC80", 1);
                 ResetKpiBorder("KpiReviewedBorder", "#D1FAE5", 1);
                 ResetKpiBorder("KpiNotLinkedBorder", "#EF9A9A", 1);
                 ResetKpiBorder("KpiNotGroupedBorder", "#FFCC80", 1);
@@ -1730,6 +1730,7 @@ namespace RecoTool.Windows
                     var borderName = _activeStatusFilter switch
                     {
                         "ToReview" => "KpiToReviewBorder",
+                        "ToRemind" => "KpiToRemindBorder",
                         "Reviewed" => "KpiReviewedBorder",
                         "NotLinked" => "KpiNotLinkedBorder",
                         "NotGrouped" => "KpiNotGroupedBorder",
@@ -1791,6 +1792,7 @@ namespace RecoTool.Windows
             return _activeStatusFilter switch
             {
                 "ToReview" => !row.IsReviewed,
+                "ToRemind" => row.HasActiveReminder, // Active reminders (ToRemind = true and ToRemindDate <= today)
                 "Reviewed" => row.IsReviewed,
                 "NotLinked" => color == "#F44336", // Red - No DWINGS link
                 "NotGrouped" => !row.IsMatchedAcrossAccounts, // NOT grouped (no "G" in grid)

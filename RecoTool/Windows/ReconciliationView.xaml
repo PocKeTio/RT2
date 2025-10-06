@@ -194,6 +194,18 @@
                             </StackPanel>
                         </Border>
                         
+                        <!-- To Remind -->
+                        <Border x:Name="KpiToRemindBorder" Background="#FFF3E0" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#FFCC80" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="ToRemind"
+                                ToolTip="Active reminders (today or past due)">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE7E7;" FontFamily="Segoe MDL2 Assets" Foreground="#FF9800" FontSize="12" VerticalAlignment="Center" Margin="0,20,0,0" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
+                                <StackPanel>
+                                    <TextBlock Text="To Remind" FontSize="11" Foreground="#E65100" Margin="0,0,0,1"/>
+                                    <TextBlock x:Name="KpiToRemindCountText" Text="0" Margin="5,5,0,0" FontSize="13" FontWeight="Bold" Foreground="#E65100"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        
                         <!-- Reviewed -->
                         <Border x:Name="KpiReviewedBorder" Background="#ECFDF5" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#D1FAE5" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="Reviewed">
                             <StackPanel Orientation="Horizontal">
@@ -1467,6 +1479,9 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
+                            
+                            <!-- Incident Number: editable text field -->
+                            <DataGridTextColumn Header="Incident Number" Binding="{Binding IncNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140"/>
                             <DataGridCheckBoxColumn Header="Risky Item"
                                                     Width="100"
                                                     Binding="{Binding RiskyItem}"

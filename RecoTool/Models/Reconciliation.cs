@@ -33,6 +33,9 @@ namespace RecoTool.Models
         public bool? RiskyItem { get; set; }
         public int? ReasonNonRisky { get; set; }
         
+        // Incident Number
+        public string IncNumber { get; set; }
+        
         // Trigger date
         public DateTime? TriggerDate { get; set; }
 

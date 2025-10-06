@@ -314,6 +314,21 @@ namespace RecoTool.Services.DTOs
                 }
             }
         }
+        
+        private string _incNumber;
+        public string IncNumber
+        {
+            get => _incNumber;
+            set
+            {
+                if (_incNumber != value)
+                {
+                    _incNumber = value;
+                    OnPropertyChanged(nameof(IncNumber));
+                }
+            }
+        }
+        
         // ModifiedBy from T_Reconciliation (avoid collision with BaseEntity.ModifiedBy coming from Ambre)
         public string Reco_ModifiedBy { get; set; }
 
@@ -660,6 +675,11 @@ namespace RecoTool.Services.DTOs
         /// Indicates if this row is "Reviewed" (action status is Done)
         /// </summary>
         public bool IsReviewed => ActionStatus == true;
+        
+        /// <summary>
+        /// Indicates if this row has an active reminder (ToRemind = true and ToRemindDate <= today)
+        /// </summary>
+        public bool HasActiveReminder => ToRemind && ToRemindDate.HasValue && ToRemindDate.Value.Date <= DateTime.Today;
         
         /// <summary>
         /// Missing amount when Receivable is grouped with multiple Pivot lines

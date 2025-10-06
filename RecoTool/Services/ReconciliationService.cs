@@ -1450,6 +1450,7 @@ namespace RecoTool.Services
                     row.IncidentType = r.IncidentType;
                     row.RiskyItem = r.RiskyItem == true;
                     row.ReasonNonRisky = r.ReasonNonRisky;
+                    row.IncNumber = r.IncNumber;
                     row.MbawData = r.MbawData;
                     row.SpiritData = r.SpiritData;
                     row.TriggerDate = r.TriggerDate;
@@ -1479,7 +1480,7 @@ namespace RecoTool.Services
                                 [Action], [ActionStatus], [ActionDate], [Assignee], [Comments], [InternalInvoiceReference],
                                 [FirstClaimDate], [LastClaimDate], [ToRemind], [ToRemindDate],
                                 [ACK], [SwiftCode], [PaymentReference], [KPI],
-                                [IncidentType], [RiskyItem], [ReasonNonRisky],
+                                [IncidentType], [RiskyItem], [ReasonNonRisky], [IncNumber],
                                 [MbawData], [SpiritData], [TriggerDate]
                               FROM T_Reconciliation WHERE [ID] = ?", connection, transaction);
                     selectCmd.Parameters.AddWithValue("@ID", reconciliation.ID);
@@ -1525,9 +1526,10 @@ namespace RecoTool.Services
                             if (!Equal(DbVal(17), (object)reconciliation.IncidentType)) changed.Add("IncidentType");
                             if (!Equal(DbBool(DbVal(18)), (object)reconciliation.RiskyItem)) changed.Add("RiskyItem");
                             if (!Equal(DbVal(19), (object)reconciliation.ReasonNonRisky)) changed.Add("ReasonNonRisky");
-                            if (!Equal(DbVal(20), (object)reconciliation.MbawData)) changed.Add("MbawData");
-                            if (!Equal(DbVal(21), (object)reconciliation.SpiritData)) changed.Add("SpiritData");
-                            if (!Equal(DbVal(22), reconciliation.TriggerDate.HasValue ? (object)reconciliation.TriggerDate.Value : null)) changed.Add("TriggerDate");
+                            if (!Equal(DbVal(20), (object)reconciliation.IncNumber)) changed.Add("IncNumber");
+                            if (!Equal(DbVal(21), (object)reconciliation.MbawData)) changed.Add("MbawData");
+                            if (!Equal(DbVal(22), (object)reconciliation.SpiritData)) changed.Add("SpiritData");
+                            if (!Equal(DbVal(23), reconciliation.TriggerDate.HasValue ? (object)reconciliation.TriggerDate.Value : null)) changed.Add("TriggerDate");
                             // if (!Equal(DbVal(23), reconciliation.ReviewDate.HasValue ? (object)reconciliation.ReviewDate.Value : null)) changed.Add("ReviewDate"); // DEPRECATED
 
                             if (changed.Count == 0)
@@ -1670,6 +1672,9 @@ namespace RecoTool.Services
                                         p.Value = reconciliation.ReasonNonRisky.HasValue ? (object)reconciliation.ReasonNonRisky.Value : DBNull.Value;
                                         break;
                                     }
+                                case "IncNumber":
+                                    cmd.Parameters.AddWithValue("@IncNumber", reconciliation.IncNumber ?? (object)DBNull.Value);
+                                    break;
                                 case "TriggerDate":
                                     {
                                         var p = cmd.Parameters.Add("@TriggerDate", OleDbType.Date);

@@ -15,7 +15,7 @@ using RecoTool.Infrastructure.Logging;
 namespace RecoTool.Services.AmbreImport
 {
     /// <summary>
-    /// Gestionnaire de mise Ã  jour de la table T_Reconciliation
+    /// Gestionnaire de mise à  jour de la table T_Reconciliation
     /// </summary>
     public class AmbreReconciliationUpdater
     {
@@ -39,7 +39,7 @@ namespace RecoTool.Services.AmbreImport
         }
 
         /// <summary>
-        /// Met Ã  jour la table T_Reconciliation avec les changements d'import
+        /// Met à  jour la table T_Reconciliation avec les changements d'import
         /// </summary>
         public async Task UpdateReconciliationTableAsync(
             ImportChanges changes,
@@ -50,18 +50,18 @@ namespace RecoTool.Services.AmbreImport
 
             try
             {
-                // PrÃ©parer les enregistrements de rÃ©conciliation
+                // Préparer les enregistrements de réconciliation
                 var reconciliations = await PrepareReconciliationsAsync(
                     changes.ToAdd, country, countryId);
 
-                // Appliquer les changements Ã  la base de donnÃ©es
+                // Appliquer les changements à  la base de données
                 await ApplyReconciliationChangesAsync(
                     reconciliations,
                     changes.ToUpdate,
                     changes.ToArchive,
                     countryId);
 
-                // Remplir les rÃ©fÃ©rences DWINGS manquantes pour les enregistrements mis Ã  jour (sans Ã©craser les liens manuels)
+                // Remplir les références DWINGS manquantes pour les enregistrements mis à  jour (sans écraser les liens manuels)
                 try
                 {
                     await UpdateDwingsReferencesForUpdatesAsync(changes.ToUpdate, country, countryId);

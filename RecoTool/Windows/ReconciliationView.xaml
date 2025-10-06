@@ -1379,7 +1379,15 @@
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
 
-                            <DataGridCheckBoxColumn Header="To Remind" Binding="{Binding ToRemind}" Width="80" ElementStyle="{StaticResource CenteredCheckBoxStyle}"/>
+                            <DataGridTemplateColumn Header="To Remind" Width="80" SortMemberPath="ToRemind">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding ToRemind, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Checked="CheckBox_CheckedChanged" Unchecked="CheckBox_CheckedChanged"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
 
                             <!-- Remind Date with DatePicker -->
                             <DataGridTemplateColumn Header="Remind Date" Width="150" SortMemberPath="ToRemindDate">
@@ -1406,7 +1414,15 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridCheckBoxColumn Header="ACK" Binding="{Binding ACK}" Width="60" ElementStyle="{StaticResource CenteredCheckBoxStyle}"/>
+                            <DataGridTemplateColumn Header="ACK" Width="60" SortMemberPath="ACK">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding ACK, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Checked="CheckBox_CheckedChanged" Unchecked="CheckBox_CheckedChanged"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Swift Code" Binding="{Binding SwiftCode}" Width="100"/>
                             <DataGridTextColumn Header="Payment Reference" Binding="{Binding PaymentReference}" Width="130"/>
                             <DataGridTextColumn Header="User" Binding="{Binding Reco_ModifiedBy}" Width="120" IsReadOnly="True"/>
@@ -1482,11 +1498,15 @@
                             
                             <!-- Incident Number: editable text field -->
                             <DataGridTextColumn Header="Incident Number" Binding="{Binding IncNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140"/>
-                            <DataGridCheckBoxColumn Header="Risky Item"
-                                                    Width="100"
-                                                    Binding="{Binding RiskyItem}"
-                                                    IsThreeState="False"
-                                                    ElementStyle="{StaticResource CenteredCheckBoxStyle}"/>
+                            <DataGridTemplateColumn Header="Risky Item" Width="100" SortMemberPath="RiskyItem">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding RiskyItem, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Checked="CheckBox_CheckedChanged" Unchecked="CheckBox_CheckedChanged"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <!-- Reason Non Risky: editable ComboBox bound to referential filtered by RISKY category -->
                             <DataGridTemplateColumn Header="Reason Non Risky" Width="180" SortMemberPath="ReasonNonRisky">
                                 <DataGridTemplateColumn.CellTemplate>
@@ -1526,7 +1546,7 @@
                             <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
                             
                             <!-- DWINGS Guarantee extended fields -->
-                            <DataGridTextColumn Header="NatureOfDeal" Binding="{Binding G_NATURE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
+                            <DataGridTextColumn Header="NatureOfDeal" Binding="{Binding G_NATUREOFDEAL}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
                             <DataGridTextColumn Header="Event Status" Binding="{Binding G_EVENT_STATUS}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
                             <DataGridTextColumn Header="Issue Date" Binding="{Binding G_ISSUEDATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
                             <DataGridTextColumn Header="PartyID" Binding="{Binding G_PARTY_ID}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>

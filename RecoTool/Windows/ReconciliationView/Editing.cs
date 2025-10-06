@@ -18,6 +18,62 @@ namespace RecoTool.Windows
     {
         // Prevent double invocation of confirmation when multiple handlers fire
         private bool _ruleConfirmBusy;
+        
+        // Debounce checkbox saves to avoid multiple saves for the same row
+        private readonly Dictionary<string, System.Threading.CancellationTokenSource> _checkboxSavePending = new Dictionary<string, System.Threading.CancellationTokenSource>();
+        
+        /// <summary>
+        /// Handles CheckBox Checked/Unchecked events to save immediately
+        /// This is necessary because DataGridCheckBoxColumn doesn't trigger CellEditEnding reliably
+        /// </summary>
+        private async void CheckBox_CheckedChanged(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var checkBox = sender as CheckBox;
+                if (checkBox == null) return;
+                
+                // CRITICAL: Ignore programmatic changes during virtualization/scroll
+                // Only process user-initiated clicks
+                if (!checkBox.IsMouseOver && !checkBox.IsKeyboardFocusWithin)
+                {
+                    //System.Diagnostics.Debug.WriteLine("[CheckBox_CheckedChanged] IGNORED: Not user-initiated (virtualization/scroll)");
+                    return;
+                }
+                
+                var row = checkBox.DataContext as ReconciliationViewData;
+                if (row == null || string.IsNullOrEmpty(row.ID)) return;
+                
+                // Cancel any pending save for this row
+                if (_checkboxSavePending.TryGetValue(row.ID, out var existingCts))
+                {
+                    existingCts?.Cancel();
+                    _checkboxSavePending.Remove(row.ID);
+                }
+                
+                // Create a new cancellation token for this save
+                var cts = new System.Threading.CancellationTokenSource();
+                _checkboxSavePending[row.ID] = cts;
+                
+                // Wait a short delay to debounce rapid clicks
+                await Task.Delay(300, cts.Token);
+                
+                // Remove from pending dictionary
+                _checkboxSavePending.Remove(row.ID);
+                
+                // Save the row
+                await SaveEditedRowAsync(row);
+            }
+            catch (System.Threading.Tasks.TaskCanceledException)
+            {
+                // Debounced - another save is coming
+            }
+            catch (Exception ex)
+            {
+                
+            }
+        }
+        
         // Persist selection changes for Action/KPI/Incident and ActionStatus
         private async void UserFieldComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -82,6 +138,12 @@ namespace RecoTool.Windows
                 {
                     UserFieldUpdateService.ApplyIncidentType(row, reco, newId);
                 }
+                else if (string.Equals(tag, "ReasonNonRisky", StringComparison.OrdinalIgnoreCase) || string.Equals(tag, "Reason Non Risky", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Apply ReasonNonRisky directly (no rule application needed for this field)
+                    row.ReasonNonRisky = newId;
+                    reco.ReasonNonRisky = newId;
+                }
                 else
                 {
                     return;
@@ -135,6 +197,14 @@ namespace RecoTool.Windows
                 if (e.EditAction != DataGridEditAction.Commit) return;
                 var rowData = e.Row?.Item as ReconciliationViewData;
                 if (rowData == null) return;
+                
+                // CRITICAL: Ignore spurious CellEditEnding events during scroll/virtualization
+                // EditingElement is null when DataGrid virtualizes rows
+                if (e.EditingElement == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[CellEditEnding] IGNORED: EditingElement is null (scroll/virtualization)");
+                    return;
+                }
 
                 // Skip here for ComboBox-based columns handled by UserFieldComboBox_SelectionChanged
                 var headerText = Convert.ToString(e.Column?.Header) ?? string.Empty;
@@ -149,7 +219,17 @@ namespace RecoTool.Windows
                 // Ensure the editing element pushes its value to the binding source before we save
                 if (e.EditingElement is TextBox tb)
                 {
+                    // DEBUG: Log TextBox value before UpdateSource
+                    if (headerText == "Incident Number")
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[CellEditEnding] TextBox.Text = '{tb.Text}', rowData.IncNumber = '{rowData.IncNumber}'");
+                    }
                     try { tb.GetBindingExpression(TextBox.TextProperty)?.UpdateSource(); } catch { }
+                    // DEBUG: Log after UpdateSource
+                    if (headerText == "Incident Number")
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[CellEditEnding] After UpdateSource: rowData.IncNumber = '{rowData.IncNumber}'");
+                    }
                 }
                 else if (e.EditingElement is CheckBox cbx)
                 {
@@ -211,7 +291,7 @@ namespace RecoTool.Windows
             reco.PaymentReference = row.PaymentReference;
             reco.RiskyItem = row.RiskyItem;
             reco.ReasonNonRisky = row.ReasonNonRisky;
-
+            reco.IncNumber = row.IncNumber;
             // Check if linking fields actually changed OR if they have a value (even if unchanged)
             // We need to recalculate when:
             // 1. The value changed (old != new)
@@ -258,6 +338,37 @@ namespace RecoTool.Windows
                     }
                 }
             }
+            
+            // Update the row in the UI data sources to reflect the saved changes
+            // This ensures checkbox edits (ACK, RiskyItem, etc.) are immediately visible
+            try
+            {
+                // Find and update the row in _allViewData
+                var allRow = _allViewData?.FirstOrDefault(x => string.Equals(x.ID, row.ID, StringComparison.OrdinalIgnoreCase));
+                if (allRow != null && allRow != row)
+                {
+                    // Copy all fields from the edited row to ensure consistency
+                    allRow.ACK = row.ACK;
+                    allRow.RiskyItem = row.RiskyItem;
+                    allRow.Action = row.Action;
+                    allRow.ActionStatus = row.ActionStatus;
+                    allRow.ActionDate = row.ActionDate;
+                    allRow.KPI = row.KPI;
+                    allRow.IncidentType = row.IncidentType;
+                    allRow.Comments = row.Comments;
+                    allRow.InternalInvoiceReference = row.InternalInvoiceReference;
+                    allRow.FirstClaimDate = row.FirstClaimDate;
+                    allRow.LastClaimDate = row.LastClaimDate;
+                    allRow.Assignee = row.Assignee;
+                    allRow.ToRemind = row.ToRemind;
+                    allRow.ToRemindDate = row.ToRemindDate;
+                    allRow.SwiftCode = row.SwiftCode;
+                    allRow.PaymentReference = row.PaymentReference;
+                    allRow.ReasonNonRisky = row.ReasonNonRisky;
+                    allRow.IncNumber = row.IncNumber;
+                }
+            }
+            catch { }
             
             // Refresh KPIs to reflect changes immediately
             UpdateKpis(_filteredData);

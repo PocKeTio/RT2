@@ -37,6 +37,7 @@ namespace RecoTool.Windows
         private TodoListSessionTracker _todoSessionTracker; // Used only for multi-user checks, not for session tracking
         private bool _isLoading;
         private bool _canRefresh = true;
+        private bool _hasLoadedOnce = false; 
         private List<ReconciliationViewData> _reconciliationViewData;
         private Brush _defaultBackground;
         private System.Windows.Threading.DispatcherTimer _dwingsCheckTimer;
@@ -44,7 +45,7 @@ namespace RecoTool.Windows
         private bool _isDwingsDataFromToday = true;
         private string _dwingsWarningMessage;
 
-        // Champs pour les propriÃ©tÃ©s de binding
+        // Champs pour les propriés de binding
         private List<Country> _availableCountries;
         private int _missingInvoicesCount;
         private int _paidButNotReconciledCount;
@@ -59,7 +60,7 @@ namespace RecoTool.Windows
         private string _statusMessage;
         private string _lastUpdateTime;
 
-        // Champs pour les propriÃ©tÃ©s de graphiques manquantes
+        // Champs pour les propriés de graphiques manquantes
         private ChartValues<double> _receivableChartData;
         private ChartValues<double> _pivotChartData;
         private List<string> _actionLabels;
@@ -282,11 +283,18 @@ namespace RecoTool.Windows
             }
             catch { }
         }
-
         private async void UserControl_Loaded(object sender, RoutedEventArgs e)
         {
             // Reload dashboard data to reflect any changes made in ReconciliationView
             // This ensures QuickStats (like "Reviewed Today") are up-to-date
+            // Prevent double-loading if Loaded event fires multiple times
+            if (_hasLoadedOnce)
+            {
+                System.Diagnostics.Debug.WriteLine("HomePage.UserControl_Loaded: skipping reload (already loaded once)");
+                return;
+            }
+
+            _hasLoadedOnce = true;
             try
             {
                 await LoadDashboardDataAsync();
@@ -294,9 +302,8 @@ namespace RecoTool.Windows
             catch { /* best-effort */ }
         }
 
-
         /// <summary>
-        /// DurÃ©e moyenne avant suppression (rÃ©conciliation) par paliers: 0-14j, 15-30j, 1-3 mois, >3 mois
+        /// Durée moyenne avant suppression (réconciliation) par paliers: 0-14j, 15-30j, 1-3 mois, >3 mois
         /// </summary>
         private void UpdateDeletionDelayChart()
         {
@@ -354,7 +361,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// RÃ©cap quotidien: Nouveau vs SupprimÃ© (Deleted), axe X = jours basÃ© sur DeleteDate
+        /// Récap quotidien: Nouveau vs Supprimé (Deleted), axe X = jours basé sur DeleteDate
         /// </summary>
         private void UpdateNewDeletedDailyChart()
         {
@@ -414,7 +421,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met Ã  jour le graphique empilÃ© Receivable vs Pivot par Action
+        /// Met à  jour le graphique empilé Receivable vs Pivot par Action
         /// </summary>
         private void UpdateReceivablePivotByActionChart()
         {
@@ -492,7 +499,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met Ã  jour le graphique KPI Ã— RiskyItem (stacked columns: Risky, NonRisky, Unknown)
+        /// Met à  jour le graphique KPI à— RiskyItem (stacked columns: Risky, NonRisky, Unknown)
         /// </summary>
         private void UpdateKpiRiskChart()
         {
@@ -538,14 +545,14 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Error updating KPI Ã— RiskyItem: {ex.Message}");
+                ShowError($"Error updating KPI à— RiskyItem: {ex.Message}");
                 KpiRiskSeries = new SeriesCollection();
                 KpiRiskLabels = new List<string>();
             }
         }
 
         /// <summary>
-        /// Constructeur injectÃ© avec les services nÃ©cessaires
+        /// Constructeur injecté avec les services nécessaires
         /// </summary>
         public HomePage(OfflineFirstService offlineFirstService, ReconciliationService reconciliationService)
         {
@@ -569,10 +576,10 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met Ã  jour les services injectÃ©s (appelÃ© aprÃ¨s changement de country)
+        /// Met à  jour les services injectés (appelé aprà¨s changement de country)
         /// </summary>
-        /// <param name="offlineFirstService">Service OfflineFirst actualisÃ©</param>
-        /// <param name="reconciliationService">Service de rÃ©conciliation actualisÃ©</param>
+        /// <param name="offlineFirstService">Service OfflineFirst actualisé</param>
+        /// <param name="reconciliationService">Service de réconciliation actualisé</param>
         public void UpdateServices(OfflineFirstService offlineFirstService, ReconciliationService reconciliationService)
         {
             _offlineFirstService = offlineFirstService;
@@ -587,7 +594,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Initialise toutes les propriÃ©tÃ©s avec des valeurs par dÃ©faut
+        /// Initialise toutes les propriés avec des valeurs par défaut
         /// </summary>
         private void InitializeProperties()
         {
@@ -607,7 +614,7 @@ namespace RecoTool.Windows
             _isDwingsDataFromToday = true;
             _dwingsWarningMessage = string.Empty;
 
-            // Initialiser les nouvelles propriÃ©tÃ©s de graphiques
+            // Initialiser les nouvelles propriés de graphiques
             _receivableChartData = new ChartValues<double>();
             _pivotChartData = new ChartValues<double>();
             _receivablePivotByActionSeries = new SeriesCollection();
@@ -635,7 +642,7 @@ namespace RecoTool.Windows
             }
         }
 
-        // PropriÃ©tÃ©s pour le binding XAML
+        // Propriés pour le binding XAML
         public List<Country> AvailableCountries
         {
             get => _availableCountries;
@@ -1020,7 +1027,7 @@ namespace RecoTool.Windows
         #region Data Loading
 
         /// <summary>
-        /// Charge les donnÃ©es live et met Ã  jour les KPIs/graphes.
+        /// Charge les données live et met à  jour les KPIs/graphes.
         /// </summary>
         private async Task LoadDashboardDataAsync(bool retryIfCountryNotReady = true)
         {
@@ -1029,9 +1036,9 @@ namespace RecoTool.Windows
                 IsLoading = true;
                 ShowLoadingIndicator(true);
 
-                // S'assurer qu'un pays est prÃªt avant de charger
+                // S'assurer qu'un pays est prêt avant de charger
                 if (!await EnsureCountryReadyAsync(retryIfCountryNotReady))
-                    return; // sortie silencieuse si toujours pas prÃªt
+                    return; // sortie silencieuse si toujours pas prêt
 
                 await LoadLiveDashboardAsync();
             }
@@ -1047,7 +1054,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// VÃ©rifie que le pays courant est prÃªt. Optionnellement, effectue une unique attente courte avant nouvel essai.
+        /// Vérifie que le pays courant est prêt. Optionnellement, effectue une unique attente courte avant nouvel essai.
         /// </summary>
         private async Task<bool> EnsureCountryReadyAsync(bool allowSingleRetry)
         {
@@ -1582,7 +1589,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Charge les donnÃ©es rÃ©elles depuis la base de donnÃ©es via ReconciliationService
+        /// Charge les données réelles depuis la base de données via ReconciliationService
         /// </summary>
         private async Task LoadRealDataFromDatabase()
         {
@@ -1595,11 +1602,11 @@ namespace RecoTool.Windows
                     return;
                 }
 
-                // RÃ©cupÃ©rer uniquement les colonnes nÃ©cessaires pour le dashboard
+                // Récupérer uniquement les colonnes nécessaires pour le dashboard
                 var reconciliationViewData = await _reconciliationService.GetReconciliationViewAsync(_offlineFirstService.CurrentCountryId, null, true);
                 _reconciliationViewData = reconciliationViewData ?? new List<ReconciliationViewData>();
 
-                // Analyser la rÃ©partition des comptes pour diagnostic
+                // Analyser la répartition des comptes pour diagnostic
                 AnalyzeAccountDistribution();
 
                 StatusMessage = $"Data loaded: {_reconciliationViewData.Count} rows";
@@ -1659,7 +1666,7 @@ namespace RecoTool.Windows
         #region KPI Updates
 
         /// <summary>
-        /// Met Ã  jour le rÃ©sumÃ© des KPI avec les donnÃ©es rÃ©elles
+        /// Met à  jour le résumé des KPI avec les données réelles
         /// </summary>
         private void UpdateKPISummary()
         {
@@ -1670,25 +1677,25 @@ namespace RecoTool.Windows
 
             var totalLines = _reconciliationViewData.Count;
 
-            // SÃ©parer les comptes Receivable et Pivot selon la configuration de la country
+            // Séparer les comptes Receivable et Pivot selon la configuration de la country
             var receivableData = _reconciliationViewData.Where(r => r.Account_ID == currentCountry.CNT_AmbreReceivable).ToList();
             var pivotData = _reconciliationViewData.Where(r => r.Account_ID == currentCountry.CNT_AmbrePivot).ToList();
 
-            // Calcul des KPI rÃ©els
+            // Calcul des KPI réels
             var paidButNotReconciled = _reconciliationViewData.Count(r => r.KPI == (int)KPIType.PaidButNotReconciled);
             var underInvestigation = _reconciliationViewData.Count(r => r.KPI == (int)KPIType.UnderInvestigation);
             var itIssues = _reconciliationViewData.Count(r => r.KPI == (int)KPIType.ITIssues);
             var notClaimed = _reconciliationViewData.Count(r => r.KPI == (int)KPIType.NotClaimed);
 
-            // Mise Ã  jour des propriÃ©tÃ©s de binding
+            // Mise à  jour des propriés de binding
             MissingInvoicesCount = notClaimed;
             PaidButNotReconciledCount = paidButNotReconciled;
             UnderInvestigationCount = underInvestigation;
 
-            // Calcul des montants rÃ©els
-            // IMPORTANT: SignedAmount peut Ãªtre positif ou nÃgatif
-            // - Receivable: montants SIGNÃ‰S (+ = crÃdit, - = dÃbit)
-            // - Pivot: montants SIGNÃ‰S (+ = entrÃe, - = sortie)
+            // Calcul des montants réels
+            // IMPORTANT: SignedAmount peut être positif ou nàgatif
+            // - Receivable: montants SIGNà‰S (+ = cràdit, - = dàbit)
+            // - Pivot: montants SIGNà‰S (+ = entràe, - = sortie)
             // Pour le total, on garde le signe pour voir le solde net
             TotalReceivableAmount = receivableData.Sum(r => r.SignedAmount);
             ReceivableAccountsCount = receivableData.Count;
@@ -1712,7 +1719,7 @@ namespace RecoTool.Windows
         #region Charts Updates
 
         /// <summary>
-        /// Met Ã  jour les graphiques avec les donnÃ©es rÃ©elles
+        /// Met à  jour les graphiques avec les données réelles
         /// </summary>
         private void UpdateCharts()
         {
@@ -1793,7 +1800,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met Ã  jour le graphique des KPI
+        /// Met à  jour le graphique des KPI
         /// </summary>
         private void UpdateKPIChart()
         {
@@ -1834,7 +1841,7 @@ namespace RecoTool.Windows
                     });
                 }
 
-                // Mise Ã  jour du graphique KPI
+                // Mise à  jour du graphique KPI
                 var kpiChart = FindName("KPIChart") as LiveCharts.Wpf.PieChart;
                 if (kpiChart != null)
                 {
@@ -1848,7 +1855,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met Ã  jour le graphique des devises
+        /// Met à  jour le graphique des devises
         /// </summary>
         private void UpdateCurrencyChart()
         {
@@ -1886,7 +1893,7 @@ namespace RecoTool.Windows
                     });
                 }
 
-                // Mise Ã  jour de la propriÃ©tÃ© liÃ©e au PieChart
+                // Mise à  jour de la proprié liée au PieChart
                 CurrencyDistributionSeries = seriesCollection;
             }
             catch (Exception ex)
@@ -1896,7 +1903,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met Ã  jour le graphique des actions
+        /// Met à  jour le graphique des actions
         /// </summary>
         private void UpdateActionChart()
         {
@@ -1980,7 +1987,7 @@ namespace RecoTool.Windows
                     seriesCollection.Add(series);
                 }
 
-                // Mettre Ã  jour les propriÃ©tÃ©s liÃ©es au CartesianChart
+                // Mettre à  jour les propriés liées au CartesianChart
                 ActionLabels = labels;
                 ActionDistributionSeries = seriesCollection;
             }
@@ -2032,7 +2039,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met Ã  jour les mini graphiques (sparklines) Receivable/Pivot (12 derniers mois)
+        /// Met à  jour les mini graphiques (sparklines) Receivable/Pivot (12 derniers mois)
         /// </summary>
         private void UpdateReceivablePivotMiniCharts()
         {
@@ -2053,13 +2060,13 @@ namespace RecoTool.Windows
                     return;
                 }
 
-                // PÃ©riode: 12 derniers mois (inclus le mois courant)
+                // Période: 12 derniers mois (inclus le mois courant)
                 var endMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
                 var months = Enumerable.Range(0, 12)
                     .Select(offset => endMonth.AddMonths(-11 + offset))
                     .ToList();
 
-                // SÃ©lection date prÃ©fÃ©rÃ©e: Value_Date sinon Operation_Date si dispo dans le type
+                // Sélection date préférée: Value_Date sinon Operation_Date si dispo dans le type
                 DateTime? GetDate(dynamic r)
                 {
                     try
@@ -2108,7 +2115,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                // Ne pas bloquer le dashboard si la gÃ©nÃ©ration des sÃ©ries Ã©choue
+                // Ne pas bloquer le dashboard si la génération des séries échoue
                 System.Diagnostics.Debug.WriteLine($"Mini charts error: {ex.Message}");
                 ReceivableChartData = new ChartValues<double>();
                 PivotChartData = new ChartValues<double>();
@@ -2116,7 +2123,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Analyse la rÃ©partition entre comptes Receivable et Pivot
+        /// Analyse la répartition entre comptes Receivable et Pivot
         /// </summary>
         private void AnalyzeAccountDistribution()
         {
@@ -2180,7 +2187,7 @@ namespace RecoTool.Windows
         #region Helper Methods
 
         /// <summary>
-        /// Met Ã  jour un TextBlock par son nom
+        /// Met à  jour un TextBlock par son nom
         /// </summary>
         private void UpdateTextBlock(string name, string value)
         {
@@ -2200,7 +2207,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Met Ã  jour les informations du pays
+        /// Met à  jour les informations du pays
         /// </summary>
         private void UpdateCountryInfo()
         {
@@ -2245,9 +2252,9 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// DÃ©clenche l'Ã©vÃ©nement PropertyChanged
+        /// Déclenche l'événement PropertyChanged
         /// </summary>
-        /// <param name="propertyName">Nom de la propriÃ©tÃ© modifiÃ©e</param>
+        /// <param name="propertyName">Nom de la proprié modifiée</param>
         protected virtual void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
@@ -2258,17 +2265,17 @@ namespace RecoTool.Windows
         #region Event Handlers
 
         /// <summary>
-        /// Ouvre la fenÃªtre d'import Ambre
+        /// Ouvre la fenêtre d'import Ambre
         /// </summary>
         private void ImportAmbre_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                // Utiliser le DI container pour obtenir ImportAmbreWindow avec toutes ses dÃ©pendances
+                // Utiliser le DI container pour obtenir ImportAmbreWindow avec toutes ses dépendances
                 var importWindow = App.ServiceProvider.GetRequiredService<ImportAmbreWindow>();
                 importWindow.ShowDialog();
 
-                // Actualiser les donnÃ©es aprÃ¨s import
+                // Actualiser les données aprà¨s import
                 _ = RefreshAsync();
             }
             catch (Exception ex)
@@ -2278,7 +2285,7 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Ouvre la fenÃªtre de rapports
+        /// Ouvre la fenêtre de rapports
         /// </summary>
         private void OpenReports_Click(object sender, RoutedEventArgs e)
         {

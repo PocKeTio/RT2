@@ -24,10 +24,19 @@ namespace RecoTool.Services
         private bool _disposed = false;
         private int _heartbeatTickCounter = 0; // Counter to track ticks
 
+        // Cache for session data to avoid constant DB access
+        private readonly Dictionary<int, List<TodoSessionInfo>> _sessionCache = new Dictionary<int, List<TodoSessionInfo>>();
+        private readonly Dictionary<int, DateTime> _cacheExpiry = new Dictionary<int, DateTime>();
+        private OleDbConnection _persistentConnection = null;
+        private DateTime _lastConnectionCheck = DateTime.MinValue;
+        private bool _connectionHealthy = true;
+
         private const int CHECK_INTERVAL_MS = 10000; // Check every 10 seconds
         private const int HEARTBEAT_WRITE_INTERVAL_TICKS = 6; // Write heartbeat every 6 ticks (1 minute)
         private const int SESSION_TIMEOUT_SECONDS = 180; // Consider session dead after 3 minutes without heartbeat
         private const int EDITING_TIMEOUT_SECONDS = 300; // Auto-unmark editing after 5 minutes of inactivity
+        private const int CACHE_LIFETIME_SECONDS = 15; // Cache sessions for 15 seconds
+        private const int CONNECTION_CHECK_INTERVAL_SECONDS = 30; // Check connection health every 30 seconds
 
         /// <summary>
         /// Creates a new TodoListSessionTracker using the country-specific Lock database
@@ -158,12 +167,19 @@ namespace RecoTool.Services
                         }
                     }
                 }
+                
+                // Invalidate cache for this TodoId since we modified the session
+                InvalidateCache(todoId);
+                
                 System.Diagnostics.Debug.WriteLine($"[TodoSessionTracker.RegisterViewing] SUCCESS");
                 return true;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[TodoSessionTracker.RegisterViewing] ERROR: {ex.Message}\n{ex.StackTrace}");
+                // Connection might be broken
+                _connectionHealthy = false;
+                CloseConnection();
                 return false;
             }
         }
@@ -191,79 +207,98 @@ namespace RecoTool.Services
                         await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                     }
                 }
+                
+                // Invalidate cache for this TodoId
+                InvalidateCache(todoId);
             }
             catch { /* Best effort */ }
         }
 
         /// <summary>
         /// Gets information about other users currently viewing/editing a TodoList item
+        /// Uses cache to avoid constant DB access
         /// </summary>
         public async Task<List<TodoSessionInfo>> GetActiveSessionsAsync(int todoId)
         {
+            // Check cache first
+            lock (_lock)
+            {
+                if (_sessionCache.TryGetValue(todoId, out var cached) && 
+                    _cacheExpiry.TryGetValue(todoId, out var expiry) &&
+                    DateTime.Now < expiry)
+                {
+                    // Cache hit!
+                    return new List<TodoSessionInfo>(cached);
+                }
+            }
+
+            // Cache miss - fetch from DB
             var sessions = new List<TodoSessionInfo>();
             try
             {
-                using (var conn = new OleDbConnection(_lockDbConnectionString))
+                var conn = await GetOrCreateConnectionAsync().ConfigureAwait(false);
+                if (conn == null)
                 {
-                    await conn.OpenAsync().ConfigureAwait(false);
+                    // Connection failed, return empty list
+                    return sessions;
+                }
 
-                    // Clean up stale sessions first
-                    await CleanupStaleSessionsAsync(conn).ConfigureAwait(false);
+                // Clean up stale sessions first
+                await CleanupStaleSessionsAsync(conn).ConfigureAwait(false);
 
-                    // Get active sessions for this country (excluding current user)
-                    var sql = @"SELECT UserId, UserName, SessionStart, LastHeartbeat, IsEditing 
-                               FROM T_TodoList_Sessions 
-                               WHERE TodoId = ? AND UserId <> ?
-                               ORDER BY SessionStart";
-                    using (var cmd = new OleDbCommand(sql, conn))
+                // Get active sessions for this country (excluding current user)
+                var sql = @"SELECT UserId, UserName, SessionStart, LastHeartbeat, IsEditing 
+                           FROM T_TodoList_Sessions 
+                           WHERE TodoId = ? AND UserId <> ?
+                           ORDER BY SessionStart";
+                using (var cmd = new OleDbCommand(sql, conn))
+                {
+                    cmd.Parameters.AddWithValue("@TodoId", todoId);
+                    cmd.Parameters.AddWithValue("@UserId", _currentUserId);
+                    using (var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
                     {
-                        cmd.Parameters.AddWithValue("@TodoId", todoId);
-                        cmd.Parameters.AddWithValue("@UserId", _currentUserId);
-                        using (var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
+                        while (await reader.ReadAsync().ConfigureAwait(false))
                         {
-                            while (await reader.ReadAsync().ConfigureAwait(false))
+                            sessions.Add(new TodoSessionInfo
                             {
-                                sessions.Add(new TodoSessionInfo
-                                {
-                                    UserId = reader["UserId"]?.ToString(),
-                                    UserName = reader["UserName"]?.ToString(),
-                                    SessionStart = reader["SessionStart"] as DateTime? ?? DateTime.MinValue,
-                                    LastHeartbeat = reader["LastHeartbeat"] as DateTime? ?? DateTime.MinValue,
-                                    IsEditing = reader["IsEditing"] as bool? ?? false
-                                });
-                            }
+                                UserId = reader["UserId"]?.ToString(),
+                                UserName = reader["UserName"]?.ToString(),
+                                SessionStart = reader["SessionStart"] as DateTime? ?? DateTime.MinValue,
+                                LastHeartbeat = reader["LastHeartbeat"] as DateTime? ?? DateTime.MinValue,
+                                IsEditing = reader["IsEditing"] as bool? ?? false
+                            });
                         }
                     }
                 }
+
+                // Update cache
+                lock (_lock)
+                {
+                    _sessionCache[todoId] = new List<TodoSessionInfo>(sessions);
+                    _cacheExpiry[todoId] = DateTime.Now.AddSeconds(CACHE_LIFETIME_SECONDS);
+                }
             }
-            catch { /* Return empty list on error */ }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TodoSessionTracker.GetActiveSessions] ERROR: {ex.Message}");
+                // Mark connection as unhealthy
+                _connectionHealthy = false;
+                CloseConnection();
+            }
             return sessions;
         }
 
         /// <summary>
         /// Checks if any other user is currently editing the specified TodoList item
+        /// Uses cache from GetActiveSessionsAsync to avoid DB access
         /// </summary>
         public async Task<bool> IsBeingEditedByOtherUserAsync(int todoId)
         {
             try
             {
-                using (var conn = new OleDbConnection(_lockDbConnectionString))
-                {
-                    await conn.OpenAsync().ConfigureAwait(false);
-
-                    // Clean up stale sessions first
-                    await CleanupStaleSessionsAsync(conn).ConfigureAwait(false);
-
-                    var sql = @"SELECT COUNT(*) FROM T_TodoList_Sessions 
-                               WHERE TodoId = ? AND UserId <> ? AND IsEditing = True";
-                    using (var cmd = new OleDbCommand(sql, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@TodoId", todoId);
-                        cmd.Parameters.AddWithValue("@UserId", _currentUserId);
-                        var count = (int)await cmd.ExecuteScalarAsync().ConfigureAwait(false);
-                        return count > 0;
-                    }
-                }
+                // Use cached sessions if available
+                var sessions = await GetActiveSessionsAsync(todoId).ConfigureAwait(false);
+                return sessions.Any(s => s.IsEditing && s.IsActive);
             }
             catch
             {
@@ -302,6 +337,9 @@ namespace RecoTool.Services
                         await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                     }
                 }
+                
+                // Invalidate cache for this TodoId
+                InvalidateCache(todoId);
             }
             catch { /* Best effort */ }
         }
@@ -327,6 +365,7 @@ namespace RecoTool.Services
 
         /// <summary>
         /// Heartbeat callback - runs every 10 seconds to check activity and write heartbeat every minute
+        /// Uses persistent connection for better performance
         /// </summary>
         private void HeartbeatCallback(object state)
         {
@@ -347,20 +386,35 @@ namespace RecoTool.Services
 
                 if (todoIds.Length == 0) return;
 
-                using (var conn = new OleDbConnection(_lockDbConnectionString))
+                // Use persistent connection
+                OleDbConnection conn;
+                lock (_lock)
                 {
+                    conn = _persistentConnection;
+                }
+
+                if (conn == null || conn.State != ConnectionState.Open)
+                {
+                    // Try to reconnect
                     try
                     {
-                        conn.Open();
+                        var task = GetOrCreateConnectionAsync();
+                        task.Wait(5000); // Wait max 5 seconds
+                        conn = task.Result;
                     }
                     catch
                     {
-                        // Connection failed - network issue or DB unavailable
-                        // Silently fail and try again on next heartbeat
+                        // Connection failed - mark as unhealthy and return
+                        _connectionHealthy = false;
+                        CloseConnection();
                         return;
                     }
+                }
 
-                    var now = DateTime.Now;
+                if (conn == null) return;
+
+                var now = DateTime.Now;
+                bool cacheInvalidated = false;
 
                     foreach (var todoId in todoIds)
                     {
@@ -399,6 +453,10 @@ namespace RecoTool.Services
                                     {
                                         _lastActivityTime.Remove(todoId);
                                     }
+                                    
+                                    // Invalidate cache for this TodoId
+                                    InvalidateCache(todoId);
+                                    cacheInvalidated = true;
                                 }
                                 else
                                 {
@@ -433,13 +491,31 @@ namespace RecoTool.Services
                                 {
                                     _lastActivityTime.Remove(todoId);
                                 }
+                                
+                                // Invalidate cache for this TodoId
+                                InvalidateCache(todoId);
+                                cacheInvalidated = true;
                             }
                         }
-                        catch { /* Continue with other todos */ }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[TodoSessionTracker.Heartbeat] Error updating TodoId {todoId}: {ex.Message}");
+                            // Connection might be broken
+                            _connectionHealthy = false;
+                        }
                     }
+                
+                if (cacheInvalidated)
+                {
+                    System.Diagnostics.Debug.WriteLine("[TodoSessionTracker.Heartbeat] Cache invalidated due to session updates");
                 }
             }
-            catch { /* Heartbeat is best-effort */ }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TodoSessionTracker.Heartbeat] ERROR: {ex.Message}");
+                // Connection failed, close and invalidate
+                CloseConnection();
+            }
         }
 
         /// <summary>
@@ -458,6 +534,123 @@ namespace RecoTool.Services
                 }
             }
             catch { /* Cleanup is best-effort */ }
+        }
+
+        /// <summary>
+        /// Gets or creates a persistent connection to the Lock database
+        /// Handles connection failures and reconnection
+        /// </summary>
+        private async Task<OleDbConnection> GetOrCreateConnectionAsync()
+        {
+            lock (_lock)
+            {
+                // Check if we need to verify connection health
+                if ((DateTime.Now - _lastConnectionCheck).TotalSeconds > CONNECTION_CHECK_INTERVAL_SECONDS)
+                {
+                    _lastConnectionCheck = DateTime.Now;
+                    
+                    // Test existing connection
+                    if (_persistentConnection != null)
+                    {
+                        try
+                        {
+                            if (_persistentConnection.State != ConnectionState.Open)
+                            {
+                                System.Diagnostics.Debug.WriteLine("[TodoSessionTracker] Connection not open, closing and recreating");
+                                CloseConnection();
+                            }
+                        }
+                        catch
+                        {
+                            System.Diagnostics.Debug.WriteLine("[TodoSessionTracker] Connection health check failed, closing");
+                            CloseConnection();
+                        }
+                    }
+                }
+
+                // Return existing healthy connection
+                if (_persistentConnection != null && _persistentConnection.State == ConnectionState.Open)
+                {
+                    return _persistentConnection;
+                }
+            }
+
+            // Need to create new connection
+            try
+            {
+                var conn = new OleDbConnection(_lockDbConnectionString);
+                await conn.OpenAsync().ConfigureAwait(false);
+                
+                lock (_lock)
+                {
+                    _persistentConnection = conn;
+                    _connectionHealthy = true;
+                    _lastConnectionCheck = DateTime.Now;
+                }
+                
+                System.Diagnostics.Debug.WriteLine("[TodoSessionTracker] Created new persistent connection");
+                return conn;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TodoSessionTracker] Failed to create connection: {ex.Message}");
+                lock (_lock)
+                {
+                    _connectionHealthy = false;
+                }
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Closes the persistent connection and invalidates cache
+        /// </summary>
+        private void CloseConnection()
+        {
+            lock (_lock)
+            {
+                try
+                {
+                    _persistentConnection?.Close();
+                    _persistentConnection?.Dispose();
+                }
+                catch { }
+                finally
+                {
+                    _persistentConnection = null;
+                    _connectionHealthy = false;
+                    
+                    // Invalidate cache when connection is lost
+                    _sessionCache.Clear();
+                    _cacheExpiry.Clear();
+                    
+                    System.Diagnostics.Debug.WriteLine("[TodoSessionTracker] Connection closed, cache invalidated");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Invalidates the cache for a specific TodoId
+        /// </summary>
+        private void InvalidateCache(int todoId)
+        {
+            lock (_lock)
+            {
+                _sessionCache.Remove(todoId);
+                _cacheExpiry.Remove(todoId);
+            }
+        }
+
+        /// <summary>
+        /// Invalidates all cached session data
+        /// </summary>
+        public void InvalidateAllCache()
+        {
+            lock (_lock)
+            {
+                _sessionCache.Clear();
+                _cacheExpiry.Clear();
+            }
         }
 
         public void Dispose()

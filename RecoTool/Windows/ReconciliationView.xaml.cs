@@ -1592,7 +1592,7 @@ namespace RecoTool.Windows
             _multiUserWarningRefreshTimer?.Stop();
             _multiUserWarningRefreshTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromSeconds(10) // Refresh every 10 seconds
+                Interval = TimeSpan.FromSeconds(30) // Refresh every 30 seconds (reduced frequency to improve UI performance)
             };
             _multiUserWarningRefreshTimer.Tick += async (s, e) => await UpdateMultiUserWarningAsync();
             _multiUserWarningRefreshTimer.Start();
@@ -1610,11 +1610,11 @@ namespace RecoTool.Windows
             {
                 if (_todoSessionTracker == null || _currentTodoId <= 0)
                 {
-                    // Hide warning if no tracking
-                    Dispatcher.Invoke(() =>
+                    // Hide warning if no tracking (only update if currently visible)
+                    if (MultiUserWarningBanner.Visibility == Visibility.Visible)
                     {
-                        MultiUserWarningBanner.Visibility = Visibility.Collapsed;
-                    });
+                        Dispatcher.Invoke(() => MultiUserWarningBanner.Visibility = Visibility.Collapsed);
+                    }
                     return;
                 }
 
@@ -1628,11 +1628,11 @@ namespace RecoTool.Windows
 
                 if (otherSessions == null || !otherSessions.Any())
                 {
-                    // No other users, hide warning
-                    Dispatcher.Invoke(() =>
+                    // No other users, hide warning (only update if currently visible)
+                    if (MultiUserWarningBanner.Visibility == Visibility.Visible)
                     {
-                        MultiUserWarningBanner.Visibility = Visibility.Collapsed;
-                    });
+                        Dispatcher.Invoke(() => MultiUserWarningBanner.Visibility = Visibility.Collapsed);
+                    }
                     return;
                 }
 
@@ -1640,26 +1640,37 @@ namespace RecoTool.Windows
                 var editingSessions = otherSessions.Where(s => s.IsEditing).ToList();
                 var viewingSessions = otherSessions.Where(s => !s.IsEditing).ToList();
 
+                // Prepare UI updates on background thread
+                string newTag = null;
+                string newText = null;
+                bool shouldShow = false;
+
+                if (editingSessions.Any())
+                {
+                    newTag = "Editing";
+                    var userNames = string.Join(", ", editingSessions.Select(s => s.UserName));
+                    newText = editingSessions.Count == 1
+                        ? $"{userNames} is currently editing this TodoList"
+                        : $"{userNames} are currently editing this TodoList";
+                    shouldShow = true;
+                }
+                else if (viewingSessions.Any())
+                {
+                    newTag = "Viewing";
+                    var userNames = string.Join(", ", viewingSessions.Select(s => s.UserName));
+                    newText = viewingSessions.Count == 1
+                        ? $"{userNames} is viewing this TodoList"
+                        : $"{userNames} are viewing this TodoList";
+                    shouldShow = true;
+                }
+
+                // Single Dispatcher call with all updates
                 Dispatcher.Invoke(() =>
                 {
-                    if (editingSessions.Any())
+                    if (shouldShow)
                     {
-                        // Red warning for editing
-                        MultiUserWarningBanner.Tag = "Editing";
-                        var userNames = string.Join(", ", editingSessions.Select(s => s.UserName));
-                        MultiUserWarningText.Text = editingSessions.Count == 1
-                            ? $"{userNames} is currently editing this TodoList"
-                            : $"{userNames} are currently editing this TodoList";
-                        MultiUserWarningBanner.Visibility = Visibility.Visible;
-                    }
-                    else if (viewingSessions.Any())
-                    {
-                        // Yellow warning for viewing
-                        MultiUserWarningBanner.Tag = "Viewing";
-                        var userNames = string.Join(", ", viewingSessions.Select(s => s.UserName));
-                        MultiUserWarningText.Text = viewingSessions.Count == 1
-                            ? $"{userNames} is viewing this TodoList"
-                            : $"{userNames} are viewing this TodoList";
+                        MultiUserWarningBanner.Tag = newTag;
+                        MultiUserWarningText.Text = newText;
                         MultiUserWarningBanner.Visibility = Visibility.Visible;
                     }
                     else

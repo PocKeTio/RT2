@@ -15,7 +15,7 @@ using RecoTool.Infrastructure.Logging;
 namespace RecoTool.Services.AmbreImport
 {
     /// <summary>
-    /// Gestionnaire de mise à jour de la table T_Reconciliation
+    /// Gestionnaire de mise Ã  jour de la table T_Reconciliation
     /// </summary>
     public class AmbreReconciliationUpdater
     {
@@ -39,7 +39,7 @@ namespace RecoTool.Services.AmbreImport
         }
 
         /// <summary>
-        /// Met à jour la table T_Reconciliation avec les changements d'import
+        /// Met Ã  jour la table T_Reconciliation avec les changements d'import
         /// </summary>
         public async Task UpdateReconciliationTableAsync(
             ImportChanges changes,
@@ -50,18 +50,18 @@ namespace RecoTool.Services.AmbreImport
 
             try
             {
-                // Préparer les enregistrements de réconciliation
+                // PrÃ©parer les enregistrements de rÃ©conciliation
                 var reconciliations = await PrepareReconciliationsAsync(
                     changes.ToAdd, country, countryId);
 
-                // Appliquer les changements à la base de données
+                // Appliquer les changements Ã  la base de donnÃ©es
                 await ApplyReconciliationChangesAsync(
                     reconciliations,
                     changes.ToUpdate,
                     changes.ToArchive,
                     countryId);
 
-                // Remplir les références DWINGS manquantes pour les enregistrements mis à jour (sans écraser les liens manuels)
+                // Remplir les rÃ©fÃ©rences DWINGS manquantes pour les enregistrements mis Ã  jour (sans Ã©craser les liens manuels)
                 try
                 {
                     await UpdateDwingsReferencesForUpdatesAsync(changes.ToUpdate, country, countryId);
@@ -147,8 +147,45 @@ namespace RecoTool.Services.AmbreImport
 
         private RuleContext BuildRuleContext(DataAmbre dataAmbre, Reconciliation reconciliation, Country country, string countryId, bool isPivot, List<DwingsInvoiceDto> dwInvoices)
         {
-            // OPTIMIZATION: Use cached TransformationService instead of creating new instance
-            var tx = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot, dataAmbre.Category);
+            // Determine transaction type enum name
+            TransactionType? tx;
+            
+            if (isPivot)
+            {
+                // For PIVOT: use Category field (enum TransactionType)
+                tx = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot, dataAmbre.Category);
+            }
+            else
+            {
+                // For RECEIVABLE: use PAYMENT_METHOD from DWINGS invoice if available
+                string paymentMethod = null;
+                if (!string.IsNullOrWhiteSpace(reconciliation?.DWINGS_InvoiceID))
+                {
+                    var inv = dwInvoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, reconciliation.DWINGS_InvoiceID, StringComparison.OrdinalIgnoreCase));
+                    paymentMethod = inv?.PAYMENT_METHOD;
+                }
+                
+                // Map PAYMENT_METHOD to TransactionType enum
+                if (!string.IsNullOrWhiteSpace(paymentMethod))
+                {
+                    var upperMethod = paymentMethod.Trim().ToUpperInvariant().Replace(' ', '_');
+                    if (Enum.TryParse<TransactionType>(upperMethod, true, out var parsed))
+                    {
+                        tx = parsed;
+                    }
+                    else
+                    {
+                        // Fallback to label-based detection
+                        tx = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot, null);
+                    }
+                }
+                else
+                {
+                    // No PAYMENT_METHOD available, use label-based detection
+                    tx = _transformationService.DetermineTransactionType(dataAmbre.RawLabel, isPivot, null);
+                }
+            }
+            
             string txName = tx.HasValue ? Enum.GetName(typeof(TransactionType), tx.Value) : null;
 
             // Guarantee type detectable primarily on receivable from label

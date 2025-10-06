@@ -2018,7 +2018,49 @@ namespace RecoTool.Services
         {
             // Determine transaction type enum name
             var transformationService = new TransformationService(new List<Country> { country });
-            var tx = transformationService.DetermineTransactionType(a.RawLabel, isPivot, a.Category);
+            TransactionType? tx;
+            
+            if (isPivot)
+            {
+                // For PIVOT: use Category field (enum TransactionType)
+                tx = transformationService.DetermineTransactionType(a.RawLabel, isPivot, a.Category);
+            }
+            else
+            {
+                // For RECEIVABLE: use PAYMENT_METHOD from DWINGS invoice if available
+                string paymentMethod = null;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(r?.DWINGS_InvoiceID))
+                    {
+                        var invoices = GetDwingsInvoicesAsync().GetAwaiter().GetResult();
+                        var inv = invoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, r.DWINGS_InvoiceID, StringComparison.OrdinalIgnoreCase));
+                        paymentMethod = inv?.PAYMENT_METHOD;
+                    }
+                }
+                catch { }
+                
+                // Map PAYMENT_METHOD to TransactionType enum
+                if (!string.IsNullOrWhiteSpace(paymentMethod))
+                {
+                    var upperMethod = paymentMethod.Trim().ToUpperInvariant().Replace(' ', '_');
+                    if (Enum.TryParse<TransactionType>(upperMethod, true, out var parsed))
+                    {
+                        tx = parsed;
+                    }
+                    else
+                    {
+                        // Fallback to label-based detection
+                        tx = transformationService.DetermineTransactionType(a.RawLabel, isPivot, null);
+                    }
+                }
+                else
+                {
+                    // No PAYMENT_METHOD available, use label-based detection
+                    tx = transformationService.DetermineTransactionType(a.RawLabel, isPivot, null);
+                }
+            }
+            
             string txName = tx.HasValue ? Enum.GetName(typeof(TransactionType), tx.Value) : null;
 
             // Guarantee type primarily on receivable from label

@@ -99,6 +99,9 @@ namespace RecoTool.Services
                 {
                     if (globalLock == null) return result;
 
+                    // Set sync status now that we have the lock
+                    try { await _offlineFirstService.SetSyncStatusAsync("Processing"); } catch { }
+
                     // 5. Lecture et traitement des données
                     var processedData = await ProcessDataAsync(
                         files, config, countryId, isMultiFile, result, progressCallback);
@@ -110,6 +113,7 @@ namespace RecoTool.Services
                     }
 
                     // 6. Synchronisation avec la base de données
+                    try { await _offlineFirstService.SetSyncStatusAsync("Synchronizing"); } catch { }
                     await _databaseSynchronizer.SynchronizeAsync(
                         processedData, countryId, result, progressCallback);
                 }
@@ -138,7 +142,7 @@ namespace RecoTool.Services
                 return false;
             }
 
-            try { await _offlineFirstService.SetSyncStatusAsync("PreSync"); } catch { }
+            // Note: SetSyncStatusAsync is now called AFTER acquiring the global lock to avoid DB contention
 
             var unsyncedCount = await _offlineFirstService.GetUnsyncedChangeCountAsync(countryId);
             if (unsyncedCount > 0)
@@ -158,7 +162,6 @@ namespace RecoTool.Services
                 }
             }
 
-            try { await _offlineFirstService.SetSyncStatusAsync("RefreshingLocal"); } catch { }
             await _offlineFirstService.CopyNetworkToLocalAsync(countryId);
             return true;
         }

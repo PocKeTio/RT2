@@ -138,7 +138,8 @@ namespace RecoTool.Windows
                             var reco = await _reconciliationService.GetReconciliationByIdAsync(_countryId, id.Trim());
                             if (reco != null)
                             {
-                                reco.Action = (int)ActionType.Triggered;
+                                // REMOVED: reco.Action = (int)ActionType.Triggered; 
+                                // Action is now determined by truth-table rules (AmbreReconciliationUpdater)
                                 reco.TriggerDate = DateTime.UtcNow;
                                 // Save PaymentReference if it was manually entered
                                 if (!item.IsGrouped && !string.IsNullOrWhiteSpace(item.PaymentReference))

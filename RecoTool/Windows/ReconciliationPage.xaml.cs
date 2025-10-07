@@ -1566,50 +1566,18 @@ namespace RecoTool.Windows
                 }
             }
             catch (Exception ex)
-            {
+            { 
                 ShowError($"Error during export: {ex.Message}");
             }
         }
 
         /// <summary>
-        /// Appliquer les règles automatiques
+        /// REMOVED: ApplyRulesButton_Click - Rules are now automatically applied during Ambre import.
+        /// Manual re-application is no longer needed as rules are centralized in AmbreReconciliationUpdater.
         /// </summary>
         private async void ApplyRulesButton_Click(object sender, RoutedEventArgs e)
         {
-            try
-            {
-                if (string.IsNullOrEmpty(_currentCountryId))
-                {
-                    ShowWarning("Please select a country before applying rules.");
-                    return;
-                }
-
-                var result = MessageBox.Show(
-                    "Are you sure you want to apply automatic rules?\nThis may modify existing Actions and KPIs.",
-                    "Confirmation",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Question);
-
-                if (result == MessageBoxResult.Yes)
-                {
-                    IsLoading = true;
-                    _pageCts?.Dispose();
-                    _pageCts = new CancellationTokenSource();
-                    var token = _pageCts.Token;
-                    await _reconciliationService.ApplyAutomaticRulesAsync(_currentCountryId);
-                    await LoadDataAsync(token).ConfigureAwait(false);
-                    
-                    ShowInfo("Automatic rules applied successfully.");
-                }
-            }
-            catch (Exception ex)
-            {
-                ShowError($"Error applying rules: {ex.Message}");
-            }
-            finally
-            {
-                IsLoading = false;
-            }
+            ShowInfo("Rules are automatically applied during data import. No manual action needed.");
         }
 
         /// <summary>

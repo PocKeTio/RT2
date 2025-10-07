@@ -572,6 +572,7 @@ namespace RecoTool.Windows
                               || (m.Tag as string) == "__AddRuleFromLine__"
                               || (m.Tag as string) == "__Copy__"
                               || (m.Tag as string) == "__SearchBGI__"
+                              || (m.Tag as string) == "__DebugRules__"
                               || (m.Tag as string) == "__OpenGrouped__").ToList())
                     {
                         cm.Items.Remove(mi);
@@ -638,12 +639,17 @@ namespace RecoTool.Windows
                     var searchBgi = new MenuItem { Header = "Search BGI…", Tag = "__SearchBGI__", DataContext = rowData };
                     searchBgi.Click += SearchBgiMenuItem_Click;
                     cm.Items.Add(searchBgi);
+
+                    // Debug Rules - show detailed rule evaluation
+                    cm.Items.Add(new Separator { Tag = "__InjectedSep__" });
+                    var debugRulesItem = new MenuItem { Header = "Debug Rules…", Tag = "__DebugRules__", DataContext = rowData };
+                    debugRulesItem.Click += DebugRulesMenuItem_Click;
+                    cm.Items.Add(debugRulesItem);
                 }
                 catch { }
             }
             catch { }
         }
-
 
         /// <summary>
         /// Reçoit un SQL de filtre sauvegardé depuis la page parente.
@@ -1383,6 +1389,78 @@ namespace RecoTool.Windows
                 }
             }
             catch { }
+        }
+
+        private async void DebugRulesMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var menuItem = sender as MenuItem;
+                var rowData = menuItem?.DataContext as ReconciliationViewData;
+                if (rowData == null || string.IsNullOrWhiteSpace(rowData.ID)) return;
+
+                if (_reconciliationService == null)
+                {
+                    MessageBox.Show("Reconciliation service not available.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                // Get debug information from the service
+                var (context, evaluations) = await _reconciliationService.GetRuleDebugInfoAsync(rowData.ID);
+                if (context == null || evaluations == null || evaluations.Count == 0)
+                {
+                    MessageBox.Show("Unable to load rule debug information for this line.", "Debug Rules", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                // Build summary strings
+                var lineInfo = $"ID: {rowData.ID}  |  Account: {rowData.Account_ID}  |  Amount: {rowData.SignedAmount:N2}";
+                var contextInfo = $"IsPivot: {context.IsPivot}  |  Country: {context.CountryId}  |  " +
+                                 $"TransactionType: {context.TransactionType ?? "(null)"}  |  " +
+                                 $"GuaranteeType: {context.GuaranteeType ?? "(null)"}  |  " +
+                                 $"IsGrouped: {context.IsGrouped?.ToString() ?? "(null)"}  |  " +
+                                 $"HasDwingsLink: {context.HasDwingsLink?.ToString() ?? "(null)"}";
+
+                // Convert to display items
+                var debugItems = new List<RuleDebugItem>();
+                int displayOrder = 1;
+                foreach (var eval in evaluations)
+                {
+                    var item = new RuleDebugItem
+                    {
+                        DisplayOrder = displayOrder++,
+                        RuleName = eval.Rule.RuleId ?? "(unnamed)",
+                        IsEnabled = eval.IsEnabled,
+                        IsMatch = eval.IsMatch,
+                        MatchStatus = eval.IsMatch ? "✓ MATCH" : (eval.IsEnabled ? "✗ No Match" : "⊘ Disabled"),
+                        OutputAction = eval.Rule.OutputActionId.HasValue 
+                            ? EnumHelper.GetActionName(eval.Rule.OutputActionId.Value, _offlineFirstService?.UserFields) 
+                            : "-",
+                        OutputKPI = eval.Rule.OutputKpiId.HasValue 
+                            ? EnumHelper.GetKPIName(eval.Rule.OutputKpiId.Value, _offlineFirstService?.UserFields) 
+                            : "-",
+                        Conditions = eval.Conditions.Select(c => new ConditionDebugItem
+                        {
+                            Field = c.Field,
+                            Expected = c.Expected,
+                            Actual = c.Actual,
+                            IsMet = c.IsMet,
+                            Status = c.IsMet ? "✓" : "✗"
+                        }).ToList()
+                    };
+                    debugItems.Add(item);
+                }
+
+                // Create and show the debug window
+                var debugWindow = new RuleDebugWindow();
+                debugWindow.SetDebugInfo(lineInfo, contextInfo, debugItems);
+                try { debugWindow.Owner = Window.GetWindow(this); } catch { }
+                debugWindow.Show();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error displaying rule debug information: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private void CopySelectionBgiRef()

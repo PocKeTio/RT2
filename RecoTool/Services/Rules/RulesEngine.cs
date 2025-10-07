@@ -119,6 +119,354 @@ namespace RecoTool.Services.Rules
             return null;
         }
 
+        /// <summary>
+        /// Evaluate all rules for debugging purposes.
+        /// Returns detailed information about each rule and why it matched or didn't match.
+        /// </summary>
+        public async Task<List<RuleDebugEvaluation>> EvaluateAllForDebugAsync(RuleContext ctx, RuleScope scope, CancellationToken token = default)
+        {
+            var results = new List<RuleDebugEvaluation>();
+            if (ctx == null) return results;
+            
+            var rules = await GetRulesAsync(token).ConfigureAwait(false);
+            if (rules == null || rules.Count == 0) return results;
+
+            var c = NormalizeContext(ctx);
+
+            foreach (var r in rules)
+            {
+                if (r == null) continue;
+                
+                // Include disabled rules but mark them
+                //if (r.Scope != RuleScope.Both && r.Scope != scope) continue;
+
+                var debugEval = new RuleDebugEvaluation
+                {
+                    Rule = r,
+                    IsEnabled = r.Enabled,
+                    Conditions = new List<RuleConditionDebug>()
+                };
+
+                // Evaluate each condition
+                bool allConditionsMet = true;
+                
+                // Account side
+                if (!IsWildcard(r.AccountSide))
+                {
+                    bool needPivot = r.AccountSide.Equals("P", StringComparison.OrdinalIgnoreCase);
+                    bool needRecv = r.AccountSide.Equals("R", StringComparison.OrdinalIgnoreCase);
+                    bool conditionMet = (needPivot && c.IsPivot) || (needRecv && !c.IsPivot);
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "AccountSide",
+                        Expected = r.AccountSide,
+                        Actual = c.IsPivot ? "P (Pivot)" : "R (Receivable)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // Booking (country)
+                if (!IsWildcard(r.Booking))
+                {
+                    bool conditionMet = !string.IsNullOrWhiteSpace(c.CountryId) && MatchesSet(r.Booking, c.CountryId);
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "Booking",
+                        Expected = r.Booking,
+                        Actual = c.CountryId ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // Guarantee Type
+                if (!IsWildcard(r.GuaranteeType))
+                {
+                    bool conditionMet = !string.IsNullOrWhiteSpace(c.GuaranteeType) && MatchesSet(r.GuaranteeType, c.GuaranteeType);
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "GuaranteeType",
+                        Expected = r.GuaranteeType,
+                        Actual = c.GuaranteeType ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // Transaction Type
+                if (!IsWildcard(r.TransactionType))
+                {
+                    bool conditionMet = !string.IsNullOrWhiteSpace(c.TransactionType) && MatchesSet(r.TransactionType, c.TransactionType);
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "TransactionType",
+                        Expected = r.TransactionType,
+                        Actual = c.TransactionType ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // DWINGS link
+                if (r.HasDwingsLink.HasValue)
+                {
+                    bool conditionMet = c.HasDwingsLink == r.HasDwingsLink.Value;
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "HasDwingsLink",
+                        Expected = r.HasDwingsLink.Value.ToString(),
+                        Actual = c.HasDwingsLink?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // Grouped
+                if (r.IsGrouped.HasValue)
+                {
+                    bool conditionMet = c.IsGrouped == r.IsGrouped.Value;
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "IsGrouped",
+                        Expected = r.IsGrouped.Value.ToString(),
+                        Actual = c.IsGrouped?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // Amount match
+                if (r.IsAmountMatch.HasValue)
+                {
+                    bool conditionMet = c.IsAmountMatch == r.IsAmountMatch.Value;
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "IsAmountMatch",
+                        Expected = r.IsAmountMatch.Value.ToString(),
+                        Actual = c.IsAmountMatch?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // Missing amount range
+                if (r.MissingAmountMin.HasValue || r.MissingAmountMax.HasValue)
+                {
+                    bool conditionMet = c.MissingAmount.HasValue;
+                    if (conditionMet)
+                    {
+                        var amount = c.MissingAmount.Value;
+                        if (r.MissingAmountMin.HasValue && amount < r.MissingAmountMin.Value) conditionMet = false;
+                        if (r.MissingAmountMax.HasValue && amount > r.MissingAmountMax.Value) conditionMet = false;
+                    }
+                    var rangeStr = $"[{r.MissingAmountMin?.ToString() ?? "∞"}, {r.MissingAmountMax?.ToString() ?? "∞"}]";
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "MissingAmount",
+                        Expected = rangeStr,
+                        Actual = c.MissingAmount?.ToString("F2") ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // Sign
+                if (!IsWildcard(r.Sign))
+                {
+                    bool conditionMet = !string.IsNullOrWhiteSpace(c.Sign) && r.Sign.Equals(c.Sign, StringComparison.OrdinalIgnoreCase);
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "Sign",
+                        Expected = r.Sign,
+                        Actual = c.Sign ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // MT Status Acked
+                if (r.MTStatusAcked.HasValue)
+                {
+                    bool conditionMet = c.IsMtAcked.HasValue && c.IsMtAcked.Value == r.MTStatusAcked.Value;
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "MTStatusAcked",
+                        Expected = r.MTStatusAcked.Value.ToString(),
+                        Actual = c.IsMtAcked?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // COMM_ID_EMAIL
+                if (r.CommIdEmail.HasValue)
+                {
+                    bool conditionMet = c.HasCommIdEmail.HasValue && c.HasCommIdEmail.Value == r.CommIdEmail.Value;
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "CommIdEmail",
+                        Expected = r.CommIdEmail.Value.ToString(),
+                        Actual = c.HasCommIdEmail?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // BGI Status Initiated
+                if (r.BgiStatusInitiated.HasValue)
+                {
+                    bool conditionMet = c.IsBgiInitiated.HasValue && c.IsBgiInitiated.Value == r.BgiStatusInitiated.Value;
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "BgiStatusInitiated",
+                        Expected = r.BgiStatusInitiated.Value.ToString(),
+                        Actual = c.IsBgiInitiated?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // TriggerDateIsNull
+                if (r.TriggerDateIsNull.HasValue)
+                {
+                    bool conditionMet = c.TriggerDateIsNull.HasValue && c.TriggerDateIsNull.Value == r.TriggerDateIsNull.Value;
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "TriggerDateIsNull",
+                        Expected = r.TriggerDateIsNull.Value.ToString(),
+                        Actual = c.TriggerDateIsNull?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // DaysSinceTrigger range
+                if (r.DaysSinceTriggerMin.HasValue || r.DaysSinceTriggerMax.HasValue)
+                {
+                    bool conditionMet = c.DaysSinceTrigger.HasValue;
+                    if (conditionMet)
+                    {
+                        var d = c.DaysSinceTrigger.Value;
+                        if (r.DaysSinceTriggerMin.HasValue && d < r.DaysSinceTriggerMin.Value) conditionMet = false;
+                        if (r.DaysSinceTriggerMax.HasValue && d > r.DaysSinceTriggerMax.Value) conditionMet = false;
+                    }
+                    var rangeStr = $"[{r.DaysSinceTriggerMin?.ToString() ?? "∞"}, {r.DaysSinceTriggerMax?.ToString() ?? "∞"}]";
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "DaysSinceTrigger",
+                        Expected = rangeStr,
+                        Actual = c.DaysSinceTrigger?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // OperationDaysAgo range
+                if (r.OperationDaysAgoMin.HasValue || r.OperationDaysAgoMax.HasValue)
+                {
+                    bool conditionMet = c.OperationDaysAgo.HasValue;
+                    if (conditionMet)
+                    {
+                        var d = c.OperationDaysAgo.Value;
+                        if (r.OperationDaysAgoMin.HasValue && d < r.OperationDaysAgoMin.Value) conditionMet = false;
+                        if (r.OperationDaysAgoMax.HasValue && d > r.OperationDaysAgoMax.Value) conditionMet = false;
+                    }
+                    var rangeStr = $"[{r.OperationDaysAgoMin?.ToString() ?? "∞"}, {r.OperationDaysAgoMax?.ToString() ?? "∞"}]";
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "OperationDaysAgo",
+                        Expected = rangeStr,
+                        Actual = c.OperationDaysAgo?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // IsMatched
+                if (r.IsMatched.HasValue)
+                {
+                    bool conditionMet = c.IsMatched.HasValue && c.IsMatched.Value == r.IsMatched.Value;
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "IsMatched",
+                        Expected = r.IsMatched.Value.ToString(),
+                        Actual = c.IsMatched?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // HasManualMatch
+                if (r.HasManualMatch.HasValue)
+                {
+                    bool conditionMet = c.HasManualMatch.HasValue && c.HasManualMatch.Value == r.HasManualMatch.Value;
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "HasManualMatch",
+                        Expected = r.HasManualMatch.Value.ToString(),
+                        Actual = c.HasManualMatch?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // IsFirstRequest
+                if (r.IsFirstRequest.HasValue)
+                {
+                    bool conditionMet = c.IsFirstRequest.HasValue && c.IsFirstRequest.Value == r.IsFirstRequest.Value;
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "IsFirstRequest",
+                        Expected = r.IsFirstRequest.Value.ToString(),
+                        Actual = c.IsFirstRequest?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // DaysSinceReminder range
+                if (r.DaysSinceReminderMin.HasValue || r.DaysSinceReminderMax.HasValue)
+                {
+                    bool conditionMet = c.DaysSinceReminder.HasValue;
+                    if (conditionMet)
+                    {
+                        var d = c.DaysSinceReminder.Value;
+                        if (r.DaysSinceReminderMin.HasValue && d < r.DaysSinceReminderMin.Value) conditionMet = false;
+                        if (r.DaysSinceReminderMax.HasValue && d > r.DaysSinceReminderMax.Value) conditionMet = false;
+                    }
+                    var rangeStr = $"[{r.DaysSinceReminderMin?.ToString() ?? "∞"}, {r.DaysSinceReminderMax?.ToString() ?? "∞"}]";
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "DaysSinceReminder",
+                        Expected = rangeStr,
+                        Actual = c.DaysSinceReminder?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                // CurrentActionId
+                if (r.CurrentActionId.HasValue)
+                {
+                    bool conditionMet = c.CurrentActionId.HasValue && c.CurrentActionId.Value == r.CurrentActionId.Value;
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "CurrentActionId",
+                        Expected = r.CurrentActionId.Value.ToString(),
+                        Actual = c.CurrentActionId?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
+                debugEval.IsMatch = r.Enabled && allConditionsMet;
+                results.Add(debugEval);
+            }
+
+            return results;
+        }
+
         private static RuleContext NormalizeContext(RuleContext ctx)
         {
             var n = new RuleContext
@@ -636,5 +984,27 @@ namespace RecoTool.Services.Rules
             var val = (ctxValue ?? string.Empty).Trim().ToUpperInvariant();
             return parts.Contains(val);
         }
+    }
+
+    /// <summary>
+    /// Debug evaluation result for a single rule
+    /// </summary>
+    public class RuleDebugEvaluation
+    {
+        public TruthRule Rule { get; set; }
+        public bool IsEnabled { get; set; }
+        public bool IsMatch { get; set; }
+        public List<RuleConditionDebug> Conditions { get; set; }
+    }
+
+    /// <summary>
+    /// Debug information for a single condition
+    /// </summary>
+    public class RuleConditionDebug
+    {
+        public string Field { get; set; }
+        public string Expected { get; set; }
+        public string Actual { get; set; }
+        public bool IsMet { get; set; }
     }
 }

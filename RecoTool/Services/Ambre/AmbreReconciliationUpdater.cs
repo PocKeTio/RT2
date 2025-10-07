@@ -238,16 +238,24 @@ namespace RecoTool.Services.AmbreImport
 
             // Extended time/state inputs
             var today = DateTime.Today;
-            bool? triggerDateIsNull = !(reconciliation?.TriggerDate.HasValue == true);
+            
+            // FIXED: Nullable boolean logic - only set to bool value if we can determine it, otherwise keep null
+            bool? triggerDateIsNull = reconciliation?.TriggerDate.HasValue == true ? (bool?)false : (reconciliation != null ? (bool?)true : null);
+            
             int? daysSinceTrigger = reconciliation?.TriggerDate.HasValue == true
                 ? (int?)(today - reconciliation.TriggerDate.Value.Date).TotalDays
                 : null;
+            
             int? operationDaysAgo = dataAmbre.Operation_Date.HasValue
                 ? (int?)(today - dataAmbre.Operation_Date.Value.Date).TotalDays
                 : null;
+            
             bool? isMatched = hasDw; // consider matched when any DWINGS link is present
             bool? hasManualMatch = null; // unknown at import time
-            bool? isFirstRequest = !(reconciliation?.FirstClaimDate.HasValue == true);
+            
+            // FIXED: IsFirstRequest should be null if we don't have reconciliation data
+            bool? isFirstRequest = reconciliation?.FirstClaimDate.HasValue == true ? (bool?)false : (reconciliation != null ? (bool?)true : null);
+            
             int? daysSinceReminder = reconciliation?.LastClaimDate.HasValue == true
                 ? (int?)(today - reconciliation.LastClaimDate.Value.Date).TotalDays
                 : null;

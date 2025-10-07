@@ -233,9 +233,6 @@
                                 <Label ToolTip="Yes, No, or — (None) to ignore.">Trigger Date Is Null</Label>
                                 <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.TriggerDateIsNull, UpdateSourceTrigger=PropertyChanged}" ToolTip="Yes, No, or — (None) to ignore."/>
 
-                                <Label ToolTip="Yes, No, or — (None) to ignore.">Is Transitory</Label>
-                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.IsTransitory, UpdateSourceTrigger=PropertyChanged}"/>
-
                                 <Label>Days Since Trigger</Label>
                                 <Grid Margin="0,0,0,8">
                                     <Grid.ColumnDefinitions>

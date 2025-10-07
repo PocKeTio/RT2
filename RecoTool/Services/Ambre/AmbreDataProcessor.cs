@@ -241,11 +241,6 @@ namespace RecoTool.Services.AmbreImport
                     dataAmbre.RawLabel, isPivot, dataAmbre.Category);
                     
                 var creditDebit = transformationService.DetermineCreditDebit(dataAmbre.SignedAmount);
-                
-                string guaranteeType = !isPivot ? ExtractGuaranteeType(dataAmbre.RawLabel) : null;
-                
-                var (action, kpi) = transformationService.ApplyAutomaticCategorization(
-                    transactionType, dataAmbre.SignedAmount, isPivot, guaranteeType);
             }
         }
 
@@ -349,23 +344,6 @@ namespace RecoTool.Services.AmbreImport
             {
                 dataAmbre.Category = (int)found.Value;
             }
-        }
-
-        private string ExtractGuaranteeType(string label)
-        {
-            if (string.IsNullOrEmpty(label))
-                return null;
-
-            var upperLabel = label.ToUpper();
-
-            if (upperLabel.Contains("REISSUANCE"))
-                return "REISSUANCE";
-            if (upperLabel.Contains("ISSUANCE"))
-                return "ISSUANCE";
-            if (upperLabel.Contains("ADVISING"))
-                return "ADVISING";
-
-            return null;
         }
 
         private bool IsMatchingAccount(string accountId, string pivot, string recv)

@@ -272,6 +272,7 @@ namespace RecoTool.Services
                     return (TransactionType)category.Value;
                 }
 
+                // Fallback: parse label for pivot (should rarely happen if Category is populated)
                 if (upperLabel.Contains("COLLECTION")) return TransactionType.COLLECTION;
                 if (upperLabel.Contains("AUTOMATIC REFUND") || upperLabel.Contains("PAYMENT")) return TransactionType.PAYMENT;
                 if (upperLabel.Contains("ADJUSTMENT")) return TransactionType.ADJUSTMENT;
@@ -281,12 +282,9 @@ namespace RecoTool.Services
             }
             else
             {
-                if (upperLabel.Contains("INCOMING PAYMENT")) return TransactionType.INCOMING_PAYMENT;
-                if (upperLabel.Contains("DIRECT DEBIT")) return TransactionType.DIRECT_DEBIT;
-                if (upperLabel.Contains("MANUAL OUTGOING")) return TransactionType.MANUAL_OUTGOING;
-                if (upperLabel.Contains("OUTGOING PAYMENT")) return TransactionType.OUTGOING_PAYMENT;
-                if (upperLabel.Contains("EXTERNAL DEBIT PAYMENT")) return TransactionType.EXTERNAL_DEBIT_PAYMENT;
-                return TransactionType.TO_CATEGORIZE;
+                // For RECEIVABLE: return null - TransactionType should come from PAYMENT_METHOD (handled in BuildRuleContext)
+                // Parsing label is not reliable for receivables
+                return null;
             }
         }
 
@@ -299,98 +297,5 @@ namespace RecoTool.Services
         {
             return amount >= 0 ? "CREDIT" : "DEBIT";
         }
-
-        /// <summary>
-        /// Applique la catégorisation automatique selon les règles métier
-        /// </summary>
-        /// <param name="transactionType">Type de transaction</param>
-        /// <param name="signedAmount">Montant de la transaction avec signe</param>
-        /// <param name="isPivot">True si compte Pivot</param>
-        /// <param name="guaranteeType">Type de garantie (pour Receivable)</param>
-        /// <returns>Tuple (Action, KPI)</returns>
-        public (ActionType action, KPIType kpi) ApplyAutomaticCategorization(
-            TransactionType? transactionType, 
-            decimal signedAmount, 
-            bool isPivot,
-            string guaranteeType = null)
-        {
-            bool isCredit = signedAmount > 0;
-
-            switch (transactionType.Value)
-            {
-                case TransactionType.COLLECTION:
-                    if (isCredit)
-                    {
-                        // Primary: Match / Paid but not reconciled
-                        return (ActionType.Match, KPIType.PaidButNotReconciled);
-                        // Alternative from table: Investigate / IT Issues
-                    }
-                    else
-                    {
-                        // Primary: To Claim / Correspondent charges to be invoiced
-                        return (ActionType.ToClaim, KPIType.CorrespondentChargesToBeInvoiced);
-                        // Alternatives from table: Investigate / Under Investigation; Do Pricing / IT Issues
-                    }
-
-                case TransactionType.PAYMENT:
-                    // Table specifies Debit only; treat credit as IT Issues default
-                    if (!isCredit)
-                    {
-                        // Prefer To Claim / Correspondent charges to be invoiced; fallback N/A / IT Issues
-                        return (ActionType.ToClaim, KPIType.CorrespondentChargesToBeInvoiced);
-                    }
-                    return (ActionType.NA, KPIType.ITIssues);
-
-                case TransactionType.ADJUSTMENT:
-                    // Both credit and debit map to Adjust / Paid but not reconciled
-                    return (ActionType.Adjust, KPIType.PaidButNotReconciled);
-
-                case TransactionType.XCL_LOADER:
-                    if (isCredit)
-                    {
-                        // Primary: Match / Paid but not reconciled; alternative: Investigate / Under Investigation
-                        return (ActionType.Match, KPIType.PaidButNotReconciled);
-                    }
-                    return (ActionType.Investigate, KPIType.UnderInvestigation);
-
-                case TransactionType.TRIGGER:
-                    if (isCredit)
-                    {
-                        // Do Pricing / Correspondent charges to be invoiced
-                        return (ActionType.DoPricing, KPIType.CorrespondentChargesToBeInvoiced);
-                    }
-                    else
-                    {
-                        // Primary: To Claim / Under Investigation; alternative: N/A / IT Issues
-                        return (ActionType.ToClaim, KPIType.UnderInvestigation);
-                    }
-
-                case TransactionType.INCOMING_PAYMENT:
-                    // No credit/debit in table; choose a primary deterministic mapping.
-                    // Primary: Request / Not Claimed. Other listed: N/A / Claimed but not paid; Trigger / Paid but not reconciled; Investigate / IT Issues; Remind / Claimed but not paid
-                    return (ActionType.Request, KPIType.NotClaimed);
-
-                case TransactionType.DIRECT_DEBIT:
-                    // Investigate / IT Issues
-                    return (ActionType.Investigate, KPIType.ITIssues);
-
-                case TransactionType.MANUAL_OUTGOING:
-                    // Primary: Trigger / Correspondent charges pending trigger; alternative: Investigate / IT Issues
-                    return (ActionType.Trigger, KPIType.CorrespondentChargesPendingTrigger);
-
-                case TransactionType.OUTGOING_PAYMENT:
-                    // Primary: Trigger / Correspondent charges pending trigger; alternatives: Execute / Not Claimed; Investigate / IT Issues
-                    return (ActionType.Trigger, KPIType.CorrespondentChargesPendingTrigger);
-
-                case TransactionType.EXTERNAL_DEBIT_PAYMENT:
-                    // To do SDD / Not Claimed
-                    return (ActionType.ToDoSDD, KPIType.NotClaimed);
-
-                case TransactionType.TO_CATEGORIZE:
-                default:
-                    return (ActionType.Investigate, KPIType.ITIssues);
-            }
-        }
-
     }
 }

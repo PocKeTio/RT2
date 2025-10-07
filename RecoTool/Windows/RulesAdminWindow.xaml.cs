@@ -455,7 +455,6 @@ namespace RecoTool.Windows
                 TriggerDateIsNull = r.TriggerDateIsNull,
                 DaysSinceTriggerMin = r.DaysSinceTriggerMin,
                 DaysSinceTriggerMax = r.DaysSinceTriggerMax,
-                IsTransitory = r.IsTransitory,
                 OperationDaysAgoMin = r.OperationDaysAgoMin,
                 OperationDaysAgoMax = r.OperationDaysAgoMax,
                 IsMatched = r.IsMatched,
@@ -501,7 +500,6 @@ namespace RecoTool.Windows
             target.TriggerDateIsNull = source.TriggerDateIsNull;
             target.DaysSinceTriggerMin = source.DaysSinceTriggerMin;
             target.DaysSinceTriggerMax = source.DaysSinceTriggerMax;
-            target.IsTransitory = source.IsTransitory;
             target.OperationDaysAgoMin = source.OperationDaysAgoMin;
             target.OperationDaysAgoMax = source.OperationDaysAgoMax;
             target.IsMatched = source.IsMatched;

@@ -188,8 +188,6 @@
                                         ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
                 <DataGridTextColumn Header="DaysSinceTriggerMin" Binding="{Binding DaysSinceTriggerMin, UpdateSourceTrigger=PropertyChanged}" Width="170"/>
                 <DataGridTextColumn Header="DaysSinceTriggerMax" Binding="{Binding DaysSinceTriggerMax, UpdateSourceTrigger=PropertyChanged}" Width="170"/>
-                <DataGridCheckBoxColumn Header="IsTransitory" Binding="{Binding IsTransitory, UpdateSourceTrigger=PropertyChanged}" Width="110"
-                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
                 <DataGridTextColumn Header="OperationDaysAgoMin" Binding="{Binding OperationDaysAgoMin, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
                 <DataGridTextColumn Header="OperationDaysAgoMax" Binding="{Binding OperationDaysAgoMax, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
                 <DataGridCheckBoxColumn Header="IsFirstClaim" Binding="{Binding IsFirstRequest, UpdateSourceTrigger=PropertyChanged}" Width="130"

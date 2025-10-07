@@ -697,7 +697,20 @@ namespace RecoTool.Services
 
                 // Build a minimal rule context similar to AmbreReconciliationUpdater.BuildRuleContext
                 string txName = transactionType.HasValue ? Enum.GetName(typeof(TransactionType), transactionType.Value) : null;
-                string guaranteeType = !isPivot ? ExtractGuaranteeTypeForRules(a.RawLabel) : null;
+                
+                // Guarantee type from DWINGS (requires a DWINGS_GuaranteeID link)
+                string guaranteeType = null;
+                if (!isPivot && !string.IsNullOrWhiteSpace(r?.DWINGS_GuaranteeID))
+                {
+                    try
+                    {
+                        var guarantees = GetDwingsGuaranteesAsync().GetAwaiter().GetResult();
+                        var guar = guarantees?.FirstOrDefault(g => string.Equals(g?.GUARANTEE_ID, r.DWINGS_GuaranteeID, StringComparison.OrdinalIgnoreCase));
+                        guaranteeType = guar?.GUARANTEE_TYPE;
+                    }
+                    catch { }
+                }
+                
                 string sign = a.SignedAmount >= 0 ? "C" : "D";
                 bool? hasDw = (!string.IsNullOrWhiteSpace(r?.DWINGS_InvoiceID)
                                || !string.IsNullOrWhiteSpace(r?.DWINGS_GuaranteeID)
@@ -717,9 +730,6 @@ namespace RecoTool.Services
                     // Extended fields
                     TriggerDateIsNull = !(r?.TriggerDate.HasValue == true),
                     DaysSinceTrigger = r?.TriggerDate.HasValue == true ? (int?)(DateTime.Today - r.TriggerDate.Value.Date).TotalDays : (int?)null,
-                    IsTransitory = !string.IsNullOrWhiteSpace(DwingsLinkingHelper.ExtractBgpmtToken(a?.Reconciliation_Num)
-                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(a?.ReconciliationOrigin_Num)
-                                   ?? DwingsLinkingHelper.ExtractBgpmtToken(a?.RawLabel)),
                     OperationDaysAgo = a?.Operation_Date.HasValue == true ? (int?)(DateTime.Today - a.Operation_Date.Value.Date).TotalDays : (int?)null,
                     IsMatched = hasDw,
                     HasManualMatch = null,
@@ -787,7 +797,7 @@ namespace RecoTool.Services
                         if (country != null && _rulesEngine != null && amb != null)
                         {
                             bool isPivot = amb.IsPivotAccount(country.CNT_AmbrePivot);
-                            var ctx = BuildRuleContext(amb, r, country, currentCountryId, isPivot);
+                            var ctx = await BuildRuleContextAsync(amb, r, country, currentCountryId, isPivot).ConfigureAwait(false);
                             var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Edit).ConfigureAwait(false);
                             if (res != null && res.Rule != null && res.Rule.AutoApply)
                             {
@@ -852,15 +862,6 @@ namespace RecoTool.Services
             catch { return 0; }
         }
 
-        private static string ExtractGuaranteeTypeForRules(string label)
-        {
-            if (string.IsNullOrEmpty(label)) return null;
-            var upper = label.ToUpperInvariant();
-            if (upper.Contains("REISSUANCE")) return "REISSUANCE";
-            if (upper.Contains("ISSUANCE")) return "ISSUANCE";
-            if (upper.Contains("ADVISING")) return "ADVISING";
-            return null;
-        }
         private void EnsureActionDefaults(Reconciliation r)
         {
             try
@@ -905,6 +906,9 @@ namespace RecoTool.Services
                 // Transformation service to detect transaction types like in import
                 var transformationService = new TransformationService(new List<Country> { country });
 
+                // Pre-calculate IsGrouped and IsAmountMatch flags for all lines (batch optimization)
+                var groupingFlags = await CalculateGroupingFlagsBatchAsync(ambreData.ToList(), country, countryId).ConfigureAwait(false);
+
                 foreach (var data in ambreData)
                 {
                     var reconciliation = await GetOrCreateReconciliationAsync(data.ID);
@@ -912,11 +916,33 @@ namespace RecoTool.Services
                     bool isPivot = data.IsPivotAccount(country.CNT_AmbrePivot);
                     var tx = transformationService.DetermineTransactionType(data.RawLabel, isPivot, data.Category);
                     string txName = tx.HasValue ? Enum.GetName(typeof(TransactionType), tx.Value) : null;
-                    string guaranteeType = !isPivot ? ExtractGuaranteeTypeForRules(data.RawLabel) : null;
+                    
+                    // Guarantee type from DWINGS (requires a DWINGS_GuaranteeID link)
+                    string guaranteeType = null;
+                    if (!isPivot && !string.IsNullOrWhiteSpace(reconciliation?.DWINGS_GuaranteeID))
+                    {
+                        try
+                        {
+                            var guarantees = await GetDwingsGuaranteesAsync();
+                            var guar = guarantees?.FirstOrDefault(g => string.Equals(g?.GUARANTEE_ID, reconciliation.DWINGS_GuaranteeID, StringComparison.OrdinalIgnoreCase));
+                            guaranteeType = guar?.GUARANTEE_TYPE;
+                        }
+                        catch { }
+                    }
+                    
                     string sign = data.SignedAmount >= 0 ? "C" : "D";
                     bool? hasDw = (!string.IsNullOrWhiteSpace(reconciliation?.DWINGS_InvoiceID)
                                    || !string.IsNullOrWhiteSpace(reconciliation?.DWINGS_GuaranteeID)
                                    || !string.IsNullOrWhiteSpace(reconciliation?.DWINGS_BGPMT));
+
+                    // Get pre-calculated grouping flags
+                    bool? isGrouped = null;
+                    bool? isAmountMatch = null;
+                    if (groupingFlags.TryGetValue(data.ID, out var flags))
+                    {
+                        isGrouped = flags.isGrouped;
+                        isAmountMatch = flags.isAmountMatch;
+                    }
 
                     var today1 = DateTime.Today;
                     var ctx = new Services.Rules.RuleContext
@@ -926,16 +952,13 @@ namespace RecoTool.Services
                         GuaranteeType = guaranteeType,
                         TransactionType = txName,
                         HasDwingsLink = hasDw,
-                        IsGrouped = null,
-                        IsAmountMatch = null,
+                        IsGrouped = isGrouped,
+                        IsAmountMatch = isAmountMatch,
                         Sign = sign,
                         Bgi = reconciliation?.DWINGS_InvoiceID,
                         // Extended
                         TriggerDateIsNull = !(reconciliation?.TriggerDate.HasValue == true),
                         DaysSinceTrigger = reconciliation?.TriggerDate.HasValue == true ? (int?)(today1 - reconciliation.TriggerDate.Value.Date).TotalDays : (int?)null,
-                        IsTransitory = !string.IsNullOrWhiteSpace(DwingsLinkingHelper.ExtractBgpmtToken(data?.Reconciliation_Num)
-                                        ?? DwingsLinkingHelper.ExtractBgpmtToken(data?.ReconciliationOrigin_Num)
-                                        ?? DwingsLinkingHelper.ExtractBgpmtToken(data?.RawLabel)),
                         OperationDaysAgo = data?.Operation_Date.HasValue == true ? (int?)(today1 - data.Operation_Date.Value.Date).TotalDays : (int?)null,
                         IsMatched = hasDw,
                         HasManualMatch = null,
@@ -1047,7 +1070,20 @@ namespace RecoTool.Services
                     bool isPivot = false; // receivable
                     var tx = transformationService.DetermineTransactionType(receivableLine.RawLabel, isPivot, receivableLine.Category);
                     string txName = tx.HasValue ? Enum.GetName(typeof(TransactionType), tx.Value) : null;
-                    string guaranteeType = ExtractGuaranteeTypeForRules(receivableLine.RawLabel);
+                    
+                    // Guarantee type from DWINGS (requires a DWINGS_GuaranteeID link)
+                    string guaranteeType = null;
+                    if (!string.IsNullOrWhiteSpace(receivableReco?.DWINGS_GuaranteeID))
+                    {
+                        try
+                        {
+                            var guarantees = await GetDwingsGuaranteesAsync();
+                            var guar = guarantees?.FirstOrDefault(g => string.Equals(g?.GUARANTEE_ID, receivableReco.DWINGS_GuaranteeID, StringComparison.OrdinalIgnoreCase));
+                            guaranteeType = guar?.GUARANTEE_TYPE;
+                        }
+                        catch { }
+                    }
+                    
                     string sign = receivableLine.SignedAmount >= 0 ? "C" : "D";
                     bool? hasDw = (!string.IsNullOrWhiteSpace(receivableReco?.DWINGS_InvoiceID)
                                    || !string.IsNullOrWhiteSpace(receivableReco?.DWINGS_GuaranteeID)
@@ -1068,9 +1104,6 @@ namespace RecoTool.Services
                         // Extended
                         TriggerDateIsNull = !(receivableReco?.TriggerDate.HasValue == true),
                         DaysSinceTrigger = receivableReco?.TriggerDate.HasValue == true ? (int?)(today2 - receivableReco.TriggerDate.Value.Date).TotalDays : (int?)null,
-                        IsTransitory = !string.IsNullOrWhiteSpace(DwingsLinkingHelper.ExtractBgpmtToken(receivableLine?.Reconciliation_Num)
-                                        ?? DwingsLinkingHelper.ExtractBgpmtToken(receivableLine?.ReconciliationOrigin_Num)
-                                        ?? DwingsLinkingHelper.ExtractBgpmtToken(receivableLine?.RawLabel)),
                         OperationDaysAgo = receivableLine?.Operation_Date.HasValue == true ? (int?)(today2 - receivableLine.Operation_Date.Value.Date).TotalDays : (int?)null,
                         IsMatched = hasDw,
                         HasManualMatch = null,
@@ -1130,9 +1163,6 @@ namespace RecoTool.Services
                         // Extended
                         TriggerDateIsNull = !(pivotLine.reco?.TriggerDate.HasValue == true),
                         DaysSinceTrigger = pivotLine.reco?.TriggerDate.HasValue == true ? (int?)(today3 - pivotLine.reco.TriggerDate.Value.Date).TotalDays : (int?)null,
-                        IsTransitory = !string.IsNullOrWhiteSpace(DwingsLinkingHelper.ExtractBgpmtToken(pivotLine.line?.Reconciliation_Num)
-                                        ?? DwingsLinkingHelper.ExtractBgpmtToken(pivotLine.line?.ReconciliationOrigin_Num)
-                                        ?? DwingsLinkingHelper.ExtractBgpmtToken(pivotLine.line?.RawLabel)),
                         OperationDaysAgo = pivotLine.line?.Operation_Date.HasValue == true ? (int?)(today3 - pivotLine.line.Operation_Date.Value.Date).TotalDays : (int?)null,
                         IsMatched = hasDw,
                         HasManualMatch = null,
@@ -1224,7 +1254,7 @@ namespace RecoTool.Services
                 if (amb == null || r == null) return null;
 
                 bool isPivot = amb.IsPivotAccount(countryCtx.CNT_AmbrePivot);
-                var ctx = BuildRuleContext(amb, r, countryCtx, currentCountryId, isPivot);
+                var ctx = await BuildRuleContextAsync(amb, r, countryCtx, currentCountryId, isPivot).ConfigureAwait(false);
                 var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Edit).ConfigureAwait(false);
                 return res;
             }
@@ -1281,7 +1311,7 @@ namespace RecoTool.Services
                                                 if (amb != null)
                                                 {
                                                     bool isPivot = amb.IsPivotAccount(countryCtx.CNT_AmbrePivot);
-                                                    var ctx = BuildRuleContext(amb, reconciliation, countryCtx, currentCountryId, isPivot);
+                                                    var ctx = await BuildRuleContextAsync(amb, reconciliation, countryCtx, currentCountryId, isPivot).ConfigureAwait(false);
                                                     var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Edit).ConfigureAwait(false);
                                                     if (res != null && res.Rule != null)
                                                     {
@@ -2019,7 +2049,7 @@ namespace RecoTool.Services
         }
 
         #region Truth Table Helpers
-        private RuleContext BuildRuleContext(DataAmbre a, Reconciliation r, Country country, string countryId, bool isPivot)
+        private async Task<RuleContext> BuildRuleContextAsync(DataAmbre a, Reconciliation r, Country country, string countryId, bool isPivot, bool? isGrouped = null, bool? isAmountMatch = null)
         {
             // Determine transaction type enum name
             var transformationService = new TransformationService(new List<Country> { country });
@@ -2038,7 +2068,7 @@ namespace RecoTool.Services
                 {
                     if (!string.IsNullOrWhiteSpace(r?.DWINGS_InvoiceID))
                     {
-                        var invoices = GetDwingsInvoicesAsync().GetAwaiter().GetResult();
+                        var invoices = await GetDwingsInvoicesAsync().ConfigureAwait(false);
                         var inv = invoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, r.DWINGS_InvoiceID, StringComparison.OrdinalIgnoreCase));
                         paymentMethod = inv?.PAYMENT_METHOD;
                     }
@@ -2068,8 +2098,18 @@ namespace RecoTool.Services
             
             string txName = tx.HasValue ? Enum.GetName(typeof(TransactionType), tx.Value) : null;
 
-            // Guarantee type primarily on receivable from label
-            string guaranteeType = !isPivot ? ExtractGuaranteeTypeFromLabel(a.RawLabel) : null;
+            // Guarantee type from DWINGS (requires a DWINGS_GuaranteeID link)
+            string guaranteeType = null;
+            if (!isPivot && !string.IsNullOrWhiteSpace(r?.DWINGS_GuaranteeID))
+            {
+                try
+                {
+                    var guarantees = await GetDwingsGuaranteesAsync().ConfigureAwait(false);
+                    var guar = guarantees?.FirstOrDefault(g => string.Equals(g?.GUARANTEE_ID, r.DWINGS_GuaranteeID, StringComparison.OrdinalIgnoreCase));
+                    guaranteeType = guar?.GUARANTEE_TYPE;
+                }
+                catch { }
+            }
 
             // Sign from signed amount
             var sign = a.SignedAmount >= 0 ? "C" : "D";
@@ -2079,17 +2119,22 @@ namespace RecoTool.Services
                           || !string.IsNullOrWhiteSpace(r?.DWINGS_GuaranteeID)
                           || !string.IsNullOrWhiteSpace(r?.DWINGS_BGPMT));
 
+            // Calculate IsGrouped, IsAmountMatch, and MissingAmount if not provided
+            decimal? missingAmount = null;
+            if (!isGrouped.HasValue || !isAmountMatch.HasValue)
+            {
+                var flags = await CalculateGroupingFlagsAsync(a, r, country, countryId).ConfigureAwait(false);
+                isGrouped = flags.isGrouped ?? isGrouped;
+                isAmountMatch = flags.isAmountMatch ?? isAmountMatch;
+                missingAmount = flags.missingAmount;
+            }
+
             // Extended time/state inputs
             var today = DateTime.Today;
             bool? triggerDateIsNull = !(r?.TriggerDate.HasValue == true);
             int? daysSinceTrigger = r?.TriggerDate.HasValue == true
                 ? (int?)(today - r.TriggerDate.Value.Date).TotalDays
                 : null;
-            // Transitory if a BGPMT token is present in reconciliation numbers or raw label
-            var bgpmt = DwingsLinkingHelper.ExtractBgpmtToken(a?.Reconciliation_Num)
-                        ?? DwingsLinkingHelper.ExtractBgpmtToken(a?.ReconciliationOrigin_Num)
-                        ?? DwingsLinkingHelper.ExtractBgpmtToken(a?.RawLabel);
-            bool? isTransitory = !string.IsNullOrWhiteSpace(bgpmt);
             int? operationDaysAgo = a?.Operation_Date.HasValue == true
                 ? (int?)(today - a.Operation_Date.Value.Date).TotalDays
                 : null;
@@ -2108,7 +2153,7 @@ namespace RecoTool.Services
             {
                 if (!string.IsNullOrWhiteSpace(r?.DWINGS_InvoiceID))
                 {
-                    var invoices = GetDwingsInvoicesAsync().GetAwaiter().GetResult();
+                    var invoices = await GetDwingsInvoicesAsync().ConfigureAwait(false);
                     var inv = invoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, r.DWINGS_InvoiceID, StringComparison.OrdinalIgnoreCase));
                     if (inv != null)
                     {
@@ -2129,14 +2174,14 @@ namespace RecoTool.Services
                 GuaranteeType = guaranteeType,
                 TransactionType = txName,
                 HasDwingsLink = hasDw,
-                IsGrouped = null, // not computed on edit path
-                IsAmountMatch = null, // not computed on edit path
+                IsGrouped = isGrouped,
+                IsAmountMatch = isAmountMatch,
+                MissingAmount = missingAmount,
                 Sign = sign,
                 Bgi = r?.DWINGS_InvoiceID,
                 // Extended fields
                 TriggerDateIsNull = triggerDateIsNull,
                 DaysSinceTrigger = daysSinceTrigger,
-                IsTransitory = isTransitory,
                 OperationDaysAgo = operationDaysAgo,
                 IsMatched = isMatched,
                 HasManualMatch = hasManualMatch,
@@ -2163,15 +2208,131 @@ namespace RecoTool.Services
             catch { return null; }
         }
         
-        private string ExtractGuaranteeTypeFromLabel(string label)
+        /// <summary>
+        /// Calculate IsGrouped, IsAmountMatch, and MissingAmount flags for all lines in batch (optimized for bulk operations).
+        /// Returns a dictionary mapping each Ambre ID to its (isGrouped, isAmountMatch, missingAmount) flags.
+        /// </summary>
+        private async Task<Dictionary<string, (bool isGrouped, bool isAmountMatch, decimal? missingAmount)>> CalculateGroupingFlagsBatchAsync(
+            List<DataAmbre> ambreLines, Country country, string countryId)
         {
-            if (string.IsNullOrEmpty(label))
-                return null;
-            var upper = label.ToUpperInvariant();
-            if (upper.Contains("REISSUANCE")) return "REISSUANCE";
-            if (upper.Contains("ISSUANCE")) return "ISSUANCE";
-            if (upper.Contains("ADVISING") || upper.Contains("NOTIFICATION") || upper.Contains("NOTIF")) return "ADVISING";
-            return null;
+            var result = new Dictionary<string, (bool isGrouped, bool isAmountMatch, decimal? missingAmount)>(StringComparer.OrdinalIgnoreCase);
+            
+            try
+            {
+                var reconCs = _offlineFirstService?.GetCountryConnectionString(countryId);
+                if (string.IsNullOrWhiteSpace(reconCs) || ambreLines == null || ambreLines.Count == 0)
+                    return result;
+                
+                // Step 1: Load all reconciliations for these lines
+                var reconDict = new Dictionary<string, Reconciliation>(StringComparer.OrdinalIgnoreCase);
+                using (var conn = new System.Data.OleDb.OleDbConnection(reconCs))
+                {
+                    await conn.OpenAsync().ConfigureAwait(false);
+                    foreach (var ambre in ambreLines)
+                    {
+                        using (var cmd = conn.CreateCommand())
+                        {
+                            cmd.CommandText = "SELECT * FROM T_Reconciliation WHERE ID = ?";
+                            cmd.Parameters.Add("@id", System.Data.OleDb.OleDbType.VarWChar).Value = ambre.ID;
+                            
+                            using (var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
+                            {
+                                if (await reader.ReadAsync().ConfigureAwait(false))
+                                {
+                                    var recon = new Reconciliation
+                                    {
+                                        ID = reader["ID"]?.ToString(),
+                                        DWINGS_InvoiceID = reader["DWINGS_InvoiceID"]?.ToString(),
+                                        DWINGS_GuaranteeID = reader["DWINGS_GuaranteeID"]?.ToString(),
+                                        DWINGS_BGPMT = reader["DWINGS_BGPMT"]?.ToString()
+                                    };
+                                    reconDict[recon.ID] = recon;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Step 2: Group lines by DWINGS reference (priority: BGPMT > InvoiceID > GuaranteeID)
+                var groupsByRef = new Dictionary<string, List<DataAmbre>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var ambre in ambreLines)
+                {
+                    if (!reconDict.TryGetValue(ambre.ID, out var recon))
+                    {
+                        result[ambre.ID] = (false, false, null); // No reconciliation = not grouped
+                        continue;
+                    }
+                    
+                    string dwingsRef = null;
+                    if (!string.IsNullOrWhiteSpace(recon.DWINGS_BGPMT))
+                        dwingsRef = recon.DWINGS_BGPMT.Trim().ToUpperInvariant();
+                    else if (!string.IsNullOrWhiteSpace(recon.DWINGS_InvoiceID))
+                        dwingsRef = recon.DWINGS_InvoiceID.Trim().ToUpperInvariant();
+                    else if (!string.IsNullOrWhiteSpace(recon.DWINGS_GuaranteeID))
+                        dwingsRef = recon.DWINGS_GuaranteeID.Trim().ToUpperInvariant();
+                    
+                    if (string.IsNullOrWhiteSpace(dwingsRef))
+                    {
+                        result[ambre.ID] = (false, false, null); // No DWINGS link = not grouped
+                        continue;
+                    }
+                    
+                    if (!groupsByRef.ContainsKey(dwingsRef))
+                        groupsByRef[dwingsRef] = new List<DataAmbre>();
+                    groupsByRef[dwingsRef].Add(ambre);
+                }
+                
+                // Step 3: Calculate flags for each group
+                var pivotAccount = country?.CNT_AmbrePivot;
+                var receivableAccount = country?.CNT_AmbreReceivable;
+                
+                foreach (var group in groupsByRef.Values)
+                {
+                    bool hasPivot = group.Any(l => string.Equals(l.Account_ID, pivotAccount, StringComparison.OrdinalIgnoreCase));
+                    bool hasReceivable = group.Any(l => string.Equals(l.Account_ID, receivableAccount, StringComparison.OrdinalIgnoreCase));
+                    
+                    bool isGrouped = hasPivot && hasReceivable;
+                    bool isAmountMatch = false;
+                    decimal? missingAmount = null;
+                    
+                    if (isGrouped)
+                    {
+                        // Calculate MissingAmount (Receivable + Pivot, should be 0 when balanced)
+                        decimal receivableTotal = group.Where(l => string.Equals(l.Account_ID, receivableAccount, StringComparison.OrdinalIgnoreCase)).Sum(l => l.SignedAmount);
+                        decimal pivotTotal = group.Where(l => string.Equals(l.Account_ID, pivotAccount, StringComparison.OrdinalIgnoreCase)).Sum(l => l.SignedAmount);
+                        missingAmount = receivableTotal + pivotTotal;
+                        isAmountMatch = Math.Abs(missingAmount.Value) < 0.01m; // tolerance for floating point
+                    }
+                    
+                    // Set flags for all lines in this group
+                    foreach (var line in group)
+                    {
+                        result[line.ID] = (isGrouped, isAmountMatch, missingAmount);
+                    }
+                }
+            }
+            catch { }
+            
+            return result;
+        }
+        
+        /// <summary>
+        /// Calculate IsGrouped, IsAmountMatch, and MissingAmount for a single line (used on edit path).
+        /// </summary>
+        private async Task<(bool? isGrouped, bool? isAmountMatch, decimal? missingAmount)> CalculateGroupingFlagsAsync(
+            DataAmbre a, Reconciliation r, Country country, string countryId)
+        {
+            try
+            {
+                var batch = await CalculateGroupingFlagsBatchAsync(new List<DataAmbre> { a }, country, countryId).ConfigureAwait(false);
+                if (batch.TryGetValue(a.ID, out var flags))
+                    return (flags.isGrouped, flags.isAmountMatch, flags.missingAmount);
+                return (null, null, null);
+            }
+            catch
+            {
+                return (null, null, null);
+            }
         }
         #endregion
     }

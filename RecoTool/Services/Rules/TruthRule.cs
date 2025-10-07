@@ -41,6 +41,9 @@ namespace RecoTool.Services.Rules
         public bool? HasDwingsLink { get; set; }
         public bool? IsGrouped { get; set; }
         public bool? IsAmountMatch { get; set; }
+        // Missing amount range conditions (IsGrouped must be true for this to apply)
+        public decimal? MissingAmountMin { get; set; }
+        public decimal? MissingAmountMax { get; set; }
         // 'C' (credit), 'D' (debit), or '*'
         public string Sign { get; set; } = "*";
 
@@ -56,7 +59,6 @@ namespace RecoTool.Services.Rules
         public bool? TriggerDateIsNull { get; set; }
         public int? DaysSinceTriggerMin { get; set; }
         public int? DaysSinceTriggerMax { get; set; }
-        public bool? IsTransitory { get; set; }
         public int? OperationDaysAgoMin { get; set; }
         public int? OperationDaysAgoMax { get; set; }
         public bool? IsMatched { get; set; }
@@ -95,6 +97,7 @@ namespace RecoTool.Services.Rules
         public bool? HasDwingsLink { get; set; }
         public bool? IsGrouped { get; set; }
         public bool? IsAmountMatch { get; set; }
+        public decimal? MissingAmount { get; set; } // Discrepancy when grouped (Receivable + Pivot)
         public string Sign { get; set; } // 'C' or 'D'
         public string Bgi { get; set; } // DWINGS_InvoiceID
 
@@ -106,7 +109,6 @@ namespace RecoTool.Services.Rules
         // Extended inputs for time/state rules
         public bool? TriggerDateIsNull { get; set; }
         public int? DaysSinceTrigger { get; set; }
-        public bool? IsTransitory { get; set; }
         public int? OperationDaysAgo { get; set; }
         public bool? IsMatched { get; set; }
         public bool? HasManualMatch { get; set; }

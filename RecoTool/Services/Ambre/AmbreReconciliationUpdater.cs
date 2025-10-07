@@ -10,6 +10,7 @@ using RecoTool.Models;
 using RecoTool.Services.DTOs;
 using RecoTool.Services;
 using RecoTool.Services.Rules;
+using RecoTool.Services.Helpers;
 using RecoTool.Infrastructure.Logging;
 
 namespace RecoTool.Services.AmbreImport
@@ -61,7 +62,7 @@ namespace RecoTool.Services.AmbreImport
                     changes.ToArchive,
                     countryId);
 
-                // Remplir les références DWINGS manquantes pour les enregistrements mis à  jour (sans écraser les liens manuels)
+                // Remplir les références DWINGS manquantes pour les enregistrements mis à  jour (sans écraser les liens manuels)
                 try
                 {
                     await UpdateDwingsReferencesForUpdatesAsync(changes.ToUpdate, country, countryId);
@@ -69,6 +70,16 @@ namespace RecoTool.Services.AmbreImport
                 catch (Exception fillEx)
                 {
                     LogManager.Warning($"Non-blocking: failed to backfill DWINGS refs for updates: {fillEx.Message}");
+                }
+
+                // Réappliquer les règles aux enregistrements existants
+                try
+                {
+                    await ApplyRulesToExistingRecordsAsync(changes.ToUpdate, country, countryId);
+                }
+                catch (Exception rulesEx)
+                {
+                    LogManager.Warning($"Non-blocking: failed to apply rules to existing records: {rulesEx.Message}");
                 }
 
                 LogManager.Info($"T_Reconciliation update completed for {countryId}");
@@ -79,14 +90,14 @@ namespace RecoTool.Services.AmbreImport
                 throw new InvalidOperationException($"Failed to update reconciliation table: {ex.Message}", ex);
             }
         }
-
         private async Task<List<Reconciliation>> PrepareReconciliationsAsync(
             List<DataAmbre> newRecords,
             Country country,
             string countryId)
         {
-            // OPTIMIZATION: Load DWINGS invoices once and cache TransformationService
+            // OPTIMIZATION: Load DWINGS data once and cache TransformationService
             var dwInvoices = (await _reconciliationService.GetDwingsInvoicesAsync()).ToList();
+            var dwGuarantees = (await _reconciliationService.GetDwingsGuaranteesAsync()).ToList();
             _transformationService = new TransformationService(new List<Country> { country });
             
             var staged = new List<ReconciliationStaging>();
@@ -108,8 +119,25 @@ namespace RecoTool.Services.AmbreImport
             
             staged = (await Task.WhenAll(tasks)).ToList();
 
-            // Apply truth-table rules (import scope) - pass dwInvoices to avoid reloading
-            await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices);
+            // Calculate KPIs (IsGrouped, MissingAmount) before applying rules
+            var kpiStaging = staged.Select(s => new ReconciliationKpiCalculator.ReconciliationStaging
+            {
+                DataAmbre = s.DataAmbre,
+                Reconciliation = s.Reconciliation,
+                IsPivot = s.IsPivot
+            }).ToList();
+            
+            ReconciliationKpiCalculator.CalculateKpis(kpiStaging);
+            
+            // Copy calculated KPIs back to staging items
+            for (int i = 0; i < staged.Count && i < kpiStaging.Count; i++)
+            {
+                staged[i].IsGrouped = kpiStaging[i].IsGrouped;
+                staged[i].MissingAmount = kpiStaging[i].MissingAmount;
+            }
+
+            // Apply truth-table rules (import scope) - pass dwInvoices and dwGuarantees to avoid reloading
+            await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
 
             return staged.Select(s => s.Reconciliation).ToList();
         }
@@ -145,7 +173,7 @@ namespace RecoTool.Services.AmbreImport
         }
 
 
-        private RuleContext BuildRuleContext(DataAmbre dataAmbre, Reconciliation reconciliation, Country country, string countryId, bool isPivot, List<DwingsInvoiceDto> dwInvoices)
+        private RuleContext BuildRuleContext(DataAmbre dataAmbre, Reconciliation reconciliation, Country country, string countryId, bool isPivot, List<DwingsInvoiceDto> dwInvoices, List<DwingsGuaranteeDto> dwGuarantees, bool isGrouped, decimal? missingAmount)
         {
             // Determine transaction type enum name
             TransactionType? tx;
@@ -188,8 +216,17 @@ namespace RecoTool.Services.AmbreImport
             
             string txName = tx.HasValue ? Enum.GetName(typeof(TransactionType), tx.Value) : null;
 
-            // Guarantee type detectable primarily on receivable from label
-            string guaranteeType = !isPivot ? ExtractGuaranteeType(dataAmbre.RawLabel) : null;
+            // Guarantee type from DWINGS (requires a DWINGS_GuaranteeID link)
+            string guaranteeType = null;
+            if (!isPivot && !string.IsNullOrWhiteSpace(reconciliation?.DWINGS_GuaranteeID))
+            {
+                try
+                {
+                    var guar = dwGuarantees?.FirstOrDefault(g => string.Equals(g?.GUARANTEE_ID, reconciliation.DWINGS_GuaranteeID, StringComparison.OrdinalIgnoreCase));
+                    guaranteeType = guar?.GUARANTEE_TYPE;
+                }
+                catch { }
+            }
 
             // Sign from amount
             var sign = dataAmbre.SignedAmount >= 0 ? "C" : "D";
@@ -205,11 +242,6 @@ namespace RecoTool.Services.AmbreImport
             int? daysSinceTrigger = reconciliation?.TriggerDate.HasValue == true
                 ? (int?)(today - reconciliation.TriggerDate.Value.Date).TotalDays
                 : null;
-            // Transitory if a BGPMT token is present in reconciliation numbers or raw label
-            var bgpmt = DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.Reconciliation_Num)
-                        ?? DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.ReconciliationOrigin_Num)
-                        ?? DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.RawLabel);
-            bool? isTransitory = !string.IsNullOrWhiteSpace(bgpmt);
             int? operationDaysAgo = dataAmbre.Operation_Date.HasValue
                 ? (int?)(today - dataAmbre.Operation_Date.Value.Date).TotalDays
                 : null;
@@ -248,14 +280,14 @@ namespace RecoTool.Services.AmbreImport
                 GuaranteeType = guaranteeType,
                 TransactionType = txName,
                 HasDwingsLink = hasDw,
-                IsGrouped = null, // TODO: compute when grouping info is available
-                IsAmountMatch = null, // TODO: compute when counterpart amounts available
+                IsGrouped = isGrouped,
+                IsAmountMatch = isGrouped && missingAmount.HasValue && missingAmount.Value == 0,
+                MissingAmount = missingAmount,
                 Sign = sign,
                 Bgi = reconciliation?.DWINGS_InvoiceID,
                 // Extended fields
                 TriggerDateIsNull = triggerDateIsNull,
                 DaysSinceTrigger = daysSinceTrigger,
-                IsTransitory = isTransitory,
                 OperationDaysAgo = operationDaysAgo,
                 IsMatched = isMatched,
                 HasManualMatch = hasManualMatch,
@@ -269,7 +301,7 @@ namespace RecoTool.Services.AmbreImport
             };
         }
 
-        private async Task ApplyTruthTableRulesAsync(List<ReconciliationStaging> staged, Country country, string countryId, List<DwingsInvoiceDto> dwInvoices)
+        private async Task ApplyTruthTableRulesAsync(List<ReconciliationStaging> staged, Country country, string countryId, List<DwingsInvoiceDto> dwInvoices, List<DwingsGuaranteeDto> dwGuarantees)
         {
             try
             {
@@ -281,7 +313,7 @@ namespace RecoTool.Services.AmbreImport
                 // OPTIMIZATION: Parallel rule evaluation (rules engine is stateless)
                 var ruleEvaluationTasks = staged.Select(async s =>
                 {
-                    var ctx = BuildRuleContext(s.DataAmbre, s.Reconciliation, country, countryId, s.IsPivot, dwInvoices);
+                    var ctx = BuildRuleContext(s.DataAmbre, s.Reconciliation, country, countryId, s.IsPivot, dwInvoices, dwGuarantees, s.IsGrouped, s.MissingAmount);
                     var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Import).ConfigureAwait(false);
                     return (Staging: s, Result: res);
                 }).ToList();
@@ -452,24 +484,6 @@ namespace RecoTool.Services.AmbreImport
             }
         }
 
-
-        private string ExtractGuaranteeType(string label)
-        {
-            if (string.IsNullOrEmpty(label))
-                return null;
-
-            var upperLabel = label.ToUpper();
-
-            if (upperLabel.Contains("REISSUANCE"))
-                return "REISSUANCE";
-            if (upperLabel.Contains("ISSUANCE"))
-                return "ISSUANCE";
-            if (upperLabel.Contains("ADVISING"))
-                return "ADVISING";
-
-            return null;
-        }
-
         private async Task ApplyReconciliationChangesAsync(
             List<Reconciliation> toInsert,
             List<DataAmbre> toUpdate,
@@ -590,6 +604,204 @@ namespace RecoTool.Services.AmbreImport
             catch (Exception ex)
             {
                 LogManager.Warning($"Backfill DWINGS refs failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Réapplique les règles de truth-table aux enregistrements existants (ToUpdate).
+        /// Cela permet de mettre à jour Action, KPI, IncidentType, etc. selon les règles actuelles.
+        /// </summary>
+        private async Task ApplyRulesToExistingRecordsAsync(
+            List<DataAmbre> updatedRecords,
+            Country country,
+            string countryId)
+        {
+            try
+            {
+                if (updatedRecords == null || updatedRecords.Count == 0) return;
+
+                LogManager.Info($"Applying truth-table rules to {updatedRecords.Count} existing records");
+
+                // Load DWINGS data and transformation service
+                var dwInvoices = (await _reconciliationService.GetDwingsInvoicesAsync()).ToList();
+                var dwGuarantees = (await _reconciliationService.GetDwingsGuaranteesAsync()).ToList();
+                _transformationService = new TransformationService(new List<Country> { country });
+
+                // Load existing reconciliations from database
+                var connectionString = _offlineFirstService.GetCountryConnectionString(countryId);
+                var reconciliations = new Dictionary<string, Reconciliation>(StringComparer.OrdinalIgnoreCase);
+                
+                using (var conn = new OleDbConnection(connectionString))
+                {
+                    await conn.OpenAsync();
+                    
+                    // Batch load reconciliations (Access IN clause limit ~1000)
+                    var ids = updatedRecords.Select(r => r.ID).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                    const int batchSize = 500;
+                    
+                    for (int i = 0; i < ids.Count; i += batchSize)
+                    {
+                        var batch = ids.Skip(i).Take(batchSize).ToList();
+                        var inClause = string.Join(",", batch.Select((_, idx) => "?"));
+                        
+                        using (var cmd = new OleDbCommand(
+                            $"SELECT * FROM [T_Reconciliation] WHERE [ID] IN ({inClause})", conn))
+                        {
+                            foreach (var id in batch)
+                                cmd.Parameters.AddWithValue("@ID", id);
+                            
+                            using (var reader = await cmd.ExecuteReaderAsync())
+                            {
+                                while (await reader.ReadAsync())
+                                {
+                                    var rec = MapReconciliationFromReader(reader);
+                                    if (rec != null && !string.IsNullOrWhiteSpace(rec.ID))
+                                        reconciliations[rec.ID] = rec;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Create staging items
+                var staged = new List<ReconciliationStaging>();
+                foreach (var dataAmbre in updatedRecords)
+                {
+                    if (!reconciliations.TryGetValue(dataAmbre.ID, out var reconciliation))
+                        continue;
+
+                    staged.Add(new ReconciliationStaging
+                    {
+                        Reconciliation = reconciliation,
+                        DataAmbre = dataAmbre,
+                        IsPivot = dataAmbre.IsPivotAccount(country.CNT_AmbrePivot),
+                        Bgi = reconciliation.DWINGS_InvoiceID
+                    });
+                }
+
+                if (staged.Count == 0)
+                {
+                    LogManager.Info("No reconciliations found for existing records");
+                    return;
+                }
+
+                // Calculate KPIs (IsGrouped, MissingAmount)
+                var kpiStaging = staged.Select(s => new ReconciliationKpiCalculator.ReconciliationStaging
+                {
+                    DataAmbre = s.DataAmbre,
+                    Reconciliation = s.Reconciliation,
+                    IsPivot = s.IsPivot
+                }).ToList();
+                
+                ReconciliationKpiCalculator.CalculateKpis(kpiStaging);
+                
+                // Copy calculated KPIs back to staging items
+                for (int i = 0; i < staged.Count && i < kpiStaging.Count; i++)
+                {
+                    staged[i].IsGrouped = kpiStaging[i].IsGrouped;
+                    staged[i].MissingAmount = kpiStaging[i].MissingAmount;
+                }
+
+                // Apply truth-table rules
+                LogManager.Info($"Evaluating truth-table rules for {staged.Count} existing records...");
+                await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
+
+                // Count how many had rules applied
+                int rulesAppliedCount = staged.Count(s => s.Reconciliation.Action.HasValue || s.Reconciliation.KPI.HasValue);
+                LogManager.Info($"Rules evaluation complete: {rulesAppliedCount}/{staged.Count} records had rules applied");
+
+                // Update database with rule results
+                using (var conn = new OleDbConnection(connectionString))
+                {
+                    await conn.OpenAsync();
+                    using (var tx = conn.BeginTransaction())
+                    {
+                        try
+                        {
+                            var nowUtc = DateTime.UtcNow;
+                            foreach (var s in staged)
+                            {
+                                var rec = s.Reconciliation;
+                                
+                                using (var cmd = new OleDbCommand(
+                                    @"UPDATE [T_Reconciliation] SET 
+                                        [Action]=?, [KPI]=?, [IncidentType]=?, [RiskyItem]=?, [ReasonNonRisky]=?,
+                                        [ToRemind]=?, [ToRemindDate]=?, [FirstClaimDate]=?,
+                                        [LastModified]=?, [ModifiedBy]=?
+                                      WHERE [ID]=?", conn, tx))
+                                {
+                                    cmd.Parameters.Add("@Action", OleDbType.Integer).Value = rec.Action.HasValue ? (object)rec.Action.Value : DBNull.Value;
+                                    cmd.Parameters.Add("@KPI", OleDbType.Integer).Value = rec.KPI.HasValue ? (object)rec.KPI.Value : DBNull.Value;
+                                    cmd.Parameters.Add("@IncidentType", OleDbType.Integer).Value = rec.IncidentType.HasValue ? (object)rec.IncidentType.Value : DBNull.Value;
+                                    cmd.Parameters.Add("@RiskyItem", OleDbType.Boolean).Value = rec.RiskyItem.HasValue ? (object)rec.RiskyItem.Value : DBNull.Value;
+                                    cmd.Parameters.Add("@ReasonNonRisky", OleDbType.Integer).Value = rec.ReasonNonRisky.HasValue ? (object)rec.ReasonNonRisky.Value : DBNull.Value;
+                                    cmd.Parameters.Add("@ToRemind", OleDbType.Boolean).Value = rec.ToRemind;
+                                    cmd.Parameters.Add("@ToRemindDate", OleDbType.Date).Value = rec.ToRemindDate.HasValue ? (object)rec.ToRemindDate.Value : DBNull.Value;
+                                    cmd.Parameters.Add("@FirstClaimDate", OleDbType.Date).Value = rec.FirstClaimDate.HasValue ? (object)rec.FirstClaimDate.Value : DBNull.Value;
+                                    cmd.Parameters.Add("@LastModified", OleDbType.Date).Value = nowUtc;
+                                    cmd.Parameters.AddWithValue("@ModifiedBy", _currentUser);
+                                    cmd.Parameters.AddWithValue("@ID", rec.ID);
+                                    
+                                    await cmd.ExecuteNonQueryAsync();
+                                }
+                            }
+                            
+                            tx.Commit();
+                            LogManager.Info($"Applied rules to {staged.Count} existing records");
+                        }
+                        catch
+                        {
+                            tx.Rollback();
+                            throw;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogManager.Warning($"Failed to apply rules to existing records: {ex.Message}");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Maps a Reconciliation object from a DataReader
+        /// </summary>
+        private Reconciliation MapReconciliationFromReader(System.Data.Common.DbDataReader reader)
+        {
+            try
+            {
+                return new Reconciliation
+                {
+                    ID = reader["ID"]?.ToString(),
+                    DWINGS_GuaranteeID = reader["DWINGS_GuaranteeID"]?.ToString(),
+                    DWINGS_InvoiceID = reader["DWINGS_InvoiceID"]?.ToString(),
+                    DWINGS_BGPMT = reader["DWINGS_BGPMT"]?.ToString(),
+                    Action = reader["Action"] as int?,
+                    ActionStatus = reader["ActionStatus"] as bool?,
+                    ActionDate = reader["ActionDate"] as DateTime?,
+                    Comments = reader["Comments"]?.ToString(),
+                    InternalInvoiceReference = reader["InternalInvoiceReference"]?.ToString(),
+                    FirstClaimDate = reader["FirstClaimDate"] as DateTime?,
+                    LastClaimDate = reader["LastClaimDate"] as DateTime?,
+                    ToRemind = (reader["ToRemind"] as bool?) ?? false,
+                    ToRemindDate = reader["ToRemindDate"] as DateTime?,
+                    ACK = (reader["ACK"] as bool?) ?? false,
+                    SwiftCode = reader["SwiftCode"]?.ToString(),
+                    PaymentReference = reader["PaymentReference"]?.ToString(),
+                    KPI = reader["KPI"] as int?,
+                    IncidentType = reader["IncidentType"] as int?,
+                    RiskyItem = reader["RiskyItem"] as bool?,
+                    ReasonNonRisky = reader["ReasonNonRisky"] as int?,
+                    TriggerDate = reader["TriggerDate"] as DateTime?,
+                    CreationDate = reader["CreationDate"] as DateTime?,
+                    ModifiedBy = reader["ModifiedBy"]?.ToString(),
+                    LastModified = reader["LastModified"] as DateTime?
+                };
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -814,6 +1026,10 @@ namespace RecoTool.Services.AmbreImport
             public DataAmbre DataAmbre { get; set; }
             public bool IsPivot { get; set; }
             public string Bgi { get; set; }
+            
+            // Calculated KPIs from ReconciliationKpiCalculator
+            public bool IsGrouped { get; set; }
+            public decimal? MissingAmount { get; set; }
         }
     }
 }

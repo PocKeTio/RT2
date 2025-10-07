@@ -97,7 +97,6 @@ namespace RecoTool.Services.Rules
                                     TriggerDateIsNull = GetNullableBool(row, table, "TriggerDateIsNull"),
                                     DaysSinceTriggerMin = GetNullableInt(row, table, "DaysSinceTriggerMin"),
                                     DaysSinceTriggerMax = GetNullableInt(row, table, "DaysSinceTriggerMax"),
-                                    IsTransitory = GetNullableBool(row, table, "IsTransitory"),
                                     OperationDaysAgoMin = GetNullableInt(row, table, "OperationDaysAgoMin"),
                                     OperationDaysAgoMax = GetNullableInt(row, table, "OperationDaysAgoMax"),
                                     IsMatched = GetNullableBool(row, table, "IsMatched"),
@@ -182,7 +181,6 @@ namespace RecoTool.Services.Rules
                         TriggerDateIsNull INTEGER,
                         DaysSinceTriggerMin INTEGER,
                         DaysSinceTriggerMax INTEGER,
-                        IsTransitory INTEGER,
                         OperationDaysAgoMin INTEGER,
                         OperationDaysAgoMax INTEGER,
                         IsMatched INTEGER,
@@ -237,7 +235,6 @@ namespace RecoTool.Services.Rules
                 ("TriggerDateIsNull", "INTEGER"),
                 ("DaysSinceTriggerMin", "INTEGER"),
                 ("DaysSinceTriggerMax", "INTEGER"),
-                ("IsTransitory", "INTEGER"),
                 ("OperationDaysAgoMin", "INTEGER"),
                 ("OperationDaysAgoMax", "INTEGER"),
                 ("IsMatched", "INTEGER"),
@@ -273,7 +270,7 @@ namespace RecoTool.Services.Rules
                 var triStateBoolCols = new[]
                 {
                     "HasDwingsLink", "IsGrouped", "IsAmountMatch",
-                    "TriggerDateIsNull", "IsTransitory", "IsMatched",
+                    "TriggerDateIsNull", "IsMatched",
                     "HasManualMatch", "IsFirstRequest", "OutputRiskyItem", "OutputToRemind",
                     "MTStatusAcked", "CommIdEmail", "BgiStatusInitiated", "OutputFirstClaimToday"
                 };
@@ -329,7 +326,7 @@ namespace RecoTool.Services.Rules
                         HasDwingsLink=?, IsGrouped=?, IsAmountMatch=?, Sign=?,
                         MTStatusAcked=?, CommIdEmail=?, BgiStatusInitiated=?,
                         TriggerDateIsNull=?, DaysSinceTriggerMin=?, DaysSinceTriggerMax=?,
-                        IsTransitory=?, OperationDaysAgoMin=?, OperationDaysAgoMax=?,
+                        OperationDaysAgoMin=?, OperationDaysAgoMax=?,
                         IsMatched=?, HasManualMatch=?, IsFirstRequest=?, DaysSinceReminderMin=?, DaysSinceReminderMax=?, CurrentActionId=?,
                         OutputActionId=?, OutputKpiId=?, OutputIncidentTypeId=?, OutputRiskyItem=?, OutputReasonNonRiskyId=?,
                         OutputToRemind=?, OutputToRemindDays=?, OutputFirstClaimToday=?, ApplyTo=?, AutoApply=?, Message=?
@@ -350,7 +347,7 @@ namespace RecoTool.Services.Rules
                         HasDwingsLink, IsGrouped, IsAmountMatch, Sign,
                         MTStatusAcked, CommIdEmail, BgiStatusInitiated,
                         TriggerDateIsNull, DaysSinceTriggerMin, DaysSinceTriggerMax,
-                        IsTransitory, OperationDaysAgoMin, OperationDaysAgoMax,
+                        OperationDaysAgoMin, OperationDaysAgoMax,
                         IsMatched, HasManualMatch, IsFirstRequest, DaysSinceReminderMin, DaysSinceReminderMax, CurrentActionId,
                         OutputActionId, OutputKpiId, OutputIncidentTypeId, OutputRiskyItem, OutputReasonNonRiskyId,
                         OutputToRemind, OutputToRemindDays, OutputFirstClaimToday, ApplyTo, AutoApply, Message)
@@ -407,7 +404,6 @@ namespace RecoTool.Services.Rules
             cmd.Parameters.Add("@TriggerDateIsNull", OleDbType.Integer).Value = (object)(r.TriggerDateIsNull.HasValue ? (r.TriggerDateIsNull.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@DaysSinceTriggerMin", OleDbType.Integer).Value = (object)(r.DaysSinceTriggerMin.HasValue ? r.DaysSinceTriggerMin.Value : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@DaysSinceTriggerMax", OleDbType.Integer).Value = (object)(r.DaysSinceTriggerMax.HasValue ? r.DaysSinceTriggerMax.Value : (int?)null) ?? DBNull.Value;
-            cmd.Parameters.Add("@IsTransitory", OleDbType.Integer).Value = (object)(r.IsTransitory.HasValue ? (r.IsTransitory.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@OperationDaysAgoMin", OleDbType.Integer).Value = (object)(r.OperationDaysAgoMin.HasValue ? r.OperationDaysAgoMin.Value : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@OperationDaysAgoMax", OleDbType.Integer).Value = (object)(r.OperationDaysAgoMax.HasValue ? r.OperationDaysAgoMax.Value : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@IsMatched", OleDbType.Integer).Value = (object)(r.IsMatched.HasValue ? (r.IsMatched.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;

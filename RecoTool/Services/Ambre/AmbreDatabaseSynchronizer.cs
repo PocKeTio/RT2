@@ -313,12 +313,23 @@ namespace RecoTool.Services.AmbreImport
             }
             else if (HasDataChanged(existingItem, newItem))
             {
-                // Update needed
+                // Update needed - data has changed
                 newItem.ID = existingItem.ID;
                 newItem.Version = existingItem.Version + 1;
                 newItem.CreationDate = existingItem.CreationDate;
                 newItem.LastModified = DateTime.UtcNow;
                 newItem.ModifiedBy = _currentUser;
+                changes.ToUpdate.Add(newItem);
+            }
+            else
+            {
+                // No data change, but still add to ToUpdate to reapply rules
+                // (rules may have changed, or DWINGS data may have changed)
+                newItem.ID = existingItem.ID;
+                newItem.Version = existingItem.Version; // Keep same version since data didn't change
+                newItem.CreationDate = existingItem.CreationDate;
+                newItem.LastModified = existingItem.LastModified; // Keep original timestamp
+                newItem.ModifiedBy = existingItem.ModifiedBy; // Keep original user
                 changes.ToUpdate.Add(newItem);
             }
         }

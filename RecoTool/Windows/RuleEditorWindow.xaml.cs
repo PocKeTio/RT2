@@ -123,7 +123,6 @@ namespace RecoTool.Windows
                 TriggerDateIsNull = r.TriggerDateIsNull,
                 DaysSinceTriggerMin = r.DaysSinceTriggerMin,
                 DaysSinceTriggerMax = r.DaysSinceTriggerMax,
-                IsTransitory = r.IsTransitory,
                 OperationDaysAgoMin = r.OperationDaysAgoMin,
                 OperationDaysAgoMax = r.OperationDaysAgoMax,
                 IsMatched = r.IsMatched,

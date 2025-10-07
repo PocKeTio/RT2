@@ -61,6 +61,7 @@ namespace RecoTool.Services
         /// <summary>
         /// Deletes all synchronized ChangeLog entries from the control/lock database and then attempts a Compact & Repair.
         /// Safe to call multiple times. Should be called while holding the global lock to avoid external access.
+        /// IMPORTANT: May fail if other connections (e.g., TodoListSessionTracker heartbeat) are holding the DB open.
         /// </summary>
         public async Task CleanupChangeLogAndCompactAsync(string countryId)
         {
@@ -89,11 +90,30 @@ namespace RecoTool.Services
             }
             catch { /* best-effort cleanup */ }
 
-            // 2) Compact & Repair the lock/control database to reclaim space
+            // 2) Close all TodoListSessionTracker connections to release locks
+            //    (connections will automatically recreate on next heartbeat tick)
+            try
+            {
+                TodoListSessionTracker.CloseAllConnections();
+            }
+            catch { /* best-effort cleanup */ }
+            
+            // Wait briefly for connections to fully release
+            await Task.Delay(1000).ConfigureAwait(false);
+
+            // 3) Compact & Repair the lock/control database to reclaim space
             try
             {
                 var dbPath = GetRemoteLockDbPath(countryId);
+                System.Diagnostics.Debug.WriteLine($"[CleanupChangeLogAndCompactAsync] Attempting to compact control DB: {dbPath}");
                 var compacted = await TryCompactAccessDatabaseAsync(dbPath);
+                
+                if (string.IsNullOrWhiteSpace(compacted) || !File.Exists(compacted))
+                {
+                    System.Diagnostics.Debug.WriteLine("[CleanupChangeLogAndCompactAsync] Compaction failed or was skipped (likely DB is locked by heartbeat or other process)");
+                    return; // Exit early if compaction failed
+                }
+                
                 if (!string.IsNullOrWhiteSpace(compacted) && File.Exists(compacted))
                 {
                     try

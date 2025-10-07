@@ -13,8 +13,12 @@ namespace RecoTool.Services
     /// and provide multi-user awareness.
     /// Uses the country-specific Lock database for session tracking.
     /// </summary>
-    public sealed class TodoListSessionTracker : IDisposable
+    public class TodoListSessionTracker : IDisposable
     {
+        // Static registry of all active trackers for cleanup coordination
+        private static readonly List<WeakReference<TodoListSessionTracker>> _activeTrackers = new List<WeakReference<TodoListSessionTracker>>();
+        private static readonly object _staticLock = new object();
+        
         private readonly string _lockDbConnectionString;
         private readonly string _currentUserId;
         private readonly Timer _heartbeatTimer;
@@ -43,24 +47,26 @@ namespace RecoTool.Services
         /// </summary>
         /// <param name="lockDbConnectionString">Connection string to the country's Lock database</param>
         /// <param name="currentUserId">Current user identifier (e.g., Windows username)</param>
-        /// <param name="countryId">Country ID for session isolation</param>
         public TodoListSessionTracker(string lockDbConnectionString, string currentUserId)
         {
             if (string.IsNullOrWhiteSpace(lockDbConnectionString))
-                throw new ArgumentNullException(nameof(lockDbConnectionString));
+                throw new ArgumentException("Connection string is required", nameof(lockDbConnectionString));
             if (string.IsNullOrWhiteSpace(currentUserId))
-                throw new ArgumentNullException(nameof(currentUserId));
+                throw new ArgumentException("User ID is required", nameof(currentUserId));
 
             _lockDbConnectionString = lockDbConnectionString;
             _currentUserId = currentUserId;
 
             // Start heartbeat timer - check every 10 seconds
             _heartbeatTimer = new Timer(HeartbeatCallback, null, CHECK_INTERVAL_MS, CHECK_INTERVAL_MS);
+            
+            // Register in static list for cleanup coordination
+            lock (_staticLock)
+            {
+                _activeTrackers.Add(new WeakReference<TodoListSessionTracker>(this));
+            }
         }
 
-        /// <summary>
-        /// Ensures the session tracking table exists in the database
-        /// </summary>
         public async Task EnsureTableAsync()
         {
             const string table = "T_TodoList_Sessions";
@@ -603,9 +609,36 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// Closes the persistent connection and invalidates cache
+        /// Closes all persistent connections from all active TodoListSessionTracker instances.
+        /// Used before database maintenance operations (e.g., compaction) to release locks.
+        /// Connections will be automatically recreated on the next heartbeat tick.
         /// </summary>
-        private void CloseConnection()
+        public static void CloseAllConnections()
+        {
+            lock (_staticLock)
+            {
+                // Clean up dead references and close active ones
+                _activeTrackers.RemoveAll(wr => !wr.TryGetTarget(out _));
+                
+                foreach (var weakRef in _activeTrackers)
+                {
+                    if (weakRef.TryGetTarget(out var tracker))
+                    {
+                        try { tracker.CloseConnection(); }
+                        catch { /* ignore errors */ }
+                    }
+                }
+                
+                System.Diagnostics.Debug.WriteLine($"[TodoSessionTracker.CloseAllConnections] Closed {_activeTrackers.Count} active connections");
+            }
+        }
+        
+        /// <summary>
+        /// Closes the persistent connection and invalidates cache.
+        /// Can be called externally to release the database lock before maintenance operations (e.g., compaction).
+        /// The connection will be automatically recreated on the next heartbeat tick.
+        /// </summary>
+        public void CloseConnection()
         {
             lock (_lock)
             {

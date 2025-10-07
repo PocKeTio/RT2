@@ -124,6 +124,7 @@ namespace RecoTool.Windows
                     prevScreenUpdating = app.ScreenUpdating;
                     prevEnableEvents = app.EnableEvents;
                     app.ScreenUpdating = false;
+                    app.DisplayAlerts = false;
                     app.EnableEvents = false;
                     app.Calculation = Microsoft.Office.Interop.Excel.XlCalculation.xlCalculationManual;
                 }
@@ -229,6 +230,7 @@ namespace RecoTool.Windows
                             app.Calculation = CalculationState;
                             app.ScreenUpdating = prevScreenUpdating;
                             app.EnableEvents = prevEnableEvents;
+                            app.DisplayAlerts = true;
                         }
                         catch { }
                         app.Quit();

@@ -371,7 +371,6 @@ namespace RecoTool.Services.DTOs
 
         // Propriétés DWINGS
         public string GUARANTEE_ID { get; set; }
-        public string G_GUARANTEE_TYPE { get; set; }
         public string INVOICE_ID { get; set; }
         public string COMMISSION_ID { get; set; }
         public string SYNDICATE { get; set; }
@@ -382,6 +381,7 @@ namespace RecoTool.Services.DTOs
         public string GUARANTEE_TYPE { get; set; }
 
         // DWINGS Guarantee extra fields (prefixed with G_ to avoid collisions) - LAZY LOADED
+        public string G_GUARANTEE_TYPE => GetGuaranteeData()?.GUARANTEE_TYPE;
         public string G_NATURE => GetGuaranteeData()?.NATURE;
         public string G_EVENT_STATUS => GetGuaranteeData()?.EVENT_STATUS;
         public string G_EVENT_EFFECTIVEDATE => GetGuaranteeData()?.EVENT_EFFECTIVEDATE?.ToString("yyyy-MM-dd");

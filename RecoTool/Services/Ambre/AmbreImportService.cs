@@ -121,6 +121,15 @@ namespace RecoTool.Services
                 // 7. Finalisation
                 await FinalizeImportAsync(countryId, result, progressCallback);
                 
+                // Force reconnection of TodoListSessionTracker to avoid lingering OleDbExceptions
+                // after import completes (in case Access DB had lock contention issues)
+                try
+                {
+                    TodoListSessionTracker.CloseAllConnections();
+                    LogManager.Info("TodoListSessionTracker connections reset after import");
+                }
+                catch { /* best effort */ }
+                
                 result.IsSuccess = true;
                 result.EndTime = DateTime.UtcNow;
                 return result;
@@ -129,6 +138,10 @@ namespace RecoTool.Services
             {
                 result.Errors.Add($"Error during import: {ex.Message}");
                 result.EndTime = DateTime.UtcNow;
+                
+                // Force reconnection even on error to avoid lingering OleDbExceptions
+                try { TodoListSessionTracker.CloseAllConnections(); } catch { }
+                
                 return result;
             }
         }

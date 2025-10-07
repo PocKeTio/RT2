@@ -21,6 +21,7 @@ namespace RecoTool.Services
         
         private readonly string _lockDbConnectionString;
         private readonly string _currentUserId;
+        private readonly OfflineFirstService _offlineFirstService;
         private readonly Timer _heartbeatTimer;
         private readonly HashSet<int> _trackedTodoIds = new HashSet<int>();
         private readonly Dictionary<int, DateTime> _lastActivityTime = new Dictionary<int, DateTime>(); // Track last edit activity per TodoId
@@ -47,7 +48,8 @@ namespace RecoTool.Services
         /// </summary>
         /// <param name="lockDbConnectionString">Connection string to the country's Lock database</param>
         /// <param name="currentUserId">Current user identifier (e.g., Windows username)</param>
-        public TodoListSessionTracker(string lockDbConnectionString, string currentUserId)
+        /// <param name="offlineFirstService">Optional OfflineFirstService to check for import operations</param>
+        public TodoListSessionTracker(string lockDbConnectionString, string currentUserId, OfflineFirstService offlineFirstService = null)
         {
             if (string.IsNullOrWhiteSpace(lockDbConnectionString))
                 throw new ArgumentException("Connection string is required", nameof(lockDbConnectionString));
@@ -56,6 +58,7 @@ namespace RecoTool.Services
 
             _lockDbConnectionString = lockDbConnectionString;
             _currentUserId = currentUserId;
+            _offlineFirstService = offlineFirstService;
 
             // Start heartbeat timer - check every 10 seconds
             _heartbeatTimer = new Timer(HeartbeatCallback, null, CHECK_INTERVAL_MS, CHECK_INTERVAL_MS);
@@ -379,6 +382,13 @@ namespace RecoTool.Services
 
             try
             {
+                // Skip heartbeat writes if an Ambre import is in progress to avoid DB lock contention
+                if (_offlineFirstService != null && _offlineFirstService.IsAmbreImportInProgress())
+                {
+                    System.Diagnostics.Debug.WriteLine("[TodoSessionTracker.Heartbeat] Skipping heartbeat - Ambre import in progress");
+                    return;
+                }
+
                 _heartbeatTickCounter++;
                 bool shouldWriteHeartbeat = (_heartbeatTickCounter % HEARTBEAT_WRITE_INTERVAL_TICKS) == 0;
 

@@ -2307,8 +2307,8 @@ namespace RecoTool.Windows
                 var currentUserId = Environment.UserName;
                 System.Diagnostics.Debug.WriteLine($"[InitializeTodoSessionTracker] User: {currentUserId}");
 
-                // Create tracker
-                _todoSessionTracker = new TodoListSessionTracker(lockDbConnString, currentUserId);
+                // Create tracker with OfflineFirstService reference to avoid lock contention during imports
+                _todoSessionTracker = new TodoListSessionTracker(lockDbConnString, currentUserId, _offlineFirstService);
                 System.Diagnostics.Debug.WriteLine($"[InitializeTodoSessionTracker] Tracker created");
 
                 // Ensure table exists

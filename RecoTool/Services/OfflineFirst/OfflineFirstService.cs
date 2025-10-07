@@ -76,6 +76,14 @@ namespace RecoTool.Services
             return new AmbreImportScope(this);
         }
 
+        /// <summary>
+        /// Returns true if an Ambre import is currently in progress
+        /// </summary>
+        public bool IsAmbreImportInProgress()
+        {
+            return Interlocked.CompareExchange(ref _ambreImportScopeCount, 0, 0) > 0;
+        }
+
         private sealed class AmbreImportScope : IDisposable
         {
             private OfflineFirstService _svc;

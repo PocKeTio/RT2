@@ -2458,7 +2458,6 @@ namespace RecoTool.Windows
                 // Get current country
                 var country = _offlineFirstService?.CurrentCountry;
                 if (country == null) return;
-
                 // Get Lock DB connection string for this country (already a full connection string)
                 var lockDbConnString = _offlineFirstService?.GetControlConnectionString(country.CNT_Id);
                 if (string.IsNullOrEmpty(lockDbConnString)) return;
@@ -2466,8 +2465,8 @@ namespace RecoTool.Windows
                 // Get current user ID (Windows username)
                 var currentUserId = Environment.UserName;
 
-                // Create tracker
-                _todoSessionTracker = new TodoListSessionTracker(lockDbConnString, currentUserId);
+                // Create tracker with OfflineFirstService reference to avoid lock contention during imports
+                _todoSessionTracker = new TodoListSessionTracker(lockDbConnString, currentUserId, _offlineFirstService);
 
                 // Ensure table exists
                 _ = _todoSessionTracker.EnsureTableAsync();
@@ -2475,7 +2474,6 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Failed to initialize TodoList session tracker: {ex.Message}");
-                // Non-critical, continue without multi-user features
             }
         }
 

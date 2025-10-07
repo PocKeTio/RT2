@@ -51,6 +51,9 @@ namespace RecoTool.Helpers
 
         /// <summary>
         /// Resolve a DWINGS invoice by exact BGI match, refine by amount when multiple hits.
+        /// CRITICAL: Only considers invoices with T_INVOICE_STATUS = 'GENERATED'.
+        /// If only one GENERATED invoice exists with this BGI, return it.
+        /// Otherwise, return the one with matching REQUESTED_AMOUNT (or closest BILLING_AMOUNT).
         /// </summary>
         public static DwingsInvoiceDto ResolveInvoiceByBgiWithAmount(
             IEnumerable<DwingsInvoiceDto> invoices,
@@ -61,22 +64,34 @@ namespace RecoTool.Helpers
             var key = Norm(bgi);
             if (string.IsNullOrWhiteSpace(key)) return null;
 
-            var candidates = invoices.Where(i => Norm(i?.INVOICE_ID) == key).ToList();
+            var candidates = invoices
+                .Where(i => Norm(i?.INVOICE_ID) == key)
+                .Where(i => string.Equals(Norm(i?.T_INVOICE_STATUS), "GENERATED", StringComparison.OrdinalIgnoreCase))
+                .ToList();
             if (candidates.Count == 0) return null;
+            
+            // If only one invoice exists, return it
+            if (candidates.Count == 1) return candidates[0];
 
-            // Prefer exact amount match
-            var exact = candidates.FirstOrDefault(i => AmountMatches(ambreSignedAmount, i?.BILLING_AMOUNT));
-            if (exact != null) return exact;
+            // Multiple invoices: prefer exact REQUESTED_AMOUNT match
+            var exactReq = candidates.FirstOrDefault(i => AmountMatches(ambreSignedAmount, i?.REQUESTED_AMOUNT));
+            if (exactReq != null) return exactReq;
+            
+            // Fallback: exact BILLING_AMOUNT match
+            var exactBill = candidates.FirstOrDefault(i => AmountMatches(ambreSignedAmount, i?.BILLING_AMOUNT));
+            if (exactBill != null) return exactBill;
 
-            // Fallback: closest by absolute delta
+            // Fallback: closest by REQUESTED_AMOUNT, then BILLING_AMOUNT
             return candidates
-                .OrderBy(i => i?.BILLING_AMOUNT.HasValue == true ? Math.Abs((ambreSignedAmount ?? 0) - i.BILLING_AMOUNT.Value) : decimal.MaxValue)
+                .OrderBy(i => i?.REQUESTED_AMOUNT.HasValue == true ? Math.Abs((ambreSignedAmount ?? 0) - i.REQUESTED_AMOUNT.Value) : decimal.MaxValue)
+                .ThenBy(i => i?.BILLING_AMOUNT.HasValue == true ? Math.Abs((ambreSignedAmount ?? 0) - i.BILLING_AMOUNT.Value) : decimal.MaxValue)
                 .FirstOrDefault();
         }
 
         /// <summary>
         /// Return related invoices for a given Guarantee ID, ranked by date proximity then amount proximity.
         /// Matches against BUSINESS_CASE_REFERENCE and BUSINESS_CASE_ID, with exact match preferred over contains.
+        /// IMPORTANT: Filters by T_INVOICE_STATUS = 'GENERATED' and matches REQUESTED_AMOUNT.
         /// </summary>
         public static List<DwingsInvoiceDto> ResolveInvoicesByGuarantee(
             IEnumerable<DwingsInvoiceDto> invoices,
@@ -98,6 +113,13 @@ namespace RecoTool.Helpers
             var exact = list.Where(MatchEq).ToList();
             var partial = exact.Count > 0 ? new List<DwingsInvoiceDto>() : list.Where(MatchContains).ToList();
             var candidates = exact.Count > 0 ? exact : partial;
+            
+            // CRITICAL: Filter by INVOICE_STATUS = 'GENERATED' when resolving by Guarantee
+            candidates = candidates.Where(i => 
+                string.Equals(Norm(i?.T_INVOICE_STATUS), "GENERATED", StringComparison.OrdinalIgnoreCase)
+            ).ToList();
+            
+            if (candidates.Count == 0) return new List<DwingsInvoiceDto>();
 
             Func<DwingsInvoiceDto, double> dateScore = (i) =>
             {
@@ -109,8 +131,11 @@ namespace RecoTool.Helpers
 
             Func<DwingsInvoiceDto, decimal> amountScore = (i) =>
             {
-                if (!ambreAmount.HasValue || !i?.BILLING_AMOUNT.HasValue == true) return decimal.MaxValue;
-                return Math.Abs(ambreAmount.Value - i.BILLING_AMOUNT.Value);
+                if (!ambreAmount.HasValue) return decimal.MaxValue;
+                // Prioritize REQUESTED_AMOUNT match, fallback to BILLING_AMOUNT
+                var reqDelta = i?.REQUESTED_AMOUNT.HasValue == true ? Math.Abs(ambreAmount.Value - i.REQUESTED_AMOUNT.Value) : decimal.MaxValue;
+                var billDelta = i?.BILLING_AMOUNT.HasValue == true ? Math.Abs(ambreAmount.Value - i.BILLING_AMOUNT.Value) : decimal.MaxValue;
+                return Math.Min(reqDelta, billDelta);
             };
 
             return candidates
@@ -175,7 +200,9 @@ namespace RecoTool.Helpers
 
         /// <summary>
         /// Resolve a DWINGS invoice by BGPMT reference.
-        /// If multiple invoices share the BGPMT, refine by amount.
+        /// CRITICAL: Only considers invoices with T_INVOICE_STATUS = 'GENERATED'.
+        /// If only one GENERATED invoice exists with this BGPMT, return it.
+        /// Otherwise, return the one with matching REQUESTED_AMOUNT (or closest amount).
         /// </summary>
         public static DwingsInvoiceDto ResolveInvoiceByBgpmt(
             IEnumerable<DwingsInvoiceDto> invoices,
@@ -186,7 +213,28 @@ namespace RecoTool.Helpers
             var key = Norm(bgpmt);
             if (string.IsNullOrWhiteSpace(key)) return null;
 
-            return invoices.Where(i => Norm(i?.BGPMT) == key).FirstOrDefault();
+            var candidates = invoices
+                .Where(i => Norm(i?.BGPMT) == key)
+                .Where(i => string.Equals(Norm(i?.T_INVOICE_STATUS), "GENERATED", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (candidates.Count == 0) return null;
+            
+            // If only one invoice exists, return it
+            if (candidates.Count == 1) return candidates[0];
+            
+            // Multiple invoices: prefer exact REQUESTED_AMOUNT match
+            var exactReq = candidates.FirstOrDefault(i => AmountMatches(ambreSignedAmount, i?.REQUESTED_AMOUNT));
+            if (exactReq != null) return exactReq;
+            
+            // Fallback: exact BILLING_AMOUNT match
+            var exactBill = candidates.FirstOrDefault(i => AmountMatches(ambreSignedAmount, i?.BILLING_AMOUNT));
+            if (exactBill != null) return exactBill;
+            
+            // Fallback: closest by REQUESTED_AMOUNT, then BILLING_AMOUNT
+            return candidates
+                .OrderBy(i => i?.REQUESTED_AMOUNT.HasValue == true ? Math.Abs((ambreSignedAmount ?? 0) - i.REQUESTED_AMOUNT.Value) : decimal.MaxValue)
+                .ThenBy(i => i?.BILLING_AMOUNT.HasValue == true ? Math.Abs((ambreSignedAmount ?? 0) - i.BILLING_AMOUNT.Value) : decimal.MaxValue)
+                .FirstOrDefault();
         }
     }
 }

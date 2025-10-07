@@ -54,6 +54,79 @@
         <local:IsNegativeConverter x:Key="IsNegativeConverter"/>
         <local:PluralConverter x:Key="PluralConverter"/>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+        
+        <!-- Column Header Styles by Data Source -->
+        <!-- Ambre: Blue gradient -->
+        <Style x:Key="AmbreHeaderStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#E3F2FD" Offset="0"/>
+                        <GradientStop Color="#BBDEFB" Offset="1"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Foreground" Value="#0D47A1"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="BorderBrush" Value="#90CAF9"/>
+            <Setter Property="BorderThickness" Value="0,0,1,2"/>
+            <Setter Property="ToolTip" Value="Source: AMBRE"/>
+        </Style>
+        
+        <!-- User/Reconciliation: Green gradient -->
+        <Style x:Key="UserHeaderStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#E8F5E9" Offset="0"/>
+                        <GradientStop Color="#C8E6C9" Offset="1"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Foreground" Value="#1B5E20"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="BorderBrush" Value="#81C784"/>
+            <Setter Property="BorderThickness" Value="0,0,1,2"/>
+            <Setter Property="ToolTip" Value="Source: T_Reconciliation (User Data)"/>
+        </Style>
+        
+        <!-- DWINGS Invoice: Orange gradient -->
+        <Style x:Key="DWInvoiceHeaderStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#FFF3E0" Offset="0"/>
+                        <GradientStop Color="#FFE0B2" Offset="1"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Foreground" Value="#E65100"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="BorderBrush" Value="#FFB74D"/>
+            <Setter Property="BorderThickness" Value="0,0,1,2"/>
+            <Setter Property="ToolTip" Value="Source: DWINGS Invoice"/>
+        </Style>
+        
+        <!-- DWINGS Guarantee: Purple gradient -->
+        <Style x:Key="DWGuaranteeHeaderStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#F3E5F5" Offset="0"/>
+                        <GradientStop Color="#E1BEE7" Offset="1"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Foreground" Value="#4A148C"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="BorderBrush" Value="#BA68C8"/>
+            <Setter Property="BorderThickness" Value="0,0,1,2"/>
+            <Setter Property="ToolTip" Value="Source: DWINGS Guarantee"/>
+        </Style>
     </UserControl.Resources>
     <Grid Background="{DynamicResource BNPBackground}">
         <Grid.RowDefinitions>
@@ -1041,7 +1114,7 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <!-- Account side column (P/R) -->
-                            <DataGridTextColumn Header="Account" Binding="{Binding AccountSide}" Width="60" IsReadOnly="True" CellStyle="{StaticResource ReviewedTodayHighlight}">
+                            <DataGridTextColumn Header="Account" Binding="{Binding AccountSide}" Width="60" IsReadOnly="True" CellStyle="{StaticResource ReviewedTodayHighlight}" HeaderStyle="{StaticResource AmbreHeaderStyle}">
                                 <DataGridTextColumn.ElementStyle>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="HorizontalAlignment" Value="Center"/>
@@ -1057,24 +1130,24 @@
                                     </Style>
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>
-                            <DataGridTextColumn Header="Event Num" Binding="{Binding Event_Num}" Width="100" IsReadOnly="True" CellStyle="{StaticResource ReviewedTodayHighlight}" ElementStyle="{StaticResource CenteredTextStyle}"/>
-                            <DataGridTextColumn Header="Pivot Transaction Codes" Binding="{Binding Pivot_TransactionCodesFromLabel}" Width="150" IsReadOnly="True" CellStyle="{StaticResource ReviewedTodayHighlight}"/>
-                            <DataGridTextColumn Header="Category" Binding="{Binding CategoryLabel}" Width="140" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Raw Label" Binding="{Binding RawLabel}" Width="200" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Event Num" Binding="{Binding Event_Num}" Width="100" IsReadOnly="True" CellStyle="{StaticResource ReviewedTodayHighlight}" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
+                            <DataGridTextColumn Header="Pivot Transaction Codes" Binding="{Binding Pivot_TransactionCodesFromLabel}" Width="150" IsReadOnly="True" CellStyle="{StaticResource ReviewedTodayHighlight}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
+                            <DataGridTextColumn Header="Category" Binding="{Binding CategoryLabel}" Width="140" IsReadOnly="True" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
+                            <DataGridTextColumn Header="Raw Label" Binding="{Binding RawLabel}" Width="200" IsReadOnly="True" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
                             <!-- Newly added DWINGS invoice columns near the beginning -->
-                            <DataGridTextColumn Header="Receiver" Binding="{Binding I_RECEIVER_NAME}" Width="180" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="MT Status" Binding="{Binding I_MT_STATUS}" Width="120" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="MT Error message" Binding="{Binding I_ERROR_MESSAGE}" Width="220" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Original Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="130" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
-                            <DataGridTextColumn Header="Operation Date" Binding="{Binding Operation_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
-                            <DataGridTextColumn Header="Reconciliation Num" Binding="{Binding Reconciliation_Num}" Width="130" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Reconciliation Origin Num" Binding="{Binding ReconciliationOrigin_Num}" Width="150" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Receiver" Binding="{Binding I_RECEIVER_NAME}" Width="180" IsReadOnly="True" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
+                            <DataGridTextColumn Header="MT Status" Binding="{Binding I_MT_STATUS}" Width="120" IsReadOnly="True" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
+                            <DataGridTextColumn Header="MT Error message" Binding="{Binding I_ERROR_MESSAGE}" Width="220" IsReadOnly="True" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
+                            <DataGridTextColumn Header="Original Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="130" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
+                            <DataGridTextColumn Header="Operation Date" Binding="{Binding Operation_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
+                            <DataGridTextColumn Header="Reconciliation Num" Binding="{Binding Reconciliation_Num}" Width="130" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
+                            <DataGridTextColumn Header="Reconciliation Origin Num" Binding="{Binding ReconciliationOrigin_Num}" Width="150" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
                             <!-- DWINGS link fields (from T_Reconciliation) -->
-                            <DataGridTextColumn Header="DW Invoice ID (BGI)" Binding="{Binding DWINGS_InvoiceID}" Width="150" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="DW Commission (BGPMT)" Binding="{Binding DWINGS_BGPMT}" Width="170" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="DW Guarantee ID" Binding="{Binding DWINGS_GuaranteeID}" Width="170" IsReadOnly="True"/>
-                            <DataGridTextColumn Header="Amount in Country Cur" Binding="{Binding SignedAmount, StringFormat={}{0:N2}}" Width="150" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
-                            <DataGridTextColumn Header="CCY" Binding="{Binding CCY}" Width="60" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
+                            <DataGridTextColumn Header="DW Invoice ID (BGI)" Binding="{Binding DWINGS_InvoiceID}" Width="150" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
+                            <DataGridTextColumn Header="DW Commission (BGPMT)" Binding="{Binding DWINGS_BGPMT}" Width="170" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
+                            <DataGridTextColumn Header="DW Guarantee ID" Binding="{Binding DWINGS_GuaranteeID}" Width="170" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
+                            <DataGridTextColumn Header="Amount in Country Cur" Binding="{Binding SignedAmount, StringFormat={}{0:N2}}" Width="150" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
+                            <DataGridTextColumn Header="CCY" Binding="{Binding CCY}" Width="60" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
                             
                             <!-- Missing Amount: conditional formatting (Green=0, Orange>0, Red<0) -->
                             <DataGridTemplateColumn Header="Missing Amount" Width="130" SortMemberPath="MissingAmount" IsReadOnly="True">
@@ -1173,8 +1246,8 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             
-                            <DataGridTextColumn Header="Value Date" Binding="{Binding Value_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
-                            <DataGridTextColumn Header="Guarantee Type" Width="130" IsReadOnly="True" SortMemberPath="G_GUARANTEE_TYPE">
+                            <DataGridTextColumn Header="Value Date" Binding="{Binding Value_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
+                            <DataGridTextColumn Header="Guarantee Type" Width="130" IsReadOnly="True" SortMemberPath="G_GUARANTEE_TYPE" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}">
                                 <DataGridTextColumn.Binding>
                                     <Binding Path="G_GUARANTEE_TYPE" Converter="{StaticResource GuaranteeTypeDisplayConverter}"/>
                                 </DataGridTextColumn.Binding>
@@ -1182,7 +1255,7 @@
                             <!-- Colonnes T_Reconciliation (données combinées à plat dans ReconciliationViewData) -->
 
                             <!-- Action: editable ComboBox filtered by category and account type -->
-                            <DataGridTemplateColumn Header="Action" Width="120" SortMemberPath="Action">
+                            <DataGridTemplateColumn Header="Action" Width="120" SortMemberPath="Action" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <Border>
@@ -1255,7 +1328,7 @@
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
                             <!-- Action Date -->
-                            <DataGridTemplateColumn Header="Action Date" Width="160" SortMemberPath="ActionDate">
+                            <DataGridTemplateColumn Header="Action Date" Width="160" SortMemberPath="ActionDate" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding ActionDate, StringFormat={}{0:dd/MM/yyyy}}" HorizontalAlignment="Center" TextAlignment="Center"/>
@@ -1280,7 +1353,7 @@
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
                             <!-- Assignee: displays user name, binds ID -->
-                            <DataGridTemplateColumn Header="Assignee" Width="140" SortMemberPath="Assignee">
+                            <DataGridTemplateColumn Header="Assignee" Width="140" SortMemberPath="Assignee" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock HorizontalAlignment="Center" TextAlignment="Center">
@@ -1306,7 +1379,7 @@
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
 
-                            <DataGridTemplateColumn Header="Comments" Width="220" SortMemberPath="LastComment">
+                            <DataGridTemplateColumn Header="Comments" Width="220" SortMemberPath="LastComment" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <Border Background="Transparent"
@@ -1325,10 +1398,10 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Internal Invoice Ref" Binding="{Binding InternalInvoiceReference}" Width="140"/>
+                            <DataGridTextColumn Header="Internal Invoice Ref" Binding="{Binding InternalInvoiceReference}" Width="140" HeaderStyle="{StaticResource UserHeaderStyle}"/>
 
                             <!-- First Claim Date with DatePicker -->
-                            <DataGridTemplateColumn Header="First Claim Date" Width="160" SortMemberPath="FirstClaimDate">
+                            <DataGridTemplateColumn Header="First Claim Date" Width="160" SortMemberPath="FirstClaimDate" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding FirstClaimDate, StringFormat={}{0:dd/MM/yyyy}}" HorizontalAlignment="Center" TextAlignment="Center"/>
@@ -1354,7 +1427,7 @@
                             </DataGridTemplateColumn>
 
                             <!-- Last Claim Date with DatePicker -->
-                            <DataGridTemplateColumn Header="Last Claim Date" Width="160" SortMemberPath="LastClaimDate">
+                            <DataGridTemplateColumn Header="Last Claim Date" Width="160" SortMemberPath="LastClaimDate" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding LastClaimDate, StringFormat={}{0:dd/MM/yyyy}}" HorizontalAlignment="Center" TextAlignment="Center"/>
@@ -1379,7 +1452,7 @@
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
 
-                            <DataGridTemplateColumn Header="To Remind" Width="80" SortMemberPath="ToRemind">
+                            <DataGridTemplateColumn Header="To Remind" Width="80" SortMemberPath="ToRemind" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <CheckBox IsChecked="{Binding ToRemind, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
@@ -1390,7 +1463,7 @@
                             </DataGridTemplateColumn>
 
                             <!-- Remind Date with DatePicker -->
-                            <DataGridTemplateColumn Header="Remind Date" Width="150" SortMemberPath="ToRemindDate">
+                            <DataGridTemplateColumn Header="Remind Date" Width="150" SortMemberPath="ToRemindDate" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding ToRemindDate, StringFormat={}{0:dd/MM/yyyy}}" HorizontalAlignment="Center" TextAlignment="Center"/>
@@ -1414,7 +1487,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="ACK" Width="60" SortMemberPath="ACK">
+                            <DataGridTemplateColumn Header="ACK" Width="60" SortMemberPath="ACK" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <CheckBox IsChecked="{Binding ACK, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
@@ -1423,11 +1496,11 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Swift Code" Binding="{Binding SwiftCode}" Width="100"/>
-                            <DataGridTextColumn Header="Payment Reference" Binding="{Binding PaymentReference}" Width="130"/>
-                            <DataGridTextColumn Header="User" Binding="{Binding Reco_ModifiedBy}" Width="120" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Swift Code" Binding="{Binding SwiftCode}" Width="100" HeaderStyle="{StaticResource UserHeaderStyle}"/>
+                            <DataGridTextColumn Header="Payment Reference" Binding="{Binding PaymentReference}" Width="130" HeaderStyle="{StaticResource UserHeaderStyle}"/>
+                            <DataGridTextColumn Header="User" Binding="{Binding Reco_ModifiedBy}" Width="120" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
                             <!-- KPI: editable ComboBox -->
-                            <DataGridTemplateColumn Header="KPI" Width="160" SortMemberPath="KPI">
+                            <DataGridTemplateColumn Header="KPI" Width="160" SortMemberPath="KPI" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock HorizontalAlignment="Center" TextAlignment="Center">
@@ -1462,7 +1535,7 @@
                             </DataGridTemplateColumn>
 
                             <!-- Incident Type: editable ComboBox -->
-                            <DataGridTemplateColumn Header="Incident Type" Width="180" SortMemberPath="IncidentType">
+                            <DataGridTemplateColumn Header="Incident Type" Width="180" SortMemberPath="IncidentType" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock HorizontalAlignment="Center" TextAlignment="Center">
@@ -1497,8 +1570,8 @@
                             </DataGridTemplateColumn>
                             
                             <!-- Incident Number: editable text field -->
-                            <DataGridTextColumn Header="Incident Number" Binding="{Binding IncNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140"/>
-                            <DataGridTemplateColumn Header="Risky Item" Width="100" SortMemberPath="RiskyItem">
+                            <DataGridTextColumn Header="Incident Number" Binding="{Binding IncNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" HeaderStyle="{StaticResource UserHeaderStyle}"/>
+                            <DataGridTemplateColumn Header="Risky Item" Width="100" SortMemberPath="RiskyItem" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <CheckBox IsChecked="{Binding RiskyItem, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
@@ -1508,7 +1581,7 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <!-- Reason Non Risky: editable ComboBox bound to referential filtered by RISKY category -->
-                            <DataGridTemplateColumn Header="Reason Non Risky" Width="180" SortMemberPath="ReasonNonRisky">
+                            <DataGridTemplateColumn Header="Reason Non Risky" Width="180" SortMemberPath="ReasonNonRisky" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock HorizontalAlignment="Center" TextAlignment="Center">
@@ -1542,23 +1615,23 @@
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
 
-                            <DataGridTextColumn Header="DW Currency" Binding="{Binding GUARANTEE_CURRENCY}" Width="80" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
-                            <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
+                            <DataGridTextColumn Header="DW Currency" Binding="{Binding GUARANTEE_CURRENCY}" Width="80" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
+                            <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
                             
                             <!-- DWINGS Guarantee extended fields -->
-                            <DataGridTextColumn Header="NatureOfDeal" Binding="{Binding G_NATUREOFDEAL}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
-                            <DataGridTextColumn Header="Event Status" Binding="{Binding G_EVENT_STATUS}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
-                            <DataGridTextColumn Header="Issue Date" Binding="{Binding G_ISSUEDATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
-                            <DataGridTextColumn Header="PartyID" Binding="{Binding G_PARTY_ID}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
-                            <DataGridTextColumn Header="PartyName" Binding="{Binding G_NAME1}" Width="160" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="NatureOfDeal" Binding="{Binding G_NATUREOFDEAL}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
+                            <DataGridTextColumn Header="Event Status" Binding="{Binding G_EVENT_STATUS}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
+                            <DataGridTextColumn Header="Issue Date" Binding="{Binding G_ISSUEDATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
+                            <DataGridTextColumn Header="PartyID" Binding="{Binding G_PARTY_ID}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
+                            <DataGridTextColumn Header="PartyName" Binding="{Binding G_NAME1}" Width="160" IsReadOnly="True" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
                             
                             <!-- DWINGS Invoice extended fields -->
-                            <DataGridTextColumn Header="Req Amount" Binding="{Binding I_REQUESTED_INVOICE_AMOUNT}" Width="130" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}"/>
-                            <DataGridTextColumn Header="Cur" Binding="{Binding I_BILLING_CURRENCY}" Width="70" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
-                            <DataGridTextColumn Header="StartDate" Binding="{Binding I_START_DATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
-                            <DataGridTextColumn Header="EndDate" Binding="{Binding I_END_DATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
-                            <DataGridTextColumn Header="Invoice Status" Binding="{Binding I_T_INVOICE_STATUS}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}"/>
-                            <DataGridTextColumn Header="Payment Method" Binding="{Binding I_PAYMENT_METHOD}" Width="140" IsReadOnly="True" SortMemberPath="I_PAYMENT_METHOD"/>
+                            <DataGridTextColumn Header="Req Amount" Binding="{Binding I_REQUESTED_INVOICE_AMOUNT}" Width="130" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
+                            <DataGridTextColumn Header="Cur" Binding="{Binding I_BILLING_CURRENCY}" Width="70" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
+                            <DataGridTextColumn Header="StartDate" Binding="{Binding I_START_DATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
+                            <DataGridTextColumn Header="EndDate" Binding="{Binding I_END_DATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
+                            <DataGridTextColumn Header="Invoice Status" Binding="{Binding I_T_INVOICE_STATUS}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
+                            <DataGridTextColumn Header="Payment Method" Binding="{Binding I_PAYMENT_METHOD}" Width="140" IsReadOnly="True" SortMemberPath="I_PAYMENT_METHOD" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
 
                         </DataGrid.Columns>
                     </DataGrid>

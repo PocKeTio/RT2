@@ -112,7 +112,6 @@ namespace RecoTool.Windows
             Microsoft.Office.Interop.Excel.Application app = null;
             Microsoft.Office.Interop.Excel.Workbook wb = null;
             Microsoft.Office.Interop.Excel.Worksheet ws = null;
-            var CalculationState = Microsoft.Office.Interop.Excel.XlCalculation.xlCalculationAutomatic;
             bool prevScreenUpdating = true, prevEnableEvents = true;
             bool saveSucceeded = false;
             try
@@ -126,7 +125,6 @@ namespace RecoTool.Windows
                     app.ScreenUpdating = false;
                     app.DisplayAlerts = false;
                     app.EnableEvents = false;
-                    app.Calculation = Microsoft.Office.Interop.Excel.XlCalculation.xlCalculationManual;
                 }
                 catch { }
 
@@ -142,47 +140,30 @@ namespace RecoTool.Windows
                 var headerRange = ws.Range[ws.Cells[1, 1], ws.Cells[1, colCount]];
                 headerRange.Value2 = headerArr;
 
-                // 2) Prepare data array (1-based for Excel interop)
-                var data = new object[rowCount, colCount];
-                // Cache binding paths and PropertyInfo to avoid repeated reflection per cell
-                var bindingPaths = new string[colCount];
-                var props = new System.Reflection.PropertyInfo[colCount];
-                var itemType = typeof(RecoTool.Services.DTOs.ReconciliationViewData);
+                // Format date columns as text BEFORE writing data to prevent Excel auto-conversion
                 for (int c = 0; c < colCount; c++)
                 {
-                    string path = null;
-                    if (columns[c] is DataGridBoundColumn dbc)
-                        path = (dbc.Binding as System.Windows.Data.Binding)?.Path?.Path;
-                    else if (columns[c] is DataGridCheckBoxColumn chbc)
-                        path = (chbc.Binding as System.Windows.Data.Binding)?.Path?.Path;
-                    // Template/unbound columns not supported: leave null -> empty string
-                    bindingPaths[c] = path;
-                    if (!string.IsNullOrWhiteSpace(path))
-                        props[c] = itemType.GetProperty(path);
+                    var header = headers[c];
+                    if (header.Contains("Date") || header == "ACK")
+                    {
+                        try
+                        {
+                            var colRange = ws.Range[ws.Cells[2, c + 1], ws.Cells[rowCount + 1, c + 1]];
+                            colRange.NumberFormat = "@"; // Text format
+                        }
+                        catch { }
+                    }
                 }
 
+                // 2) Prepare data array using GetColumnValue for proper conversion
+                var data = new object[rowCount, colCount];
+                
                 for (int r = 0; r < rowCount; r++)
                 {
                     var it = items[r];
                     for (int c = 0; c < colCount; c++)
                     {
-                        var pi = props[c];
-                        if (pi == null) { data[r, c] = string.Empty; continue; }
-                        object raw = null;
-                        try { raw = pi.GetValue(it, null); } catch { raw = null; }
-                        if (raw == null) { data[r, c] = string.Empty; continue; }
-
-                        // Minimal formatting to keep parity with previous export
-                        if (raw is DateTime dt)
-                            data[r, c] = dt.ToString("dd-MM-yyyy", CultureInfo.InvariantCulture);
-                        else if (raw is bool bval)
-                            data[r, c] = bval ? "True" : "False";
-                        else if (raw is decimal dec)
-                            data[r, c] = dec.ToString("N2");
-                        else if (raw is double dbl)
-                            data[r, c] = dbl.ToString("N2");
-                        else
-                            data[r, c] = raw.ToString();
+                        data[r, c] = GetColumnValue(columns[c], it);
                     }
                 }
 
@@ -194,6 +175,7 @@ namespace RecoTool.Windows
 
                 // Autofit
                 ws.Columns.AutoFit();
+                app.Visible = true;
                 wb.SaveAs(filePath, Microsoft.Office.Interop.Excel.XlFileFormat.xlOpenXMLWorkbook);
                 saveSucceeded = true;
             }
@@ -227,7 +209,6 @@ namespace RecoTool.Windows
                         // Restore calculation/events (keep DisplayAlerts = false to prevent FileConfidentiality prompts)
                         try
                         {
-                            app.Calculation = CalculationState;
                             app.ScreenUpdating = prevScreenUpdating;
                             app.EnableEvents = prevEnableEvents;
                             // Keep DisplayAlerts = false to bypass FileConfidentiality prompts
@@ -255,38 +236,97 @@ namespace RecoTool.Windows
         {
             try
             {
-                // Support DataGridTextColumn and DataGridCheckBoxColumn bound to a property
+                var header = (column.Header ?? string.Empty).ToString();
+                
+                // Get binding path from column
                 string bindingPath = null;
-                if (column is DataGridBoundColumn)
+                if (column is DataGridBoundColumn boundCol)
                 {
-                    var b = ((DataGridBoundColumn)column).Binding as System.Windows.Data.Binding;
+                    var b = boundCol.Binding as System.Windows.Data.Binding;
                     bindingPath = b?.Path?.Path;
                 }
-                else if (column is DataGridCheckBoxColumn)
+                else if (column is DataGridTemplateColumn templateCol)
                 {
-                    var b = ((DataGridCheckBoxColumn)column).Binding as System.Windows.Data.Binding;
-                    bindingPath = b?.Path?.Path;
+                    // For template columns, use SortMemberPath as binding path
+                    bindingPath = templateCol.SortMemberPath;
                 }
 
                 if (string.IsNullOrWhiteSpace(bindingPath))
                 {
-                    return string.Empty; // unbound or template column not supported
+                    return string.Empty;
                 }
 
                 var prop = item.GetType().GetProperty(bindingPath);
-                if (prop == null) return string.Empty;
+                if (prop == null)
+                {
+                    return string.Empty;
+                }
                 var raw = prop.GetValue(item, null);
+                
+                // Handle special columns that need ID-to-text conversion
+                // Action, KPI, Incident Type, Reason Non Risky: convert ID to display name
+                if (header == "Action" || header == "KPI" || header == "Incident Type" || header == "Reason Non Risky")
+                {
+                    if (raw == null) return string.Empty;
+                    var id = raw as int?;
+                    if (id == null || id == 0) return string.Empty;
+                    
+                    var userField = AllUserFields?.FirstOrDefault(uf => uf.USR_ID == id.Value);
+                    return userField?.USR_FieldName ?? string.Empty;
+                }
+                
+                // Assignee: convert ID to user name
+                if (header == "Assignee")
+                {
+                    if (raw == null) return string.Empty;
+                    var id = raw as int?;
+                    if (id == null || id == 0) return string.Empty;
+                    
+                    var user = AssigneeOptions?.FirstOrDefault(u => u.Id == id.Value.ToString());
+                    return user?.Name ?? string.Empty;
+                }
+                
+                // Action Status: convert bool to Pending/Done
+                if (header == "Action Status")
+                {
+                    if (raw == null) return string.Empty;
+                    var bval = raw as bool?;
+                    return bval == true ? "DONE" : "PENDING";
+                }
+                
+                // Comments: use LastComment for display
+                if (header == "Comments")
+                {
+                    return item.LastComment ?? string.Empty;
+                }
+                
+                // ToRemind: convert bool to Yes/No
+                if (header == "To Remind")
+                {
+                    if (raw == null) return string.Empty;
+                    var bval = raw as bool?;
+                    return bval == true ? "Yes" : "No";
+                }
+                
+                // HasEmail: convert bool to Yes/No
+                if (header == "HasEmail")
+                {
+                    if (raw == null) return string.Empty;
+                    var bval = raw as bool?;
+                    return bval == true ? "Yes" : "No";
+                }
+                
+                // Default formatting
                 if (raw == null) return string.Empty;
-
-                // Basic formatting similar to grid
+                
                 if (raw is DateTime dt)
-                    return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                if (raw is bool bval)
-                    return bval ? "True" : "False";
+                    return dt.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+                if (raw is bool boolVal)
+                    return boolVal ? "Yes" : "No";
                 if (raw is decimal dec)
-                    return dec.ToString("N2");
+                    return dec.ToString("N2", CultureInfo.InvariantCulture);
                 if (raw is double dbl)
-                    return dbl.ToString("N2");
+                    return dbl.ToString("N2", CultureInfo.InvariantCulture);
 
                 return raw.ToString();
             }

@@ -1313,12 +1313,12 @@
                             <DataGridTextColumn Header="Receiver" Binding="{Binding I_RECEIVER_NAME}" Width="180" IsReadOnly="True" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
                             <DataGridTextColumn Header="MT Status" Binding="{Binding I_MT_STATUS}" Width="120" IsReadOnly="True" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
                             <!-- HasEmail: COMM_ID_EMAIL flag from DWINGS invoice (used for rules) -->
-                            <DataGridTemplateColumn Header="HasEmail" Width="80" SortMemberPath="HasEmail" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}">
+                            <DataGridTemplateColumn Header="HasEmail" Width="80" SortMemberPath="HasEmail" IsReadOnly="True" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <CheckBox IsChecked="{Binding HasEmail, Mode=OneWay}" 
                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                  IsEnabled="False"/>
+                                                  IsEnabled="False" IsHitTestVisible="False"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>

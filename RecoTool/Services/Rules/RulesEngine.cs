@@ -285,15 +285,15 @@ namespace RecoTool.Services.Rules
                     if (!conditionMet) allConditionsMet = false;
                 }
 
-                // MT Status Acked
-                if (r.MTStatusAcked.HasValue)
+                // MT Status
+                if (r.MTStatus != MtStatusCondition.Wildcard)
                 {
-                    bool conditionMet = c.IsMtAcked.HasValue && c.IsMtAcked.Value == r.MTStatusAcked.Value;
+                    bool conditionMet = MatchesMtStatus(r.MTStatus, c.MtStatus);
                     debugEval.Conditions.Add(new RuleConditionDebug
                     {
-                        Field = "MTStatusAcked",
-                        Expected = r.MTStatusAcked.Value.ToString(),
-                        Actual = c.IsMtAcked?.ToString() ?? "(null)",
+                        Field = "MTStatus",
+                        Expected = r.MTStatus.ToString(),
+                        Actual = c.MtStatus ?? "(null)",
                         IsMet = conditionMet
                     });
                     if (!conditionMet) allConditionsMet = false;
@@ -491,7 +491,7 @@ namespace RecoTool.Services.Rules
                 DaysSinceReminder = ctx.DaysSinceReminder,
                 CurrentActionId = ctx.CurrentActionId,
                 // new DWINGS-derived inputs
-                IsMtAcked = ctx.IsMtAcked,
+                MtStatus = ctx.MtStatus,
                 HasCommIdEmail = ctx.HasCommIdEmail,
                 IsBgiInitiated = ctx.IsBgiInitiated
             };
@@ -581,11 +581,10 @@ namespace RecoTool.Services.Rules
                 if (!r.Sign.Equals(c.Sign, StringComparison.OrdinalIgnoreCase)) return false;
             }
 
-            // DWINGS: MT status acked
-            if (r.MTStatusAcked.HasValue)
+            // DWINGS: MT status
+            if (r.MTStatus != MtStatusCondition.Wildcard)
             {
-                if (!c.IsMtAcked.HasValue) return false;
-                if (c.IsMtAcked.Value != r.MTStatusAcked.Value) return false;
+                if (!MatchesMtStatus(r.MTStatus, c.MtStatus)) return false;
             }
 
             // DWINGS: COMM_ID_EMAIL flag
@@ -785,17 +784,12 @@ namespace RecoTool.Services.Rules
                 }
             }
 
-            // MT status acked
-            if (r.MTStatusAcked.HasValue)
+            // MT Status
+            if (r.MTStatus != MtStatusCondition.Wildcard)
             {
-                if (!c.IsMtAcked.HasValue)
+                if (!MatchesMtStatus(r.MTStatus, c.MtStatus))
                 {
-                    failures.Add($"MTStatusAcked: Expected {r.MTStatusAcked.Value}, Context IsMtAcked is null");
-                    return false;
-                }
-                if (c.IsMtAcked.Value != r.MTStatusAcked.Value)
-                {
-                    failures.Add($"MTStatusAcked: Expected {r.MTStatusAcked.Value}, Context={c.IsMtAcked.Value}");
+                    failures.Add($"MTStatus: Expected {r.MTStatus}, Context MtStatus='{c.MtStatus ?? "(null)"}'");
                     return false;
                 }
             }
@@ -970,7 +964,30 @@ namespace RecoTool.Services.Rules
 
             return true;
         }
-        
+
+        private static bool MatchesMtStatus(MtStatusCondition condition, string actualMtStatus)
+        {
+            switch (condition)
+            {
+                case MtStatusCondition.Wildcard:
+                    return true;
+                    
+                case MtStatusCondition.Acked:
+                    return !string.IsNullOrWhiteSpace(actualMtStatus) && 
+                           string.Equals(actualMtStatus, "ACKED", StringComparison.OrdinalIgnoreCase);
+                    
+                case MtStatusCondition.NotAcked:
+                    return !string.IsNullOrWhiteSpace(actualMtStatus) && 
+                           !string.Equals(actualMtStatus, "ACKED", StringComparison.OrdinalIgnoreCase);
+                    
+                case MtStatusCondition.Null:
+                    return string.IsNullOrWhiteSpace(actualMtStatus);
+                    
+                default:
+                    return false;
+            }
+        }
+
         private static bool IsWildcard(string s)
         {
             return string.IsNullOrWhiteSpace(s) || s.Trim() == "*";

@@ -932,6 +932,207 @@ namespace RecoTool.Services
             await SaveReconciliationsAsync(new[] { receivableReco }.Concat(pivotReconciliations)).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Applique la règle spéciale MANUAL_OUTGOING: trouve les paires de lignes pivot avec montants opposés,
+        /// même numéro de réconciliation, et catégories MANUAL_OUTGOING + PAYMENT.
+        /// </summary>
+        public async Task<int> ApplyManualOutgoingRuleAsync(string countryId)
+        {
+            try
+            {
+                var country = _countries.ContainsKey(countryId) ? _countries[countryId] : null;
+                if (country == null) return 0;
+
+                // Get Action and KPI IDs for "TO MATCH" and "PAY BUT NOT RECONCILIED"
+                var allUserFields = _offlineFirstService?.UserFields;
+                if (allUserFields == null) return 0;
+
+                var toMatchAction = allUserFields.FirstOrDefault(uf => 
+                    string.Equals(uf.USR_Category, "Action", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(uf.USR_FieldName, "TO MATCH", StringComparison.OrdinalIgnoreCase));
+                var payButNotReconciledKpi = allUserFields.FirstOrDefault(uf => 
+                    string.Equals(uf.USR_Category, "KPI", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(uf.USR_FieldName, "PAY BUT NOT RECONCILIED", StringComparison.OrdinalIgnoreCase));
+
+                if (toMatchAction == null || payButNotReconciledKpi == null)
+                {
+                    LogManager.Warning("MANUAL_OUTGOING rule: Required Action or KPI not found (TO MATCH or PAY BUT NOT RECONCILIED)");
+                    return 0;
+                }
+
+                int actionId = toMatchAction.USR_ID;
+                int kpiId = payButNotReconciledKpi.USR_ID;
+
+                var ambreData = await GetAmbreDataAsync(countryId);
+                var pivotLines = ambreData.Where(d => d.IsPivotAccount(country.CNT_AmbrePivot) && !d.IsDeleted).ToList();
+                var receivableLines = ambreData.Where(d => d.IsReceivableAccount(country.CNT_AmbreReceivable) && !d.IsDeleted).ToList();
+
+                int matchCount = 0;
+
+                // Pre-load all reconciliations for performance (avoid N+1 queries)
+                var allLineIds = pivotLines.Select(p => p.ID).Concat(receivableLines.Select(r => r.ID)).Distinct().ToList();
+                var reconciliations = new Dictionary<string, Reconciliation>(StringComparer.OrdinalIgnoreCase);
+                foreach (var id in allLineIds)
+                {
+                    var reco = await GetOrCreateReconciliationAsync(id).ConfigureAwait(false);
+                    if (reco != null)
+                    {
+                        reconciliations[id] = reco;
+                    }
+                }
+
+                // Build BGPMT index for receivable lines (for fast lookup)
+                var receivableBgpmtIndex = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var recLine in receivableLines)
+                {
+                    if (reconciliations.TryGetValue(recLine.ID, out var recReco) && 
+                        !string.IsNullOrWhiteSpace(recReco.DWINGS_BGPMT))
+                    {
+                        var bgpmt = recReco.DWINGS_BGPMT.Trim().ToUpperInvariant();
+                        if (!receivableBgpmtIndex.ContainsKey(bgpmt))
+                        {
+                            receivableBgpmtIndex[bgpmt] = new List<string>();
+                        }
+                        receivableBgpmtIndex[bgpmt].Add(recLine.ID);
+                    }
+                }
+
+                // Group by account number to only search within same account
+                var pivotsByAccount = pivotLines.GroupBy(p => p.Account_ID ?? string.Empty).ToList();
+
+                foreach (var accountGroup in pivotsByAccount)
+                {
+                    var linesInAccount = accountGroup.ToList();
+
+                    // Find MANUAL_OUTGOING lines (positive amount)
+                    var manualOutgoingLines = linesInAccount.Where(line =>
+                        line.Category == (int)TransactionType.MANUAL_OUTGOING &&
+                        line.SignedAmount > 0).ToList();
+
+                    foreach (var manualLine in manualOutgoingLines)
+                    {
+                        // Check if line is NOT grouped (no receivable counterpart with same BGPMT)
+                        if (!reconciliations.TryGetValue(manualLine.ID, out var manualReco) || manualReco == null)
+                            continue;
+                        
+                        // Skip if line has a BGPMT and there's a receivable line with the same BGPMT
+                        if (!string.IsNullOrWhiteSpace(manualReco.DWINGS_BGPMT))
+                        {
+                            var bgpmt = manualReco.DWINGS_BGPMT.Trim().ToUpperInvariant();
+                            if (receivableBgpmtIndex.ContainsKey(bgpmt))
+                            {
+                                // Line is grouped, skip it
+                                continue;
+                            }
+                        }
+
+                        // Extract alphanumeric reconciliation number (case-insensitive)
+                        var recoNum = ExtractAlphanumeric(manualLine.Reconciliation_Num);
+                        var hasRecoNum = !string.IsNullOrWhiteSpace(recoNum);
+                        
+                        // Get DWINGS_GuaranteeID from manual line's reconciliation
+                        var manualGuaranteeId = manualReco.DWINGS_GuaranteeID?.Trim();
+                        var hasGuaranteeId = !string.IsNullOrWhiteSpace(manualGuaranteeId);
+                        
+                        // Skip if neither reconciliation number nor guarantee ID exists
+                        if (!hasRecoNum && !hasGuaranteeId) continue;
+
+                        // Find matching PAYMENT line with negative amount and same reconciliation number OR guarantee ID
+                        var matchingPayment = linesInAccount.FirstOrDefault(line =>
+                        {
+                            if (line.ID == manualLine.ID) return false;
+                            if (line.Category != (int)TransactionType.PAYMENT) return false;
+                            if (line.SignedAmount >= 0) return false;
+                            if (Math.Abs(line.SignedAmount + manualLine.SignedAmount) >= 0.01m) return false; // Amounts must sum to zero
+                            
+                            // Check reconciliation number match (if exists)
+                            if (hasRecoNum && string.Equals(ExtractAlphanumeric(line.Reconciliation_Num), recoNum, StringComparison.OrdinalIgnoreCase))
+                                return true;
+                            
+                            // Check DWINGS_GuaranteeID match (if exists)
+                            if (hasGuaranteeId && reconciliations.TryGetValue(line.ID, out var lineReco) && lineReco != null)
+                            {
+                                var lineGuaranteeId = lineReco.DWINGS_GuaranteeID?.Trim();
+                                if (!string.IsNullOrWhiteSpace(lineGuaranteeId) && 
+                                    string.Equals(lineGuaranteeId, manualGuaranteeId, StringComparison.OrdinalIgnoreCase))
+                                    return true;
+                            }
+                            
+                            return false;
+                        });
+
+                        if (matchingPayment != null)
+                        {
+                            // Apply rule: set both to TO MATCH + PAY BUT NOT RECONCILIED
+                            // manualReco already retrieved above
+                            if (!reconciliations.TryGetValue(matchingPayment.ID, out var paymentReco) || paymentReco == null)
+                                continue;
+
+                            manualReco.Action = actionId;
+                            manualReco.KPI = kpiId;
+                            EnsureActionDefaults(manualReco);
+
+                            paymentReco.Action = actionId;
+                            paymentReco.KPI = kpiId;
+                            EnsureActionDefaults(paymentReco);
+
+                            // Determine match criteria for logging
+                            var matchCriteria = new List<string>();
+                            if (hasRecoNum && string.Equals(ExtractAlphanumeric(matchingPayment.Reconciliation_Num), recoNum, StringComparison.OrdinalIgnoreCase))
+                                matchCriteria.Add($"RecoNum={recoNum}");
+                            if (hasGuaranteeId)
+                            {
+                                var paymentGuaranteeId = paymentReco.DWINGS_GuaranteeID?.Trim();
+                                if (!string.IsNullOrWhiteSpace(paymentGuaranteeId) && 
+                                    string.Equals(paymentGuaranteeId, manualGuaranteeId, StringComparison.OrdinalIgnoreCase))
+                                    matchCriteria.Add($"GuaranteeID={manualGuaranteeId}");
+                            }
+                            var matchInfo = string.Join(" OR ", matchCriteria);
+
+                            // Add comment
+                            var timestamp = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {_currentUser}: ";
+                            var msg = $"MANUAL_OUTGOING rule: matched with counterpart payment ({matchInfo})";
+                            
+                            if (string.IsNullOrWhiteSpace(manualReco.Comments))
+                                manualReco.Comments = timestamp + msg;
+                            else if (!manualReco.Comments.Contains("MANUAL_OUTGOING rule"))
+                                manualReco.Comments = manualReco.Comments + Environment.NewLine + timestamp + msg;
+
+                            if (string.IsNullOrWhiteSpace(paymentReco.Comments))
+                                paymentReco.Comments = timestamp + msg;
+                            else if (!paymentReco.Comments.Contains("MANUAL_OUTGOING rule"))
+                                paymentReco.Comments = paymentReco.Comments + Environment.NewLine + timestamp + msg;
+
+                            await SaveReconciliationsAsync(new List<Reconciliation> { manualReco, paymentReco }).ConfigureAwait(false);
+
+                            LogHelper.WriteRuleApplied("MANUAL_OUTGOING", countryId, manualLine.ID, "MANUAL_OUTGOING_PAIR", 
+                                $"Action={actionId}; KPI={kpiId}", $"Matched with {matchingPayment.ID} ({matchInfo})");
+                            LogHelper.WriteRuleApplied("MANUAL_OUTGOING", countryId, matchingPayment.ID, "MANUAL_OUTGOING_PAIR", 
+                                $"Action={actionId}; KPI={kpiId}", $"Matched with {manualLine.ID} ({matchInfo})");
+
+                            matchCount++;
+                        }
+                    }
+                }
+
+                return matchCount;
+            }
+            catch (Exception ex)
+            {
+                LogManager.Error("ApplyManualOutgoingRuleAsync failed", ex);
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// Extrait uniquement les caractères alphanumériques d'une chaîne
+        /// </summary>
+        private static string ExtractAlphanumeric(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input)) return string.Empty;
+            return new string(input.Where(c => char.IsLetterOrDigit(c)).ToArray());
+        }
+
         #endregion
 
         #region CRUD Operations
@@ -1883,7 +2084,7 @@ namespace RecoTool.Services
                 : null;
 
             // Resolve DWINGS invoice to compute new inputs (best-effort, from cache)
-            bool? mtAcked = null;
+            string mtStatus = null;
             bool? hasCommEmail = null;
             bool? bgiInitiated = null;
             try
@@ -1894,8 +2095,7 @@ namespace RecoTool.Services
                     var inv = invoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, r.DWINGS_InvoiceID, StringComparison.OrdinalIgnoreCase));
                     if (inv != null)
                     {
-                        if (!string.IsNullOrWhiteSpace(inv.MT_STATUS))
-                            mtAcked = string.Equals(inv.MT_STATUS, "ACKED", StringComparison.OrdinalIgnoreCase);
+                        mtStatus = inv.MT_STATUS;
                         hasCommEmail = inv.COMM_ID_EMAIL;
                         if (!string.IsNullOrWhiteSpace(inv.T_INVOICE_STATUS))
                             bgiInitiated = string.Equals(inv.T_INVOICE_STATUS, "INITIATED", StringComparison.OrdinalIgnoreCase);
@@ -1926,7 +2126,7 @@ namespace RecoTool.Services
                 DaysSinceReminder = daysSinceReminder,
                 CurrentActionId = r?.Action,
                 // New DWINGS-derived
-                IsMtAcked = mtAcked,
+                MtStatus = mtStatus,
                 HasCommIdEmail = hasCommEmail,
                 IsBgiInitiated = bgiInitiated
             };

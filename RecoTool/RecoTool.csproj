@@ -92,6 +92,7 @@
     <Compile Include="Services\Analytics\DashboardAnalyticsService.cs" />
     <Compile Include="Services\Cache\CountryDataCache.cs" />
     <Compile Include="Services\Helpers\ReconciliationKpiCalculator.cs" />
+    <Compile Include="Services\Rules\MtStatusCondition.cs" />
     <Compile Include="Services\Rules\RulesEngine.cs" />
     <Compile Include="Services\Rules\TruthRule.cs" />
     <Compile Include="Services\Rules\TruthTableRepository.cs" />

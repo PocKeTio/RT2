@@ -139,6 +139,20 @@ namespace RecoTool.Services.AmbreImport
             // Apply truth-table rules (import scope) - pass dwInvoices and dwGuarantees to avoid reloading
             await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
 
+            // Apply special MANUAL_OUTGOING pairing rule
+            try
+            {
+                var manualOutgoingMatches = await _reconciliationService.ApplyManualOutgoingRuleAsync(countryId).ConfigureAwait(false);
+                if (manualOutgoingMatches > 0)
+                {
+                    LogManager.Info($"MANUAL_OUTGOING rule: matched {manualOutgoingMatches} pair(s)");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogManager.Error($"Error applying MANUAL_OUTGOING rule: {ex.Message}", ex);
+            }
+
             return staged.Select(s => s.Reconciliation).ToList();
         }
 
@@ -261,7 +275,7 @@ namespace RecoTool.Services.AmbreImport
                 : null;
 
             // OPTIMIZATION: Use passed dwInvoices instead of reloading
-            bool? mtAcked = null;
+            string mtStatus = null;
             bool? hasCommEmail = null;
             bool? bgiInitiated = null;
             try
@@ -271,8 +285,7 @@ namespace RecoTool.Services.AmbreImport
                     var inv = dwInvoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, reconciliation.DWINGS_InvoiceID, StringComparison.OrdinalIgnoreCase));
                     if (inv != null)
                     {
-                        if (!string.IsNullOrWhiteSpace(inv.MT_STATUS))
-                            mtAcked = string.Equals(inv.MT_STATUS, "ACKED", StringComparison.OrdinalIgnoreCase);
+                        mtStatus = inv.MT_STATUS;
                         hasCommEmail = inv.COMM_ID_EMAIL;
                         if (!string.IsNullOrWhiteSpace(inv.T_INVOICE_STATUS))
                             bgiInitiated = string.Equals(inv.T_INVOICE_STATUS, "INITIATED", StringComparison.OrdinalIgnoreCase);
@@ -303,7 +316,7 @@ namespace RecoTool.Services.AmbreImport
                 DaysSinceReminder = daysSinceReminder,
                 CurrentActionId = reconciliation?.Action,
                 // New DWINGS-derived
-                IsMtAcked = mtAcked,
+                MtStatus = mtStatus,
                 HasCommIdEmail = hasCommEmail,
                 IsBgiInitiated = bgiInitiated
             };
@@ -715,6 +728,20 @@ namespace RecoTool.Services.AmbreImport
                 // Apply truth-table rules
                 LogManager.Info($"Evaluating truth-table rules for {staged.Count} existing records...");
                 await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
+
+                // Apply special MANUAL_OUTGOING pairing rule
+                try
+                {
+                    var manualOutgoingMatches = await _reconciliationService.ApplyManualOutgoingRuleAsync(countryId).ConfigureAwait(false);
+                    if (manualOutgoingMatches > 0)
+                    {
+                        LogManager.Info($"MANUAL_OUTGOING rule: matched {manualOutgoingMatches} pair(s)");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogManager.Error($"Error applying MANUAL_OUTGOING rule: {ex.Message}", ex);
+                }
 
                 // Count how many had rules applied
                 int rulesAppliedCount = staged.Count(s => s.Reconciliation.Action.HasValue || s.Reconciliation.KPI.HasValue);

@@ -23,6 +23,12 @@ namespace RecoTool.Windows
             public bool? Value { get; set; }
         }
 
+        public class EnumChoice<T> where T : struct
+        {
+            public string Label { get; set; }
+            public T Value { get; set; }
+        }
+
         private readonly OfflineFirstService _offlineFirstService;
 
         public TruthRule EditedRule { get; set; }
@@ -45,6 +51,14 @@ namespace RecoTool.Windows
             new BoolChoice { Label = "— (None) —", Value = null },
             new BoolChoice { Label = "Yes", Value = true },
             new BoolChoice { Label = "No", Value = false },
+        };
+
+        public ObservableCollection<EnumChoice<MtStatusCondition>> MtStatusChoices { get; } = new ObservableCollection<EnumChoice<MtStatusCondition>>
+        {
+            new EnumChoice<MtStatusCondition> { Label = "* (Don't check)", Value = MtStatusCondition.Wildcard },
+            new EnumChoice<MtStatusCondition> { Label = "ACKED", Value = MtStatusCondition.Acked },
+            new EnumChoice<MtStatusCondition> { Label = "NOT ACKED", Value = MtStatusCondition.NotAcked },
+            new EnumChoice<MtStatusCondition> { Label = "NULL (Empty)", Value = MtStatusCondition.Null },
         };
 
         public RuleEditorWindow(TruthRule seed, OfflineFirstService offlineFirstService)
@@ -116,7 +130,7 @@ namespace RecoTool.Windows
                 IsAmountMatch = r.IsAmountMatch,
                 Sign = r.Sign,
                 // New DWINGS-related inputs
-                MTStatusAcked = r.MTStatusAcked,
+                MTStatus = r.MTStatus,
                 CommIdEmail = r.CommIdEmail,
                 BgiStatusInitiated = r.BgiStatusInitiated,
                 // Time/state conditions

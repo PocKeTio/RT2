@@ -91,7 +91,7 @@ namespace RecoTool.Services.Rules
                                     IsGrouped = GetNullableBool(row, table, "IsGrouped"),
                                     IsAmountMatch = GetNullableBool(row, table, "IsAmountMatch"),
                                     Sign = NormalizeWildcard(GetString(row, table, "Sign") ?? "*"),
-                                    MTStatusAcked = GetNullableBool(row, table, "MTStatusAcked"),
+                                    MTStatus = GetMtStatusCondition(row, table, "MTStatus"),
                                     CommIdEmail = GetNullableBool(row, table, "CommIdEmail"),
                                     BgiStatusInitiated = GetNullableBool(row, table, "BgiStatusInitiated"),
                                     TriggerDateIsNull = GetNullableBool(row, table, "TriggerDateIsNull"),
@@ -175,7 +175,7 @@ namespace RecoTool.Services.Rules
                         IsGrouped INTEGER,
                         IsAmountMatch INTEGER,
                         Sign TEXT(1),
-                        MTStatusAcked INTEGER,
+                        MTStatus TEXT(20),
                         CommIdEmail INTEGER,
                         BgiStatusInitiated INTEGER,
                         TriggerDateIsNull INTEGER,
@@ -243,7 +243,7 @@ namespace RecoTool.Services.Rules
                 ("DaysSinceReminderMin", "INTEGER"),
                 ("DaysSinceReminderMax", "INTEGER"),
                 ("CurrentActionId", "INTEGER"),
-                ("MTStatusAcked", "INTEGER"),
+                ("MTStatus", "TEXT(20)"),
                 ("CommIdEmail", "INTEGER"),
                 ("BgiStatusInitiated", "INTEGER"),
                 ("OutputFirstClaimToday", "INTEGER")
@@ -272,7 +272,7 @@ namespace RecoTool.Services.Rules
                     "HasDwingsLink", "IsGrouped", "IsAmountMatch",
                     "TriggerDateIsNull", "IsMatched",
                     "HasManualMatch", "IsFirstRequest", "OutputRiskyItem", "OutputToRemind",
-                    "MTStatusAcked", "CommIdEmail", "BgiStatusInitiated", "OutputFirstClaimToday"
+                    "CommIdEmail", "BgiStatusInitiated", "OutputFirstClaimToday"
                 };
 
                 // Reload schema for nullability info
@@ -324,7 +324,7 @@ namespace RecoTool.Services.Rules
                     var sql = $@"UPDATE [{tableName}] SET
                         Enabled=?, Priority=?, Scope=?, AccountSide=?, GuaranteeType=?, TransactionType=?, Booking=?,
                         HasDwingsLink=?, IsGrouped=?, IsAmountMatch=?, Sign=?,
-                        MTStatusAcked=?, CommIdEmail=?, BgiStatusInitiated=?,
+                        MTStatus=?, CommIdEmail=?, BgiStatusInitiated=?,
                         TriggerDateIsNull=?, DaysSinceTriggerMin=?, DaysSinceTriggerMax=?,
                         OperationDaysAgoMin=?, OperationDaysAgoMax=?,
                         IsMatched=?, HasManualMatch=?, IsFirstRequest=?, DaysSinceReminderMin=?, DaysSinceReminderMax=?, CurrentActionId=?,
@@ -345,7 +345,7 @@ namespace RecoTool.Services.Rules
                     var sql = $@"INSERT INTO [{tableName}] (
                         RuleId, Enabled, Priority, Scope, AccountSide, GuaranteeType, TransactionType, Booking,
                         HasDwingsLink, IsGrouped, IsAmountMatch, Sign,
-                        MTStatusAcked, CommIdEmail, BgiStatusInitiated,
+                        MTStatus, CommIdEmail, BgiStatusInitiated,
                         TriggerDateIsNull, DaysSinceTriggerMin, DaysSinceTriggerMax,
                         OperationDaysAgoMin, OperationDaysAgoMax,
                         IsMatched, HasManualMatch, IsFirstRequest, DaysSinceReminderMin, DaysSinceReminderMax, CurrentActionId,
@@ -398,7 +398,7 @@ namespace RecoTool.Services.Rules
             cmd.Parameters.Add("@IsAmountMatch", OleDbType.Integer).Value = (object)(r.IsAmountMatch.HasValue ? (r.IsAmountMatch.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
             cmd.Parameters.AddWithValue("@Sign", (object)r.Sign ?? DBNull.Value);
             // New DWINGS-related inputs
-            cmd.Parameters.Add("@MTStatusAcked", OleDbType.Integer).Value = (object)(r.MTStatusAcked.HasValue ? (r.MTStatusAcked.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.AddWithValue("@MTStatus", (object)MtStatusConditionToString(r.MTStatus) ?? DBNull.Value);
             cmd.Parameters.Add("@CommIdEmail", OleDbType.Integer).Value = (object)(r.CommIdEmail.HasValue ? (r.CommIdEmail.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@BgiStatusInitiated", OleDbType.Integer).Value = (object)(r.BgiStatusInitiated.HasValue ? (r.BgiStatusInitiated.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@TriggerDateIsNull", OleDbType.Integer).Value = (object)(r.TriggerDateIsNull.HasValue ? (r.TriggerDateIsNull.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
@@ -491,8 +491,8 @@ namespace RecoTool.Services.Rules
                     // NOTE: Scope=Import to prevent infinite loops during manual edits
                     new TruthRule { RuleId = "HEUR_R_INCOMING_FIRST_REQUEST", Scope = RuleScope.Import, AccountSide = "R", TransactionType = "INCOMING_PAYMENT", IsFirstRequest = true, OutputActionId = 1, OutputKpiId = 16, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "First claim request - automatic action assigned" },
                     new TruthRule { RuleId = "HEUR_R_INCOMING_REMIND_30D_ISSUANCE", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "ISSUANCE", TransactionType = "INCOMING_PAYMENT", DaysSinceReminderMin = 30, OutputActionId = 3, OutputKpiId = 16, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "Reminder sent automatically via Dwings" },
-                    new TruthRule { RuleId = "HEUR_R_INCOMING_REMIND_30D_REISSUANCE_ACK", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "REISSUANCE", TransactionType = "INCOMING_PAYMENT", MTStatusAcked = true, DaysSinceReminderMin = 30, OutputActionId = 1, OutputKpiId = 16, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "Invoice identified in the Receivable account by RecoTool" },
-                    new TruthRule { RuleId = "HEUR_R_INCOMING_REMIND_30D_REISSUANCE_NOTACK", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "REISSUANCE", TransactionType = "INCOMING_PAYMENT", MTStatusAcked = false, DaysSinceReminderMin = 30, OutputActionId = 7, OutputKpiId = 17, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "⚠️ Reminder required - MT791 not acknowledged (30+ days)" },
+                    new TruthRule { RuleId = "HEUR_R_INCOMING_REMIND_30D_REISSUANCE_ACK", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "REISSUANCE", TransactionType = "INCOMING_PAYMENT", MTStatus = MtStatusCondition.Acked, DaysSinceReminderMin = 30, OutputActionId = 1, OutputKpiId = 16, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "Invoice identified in the Receivable account by RecoTool" },
+                    new TruthRule { RuleId = "HEUR_R_INCOMING_REMIND_30D_REISSUANCE_NOTACK", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "REISSUANCE", TransactionType = "INCOMING_PAYMENT", MTStatus = MtStatusCondition.NotAcked, DaysSinceReminderMin = 30, OutputActionId = 7, OutputKpiId = 17, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "⚠️ Reminder required - MT791 not acknowledged (30+ days)" },
 
                     // Pivot side - COLLECTION
                     // NOTE: Scope=Import + CurrentActionId=null to prevent re-applying on daily imports
@@ -516,12 +516,12 @@ namespace RecoTool.Services.Rules
 
                     // Receivable side - INCOMING_PAYMENT with DWINGS conditions
                     // NOTE: Scope=Import + IsFirstRequest=true to apply only on first appearance
-                    new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_REISSUANCE_ACK", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "REISSUANCE", TransactionType = "INCOMING_PAYMENT", MTStatusAcked = true, IsFirstRequest = true, OutputActionId = 1, OutputKpiId = 16, OutputFirstClaimToday = true, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "MT791 Sent automatically via Dwings" },
+                    new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_REISSUANCE_ACK", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "REISSUANCE", TransactionType = "INCOMING_PAYMENT", MTStatus = MtStatusCondition.Acked, IsFirstRequest = true, OutputActionId = 1, OutputKpiId = 16, OutputFirstClaimToday = true, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "MT791 Sent automatically via Dwings" },
                     new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_ISSUANCE_EMAIL", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "ISSUANCE", TransactionType = "INCOMING_PAYMENT", CommIdEmail = true, IsFirstRequest = true, OutputActionId = 1, OutputKpiId = 16, OutputFirstClaimToday = true, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "First claim email sent - awaiting response" },
-                    new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_ADVISING_ACK", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "ADVISING", TransactionType = "INCOMING_PAYMENT", MTStatusAcked = true, IsFirstRequest = true, OutputActionId = 1, OutputKpiId = 16, OutputFirstClaimToday = true, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "MT791 Sent automatically via Dwings" },
+                    new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_ADVISING_ACK", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "ADVISING", TransactionType = "INCOMING_PAYMENT", MTStatus = MtStatusCondition.Acked, IsFirstRequest = true, OutputActionId = 1, OutputKpiId = 16, OutputFirstClaimToday = true, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "MT791 Sent automatically via Dwings" },
                     new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_OTHER", Scope = RuleScope.Import, AccountSide = "R", TransactionType = "INCOMING_PAYMENT", Enabled = true, Priority = 120, ApplyTo = ApplyTarget.Self, AutoApply = true },
-                    new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_REISSUANCE_NACK", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "REISSUANCE", TransactionType = "INCOMING_PAYMENT", MTStatusAcked = false, IsFirstRequest = true, OutputActionId = 2, OutputKpiId = 17, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "⚠️ MT791 not acknowledged - manual follow-up required" },
-                    new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_ADVISING_NACK", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "ADVISING", TransactionType = "INCOMING_PAYMENT", MTStatusAcked = false, IsFirstRequest = true, OutputActionId = 2, OutputKpiId = 17, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "⚠️ MT791 not acknowledged - manual follow-up required" },
+                    new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_REISSUANCE_NACK", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "REISSUANCE", TransactionType = "INCOMING_PAYMENT", MTStatus = MtStatusCondition.NotAcked, IsFirstRequest = true, OutputActionId = 2, OutputKpiId = 17, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "⚠️ MT791 not acknowledged - manual follow-up required" },
+                    new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_ADVISING_NACK", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "ADVISING", TransactionType = "INCOMING_PAYMENT", MTStatus = MtStatusCondition.NotAcked, IsFirstRequest = true, OutputActionId = 2, OutputKpiId = 17, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "⚠️ MT791 not acknowledged - manual follow-up required" },
                     new TruthRule { RuleId = "LEGACY_R_INCOMING_PAYMENT_ISSUANCE_NOEMAIL", Scope = RuleScope.Import, AccountSide = "R", GuaranteeType = "ISSUANCE", TransactionType = "INCOMING_PAYMENT", CommIdEmail = false, IsFirstRequest = true, OutputActionId = 2, OutputKpiId = 17, Enabled = true, Priority = 100, ApplyTo = ApplyTarget.Self, AutoApply = true, Message = "⚠️ No email communication ID - manual claim required" },
 
                     // Receivable side - Other transaction types
@@ -582,6 +582,46 @@ namespace RecoTool.Services.Rules
                 return null;
             }
             catch { return null; }
+        }
+
+        /// <summary>
+        /// Reads MtStatusCondition enum from database column
+        /// </summary>
+        private static MtStatusCondition GetMtStatusCondition(System.Data.DataRow row, System.Data.DataTable table, string columnName)
+        {
+            if (!table.Columns.Contains(columnName) || row[columnName] == DBNull.Value)
+                return MtStatusCondition.Wildcard;
+            
+            var val = Convert.ToString(row[columnName])?.Trim().ToUpperInvariant();
+            if (string.IsNullOrEmpty(val) || val == "*" || val == "WILDCARD")
+                return MtStatusCondition.Wildcard;
+            if (val == "ACKED" || val == "ACK")
+                return MtStatusCondition.Acked;
+            if (val == "NOTACKED" || val == "NOT_ACKED" || val == "NACK")
+                return MtStatusCondition.NotAcked;
+            if (val == "NULL" || val == "EMPTY")
+                return MtStatusCondition.Null;
+            
+            return MtStatusCondition.Wildcard;
+        }
+
+        /// <summary>
+        /// Converts MtStatusCondition enum to string for database storage
+        /// </summary>
+        private static string MtStatusConditionToString(MtStatusCondition condition)
+        {
+            switch (condition)
+            {
+                case MtStatusCondition.Acked:
+                    return "ACKED";
+                case MtStatusCondition.NotAcked:
+                    return "NOT_ACKED";
+                case MtStatusCondition.Null:
+                    return "NULL";
+                case MtStatusCondition.Wildcard:
+                default:
+                    return "*";
+            }
         }
     }
 }

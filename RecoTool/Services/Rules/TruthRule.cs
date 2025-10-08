@@ -48,8 +48,8 @@ namespace RecoTool.Services.Rules
         public string Sign { get; set; } = "*";
 
         // New DWINGS-related input conditions
-        // True when DWINGS invoice MT status is "ACKED", false when present and not ACKED, null to ignore
-        public bool? MTStatusAcked { get; set; }
+        // MT status condition: Wildcard (don't check), Acked, NotAcked, or Null
+        public MtStatusCondition MTStatus { get; set; } = MtStatusCondition.Wildcard;
         // True when COMM_ID_EMAIL flag is set on the DWINGS invoice
         public bool? CommIdEmail { get; set; }
         // True when DWINGS invoice status is "INITIATED"
@@ -102,7 +102,7 @@ namespace RecoTool.Services.Rules
         public string Bgi { get; set; } // DWINGS_InvoiceID
 
         // New DWINGS-derived inputs
-        public bool? IsMtAcked { get; set; }
+        public string MtStatus { get; set; } // Raw MT status from DWINGS ("ACKED", "NOT_ACKED", null, etc.)
         public bool? HasCommIdEmail { get; set; }
         public bool? IsBgiInitiated { get; set; }
 

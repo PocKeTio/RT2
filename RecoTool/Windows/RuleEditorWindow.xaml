@@ -218,8 +218,8 @@
                                 <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.IsFirstRequest, UpdateSourceTrigger=PropertyChanged}"/>
 
                                 <!-- New DWINGS-derived inputs -->
-                                <Label ToolTip="Yes, No, or — (None) to ignore.">MT Status = ACKED</Label>
-                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.MTStatusAcked, UpdateSourceTrigger=PropertyChanged}"/>
+                                <Label ToolTip="Choose MT Status condition: *, ACKED, NOT ACKED, or NULL (empty).">MT Status</Label>
+                                <ComboBox ItemsSource="{Binding MtStatusChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.MTStatus, UpdateSourceTrigger=PropertyChanged}"/>
 
                                 <Label ToolTip="Yes, No, or — (None) to ignore.">COMM ID EMAIL</Label>
                                 <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.CommIdEmail, UpdateSourceTrigger=PropertyChanged}"/>

@@ -224,13 +224,13 @@ namespace RecoTool.Windows
                 {
                     if (app != null)
                     {
-                        // Restore calculation/events
+                        // Restore calculation/events (keep DisplayAlerts = false to prevent FileConfidentiality prompts)
                         try
                         {
                             app.Calculation = CalculationState;
                             app.ScreenUpdating = prevScreenUpdating;
                             app.EnableEvents = prevEnableEvents;
-                            app.DisplayAlerts = true;
+                            // Keep DisplayAlerts = false to bypass FileConfidentiality prompts
                         }
                         catch { }
                         app.Quit();

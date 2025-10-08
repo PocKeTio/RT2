@@ -472,13 +472,15 @@ namespace RecoTool.Services.AmbreImport
                             bool isNa = !rec.Action.HasValue || UserFieldUpdateService.IsActionNA(rec.Action, allUserFields);
                             if (isNa)
                             {
-                                rec.ActionStatus = null;
-                                rec.ActionDate = null;
+                                // FIX: N/A action should be marked as DONE, not null
+                                rec.ActionStatus = true;
+                                rec.ActionDate = nowLocal;
                             }
                             else
                             {
                                 if (!rec.ActionStatus.HasValue) rec.ActionStatus = false; // default to PENDING
-                                if (!rec.ActionDate.HasValue) rec.ActionDate = nowLocal;
+                                // FIX: ALWAYS set ActionDate when Action is set
+                                rec.ActionDate = nowLocal;
                             }
                         }
                         catch { }

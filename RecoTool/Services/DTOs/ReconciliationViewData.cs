@@ -417,6 +417,11 @@ namespace RecoTool.Services.DTOs
         public string I_SENDER_REFERENCE => GetInvoiceData()?.SENDER_REFERENCE;
         public string I_RECEIVER_REFERENCE => GetInvoiceData()?.RECEIVER_REFERENCE;
         public string I_T_INVOICE_STATUS => GetInvoiceData()?.T_INVOICE_STATUS;
+        
+        /// <summary>
+        /// HasEmail: True if COMM_ID_EMAIL flag is set on the DWINGS invoice (used for rules)
+        /// </summary>
+        public bool? HasEmail => GetInvoiceData()?.COMM_ID_EMAIL;
         public string I_BILLING_AMOUNT => GetInvoiceData()?.BILLING_AMOUNT?.ToString();
         public string I_BILLING_CURRENCY => GetInvoiceData()?.BILLING_CURRENCY;
         public string I_START_DATE => GetInvoiceData()?.START_DATE?.ToString("yyyy-MM-dd");

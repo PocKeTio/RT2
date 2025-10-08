@@ -834,13 +834,15 @@ namespace RecoTool.Services
                 bool isNa = !r.Action.HasValue || UserFieldUpdateService.IsActionNA(r.Action, all);
                 if (isNa)
                 {
-                    r.ActionStatus = null;
-                    r.ActionDate = null;
+                    // FIX: N/A action should be marked as DONE, not null
+                    r.ActionStatus = true;
+                    r.ActionDate = DateTime.Now;
                 }
                 else
                 {
                     if (!r.ActionStatus.HasValue) r.ActionStatus = false; // PENDING
-                    if (!r.ActionDate.HasValue) r.ActionDate = DateTime.Now;
+                    // FIX: ALWAYS update ActionDate when Action changes
+                    r.ActionDate = DateTime.Now;
                 }
             }
             catch { }

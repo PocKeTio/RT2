@@ -55,13 +55,13 @@ namespace RecoTool.Services.AmbreImport
                 DwingsInvoiceDto hit = null;
                 if (!string.IsNullOrWhiteSpace(bgiCandidate))
                 {
-                    hit = DwingsLinkingHelper.ResolveInvoiceByBgiWithAmount(dwInvoices, bgiCandidate, dataAmbre.SignedAmount);
+                    hit = DwingsLinkingHelper.ResolveInvoiceByBgi(dwInvoices, bgiCandidate);
                 }
 
                 // BGPMT path if not found yet
                 if (hit == null && !string.IsNullOrWhiteSpace(tokens.Bgpmt))
                 {
-                    hit = DwingsLinkingHelper.ResolveInvoiceByBgpmt(dwInvoices, tokens.Bgpmt, dataAmbre.SignedAmount);
+                    hit = DwingsLinkingHelper.ResolveInvoiceByBgpmt(dwInvoices, tokens.Bgpmt);
                 }
 
                 // OfficialRef path
@@ -118,18 +118,24 @@ namespace RecoTool.Services.AmbreImport
 
         private DwingsTokens ExtractTokens(DataAmbre dataAmbre)
         {
+            // EXTENDED: Match ReconciliationViewEnricher heuristics for consistency
             return new DwingsTokens
             {
+                // BGPMT: check Reconciliation_Num, ReconciliationOrigin_Num, RawLabel
                 Bgpmt = DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.Reconciliation_Num)
                         ?? DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.ReconciliationOrigin_Num)
                         ?? DwingsLinkingHelper.ExtractBgpmtToken(dataAmbre.RawLabel),
                         
+                // GuaranteeId: check Reconciliation_Num, RawLabel, Receivable_DWRefFromAmbre
                 GuaranteeId = DwingsLinkingHelper.ExtractGuaranteeId(dataAmbre.Reconciliation_Num)
-                              ?? DwingsLinkingHelper.ExtractGuaranteeId(dataAmbre.RawLabel),
+                              ?? DwingsLinkingHelper.ExtractGuaranteeId(dataAmbre.RawLabel)
+                              ?? DwingsLinkingHelper.ExtractGuaranteeId(dataAmbre.Receivable_DWRefFromAmbre),
                               
+                // BGI: check RawLabel, Reconciliation_Num, ReconciliationOrigin_Num, Receivable_DWRefFromAmbre
                 Bgi = DwingsLinkingHelper.ExtractBgiToken(dataAmbre.RawLabel)
                       ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Reconciliation_Num)
                       ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.ReconciliationOrigin_Num)
+                      ?? DwingsLinkingHelper.ExtractBgiToken(dataAmbre.Receivable_DWRefFromAmbre)
             };
         }
 
@@ -145,8 +151,7 @@ namespace RecoTool.Services.AmbreImport
             if (string.IsNullOrWhiteSpace(bgi))
                 return ResolveByOfficialRef(dataAmbre, dwInvoices); // try OfficialRef exact match if no BGI
 
-            var hit = DwingsLinkingHelper.ResolveInvoiceByBgiWithAmount(
-                dwInvoices, bgi, dataAmbre.SignedAmount);
+            var hit = DwingsLinkingHelper.ResolveInvoiceByBgi(dwInvoices, bgi);
             if (hit != null) return hit.INVOICE_ID;
 
             // Fallback: OfficialRef exact match
@@ -161,8 +166,7 @@ namespace RecoTool.Services.AmbreImport
             // Try BGI first
             if (!string.IsNullOrWhiteSpace(tokens.Bgi))
             {
-                var hit = DwingsLinkingHelper.ResolveInvoiceByBgiWithAmount(
-                    dwInvoices, tokens.Bgi, dataAmbre.SignedAmount);
+                var hit = DwingsLinkingHelper.ResolveInvoiceByBgi(dwInvoices, tokens.Bgi);
                 if (hit != null)
                     return hit.INVOICE_ID;
             }
@@ -170,8 +174,7 @@ namespace RecoTool.Services.AmbreImport
             // Try BGPMT
             if (!string.IsNullOrWhiteSpace(tokens.Bgpmt))
             {
-                var hit = DwingsLinkingHelper.ResolveInvoiceByBgpmt(
-                    dwInvoices, tokens.Bgpmt, dataAmbre.SignedAmount);
+                var hit = DwingsLinkingHelper.ResolveInvoiceByBgpmt(dwInvoices, tokens.Bgpmt);
                 if (hit != null)
                     return hit.INVOICE_ID;
             }

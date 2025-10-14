@@ -497,6 +497,12 @@ namespace RecoTool.Services
             // Build the base query via centralized builder
             string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql, dashboardOnly);
 
+            // CRITICAL: Always filter out deleted records (dashboardOnly=true already has this, but dashboardOnly=false needs it)
+            if (!dashboardOnly)
+            {
+                query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
+            }
+
             // Apply Potential Duplicates predicate if requested via JSON
             if (dupOnly)
             {

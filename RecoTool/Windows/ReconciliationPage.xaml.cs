@@ -828,8 +828,11 @@ namespace RecoTool.Windows
                 if (_offlineFirstService == null)
                     return;
 
-                // Récupérer les filtres depuis les référentiels
-                // Optionnel: filtrer par utilisateur courant (si nécessaire, remplacer par une propriété UserName)
+                // Recharger les filtres depuis la DB pour avoir les dernières modifications
+                cancellationToken.ThrowIfCancellationRequested();
+                await _offlineFirstService.RefreshUserFiltersAsync().ConfigureAwait(false);
+                
+                // Récupérer les filtres depuis les référentiels (maintenant à jour)
                 cancellationToken.ThrowIfCancellationRequested();
                 var filters = await _offlineFirstService.GetUserFilters();
                 // Sanitize filters to remove Account/Status predicates (those are managed by top combos)
@@ -1716,11 +1719,37 @@ namespace RecoTool.Windows
         }
 
         /// <summary>
-        /// Recharge uniquement la ComboBox des filtres sauvegardés (sans recharger les données)
+        /// Recharge uniquement les filtres sauvegardés (appelé depuis FilterPickerWindow après un save)
         /// </summary>
         public async Task ReloadSavedFiltersOnly()
         {
             await LoadSavedFiltersAsync();
+        }
+
+        /// <summary>
+        /// Recharge les vues sauvegardées (appelé après création/modification d'une vue)
+        /// </summary>
+        public async Task ReloadSavedViewsOnly()
+        {
+            await LoadSavedViewsAsync();
+        }
+
+        /// <summary>
+        /// Recharge la TodoList (appelé après création/modification d'un todo)
+        /// </summary>
+        public async Task ReloadTodoListOnly()
+        {
+            await LoadTodoListAsync();
+        }
+
+        /// <summary>
+        /// Recharge tous les référentiels (filtres, vues, todos)
+        /// </summary>
+        public async Task ReloadAllReferentials()
+        {
+            await LoadSavedFiltersAsync();
+            await LoadSavedViewsAsync();
+            await LoadTodoListAsync();
         }
 
         /// <summary>

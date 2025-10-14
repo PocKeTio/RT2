@@ -43,6 +43,17 @@ namespace RecoTool.Windows
                 {
                     CurrentView = name;
                     UpdateStatusInfo($"View '{name}' saved.");
+                    
+                    // Refresh the SavedViews combo on the host page
+                    try
+                    {
+                        var hostPage = VisualTreeHelpers.FindAncestor<RecoTool.Windows.ReconciliationPage>(this);
+                        if (hostPage != null)
+                        {
+                            _ = hostPage.ReloadSavedViewsOnly();
+                        }
+                    }
+                    catch { }
                 }
                 else
                 {
@@ -67,7 +78,11 @@ namespace RecoTool.Windows
                 var sqlToSave = BuildSqlWithJsonComment(GetCurrentFilterPreset(), where);
                 var service = new UserFilterService(Settings.Default.ReferentialDB, Environment.UserName);
                 service.SaveUserFilter(name, sqlToSave);
+                
+                UpdateStatusInfo($"Filter '{name}' saved");
+                
                 // If hosted inside ReconciliationPage, refresh only the SavedFilters combo (no data reload)
+                // Use fire-and-forget pattern (same as SaveView_Click)
                 try
                 {
                     var hostPage = VisualTreeHelpers.FindAncestor<RecoTool.Windows.ReconciliationPage>(this);
@@ -77,7 +92,6 @@ namespace RecoTool.Windows
                     }
                 }
                 catch { }
-                UpdateStatusInfo($"Filter '{name}' saved");
             }
             catch (Exception ex)
             {
@@ -188,7 +202,10 @@ namespace RecoTool.Windows
                 var service = new UserFilterService(Settings.Default.ReferentialDB, Environment.UserName);
                 if (service.DeleteUserFilter(name))
                 {
+                    UpdateStatusInfo($"Filter '{name}' deleted");
+                    
                     // Refresh only the filters ComboBox on the host page
+                    // Use fire-and-forget pattern (same as SaveView_Click)
                     try
                     {
                         var hostPage = VisualTreeHelpers.FindAncestor<RecoTool.Windows.ReconciliationPage>(this);
@@ -198,7 +215,6 @@ namespace RecoTool.Windows
                         }
                     }
                     catch { }
-                    UpdateStatusInfo($"Filter '{name}' deleted");
                 }
                 else
                 {

@@ -60,6 +60,9 @@ namespace RecoTool
             // Repositories (transition: wraps existing services)
             services.AddTransient<IReconciliationRepository, ReconciliationRepository>();
 
+            // Referential cache service (singleton for app-wide caching)
+            services.AddSingleton<ReferentialCacheService>();
+
             // Fenêtres principales
             services.AddTransient<MainWindow>();
             services.AddTransient<ImportAmbreWindow>();

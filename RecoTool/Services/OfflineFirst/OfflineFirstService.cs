@@ -3170,6 +3170,52 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// Recharge les filtres utilisateur depuis la base référentielle
+        /// (appelé après création/modification/suppression d'un filtre)
+        /// </summary>
+        public async Task RefreshUserFiltersAsync()
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_ReferentialDatabasePath))
+                {
+                    LoadConfiguration();
+                }
+
+                var refCs = ReferentialConnectionString;
+                if (string.IsNullOrWhiteSpace(refCs)) return;
+
+                var filters = new List<UserFilter>();
+                using (var conn = new System.Data.OleDb.OleDbConnection(refCs))
+                {
+                    await conn.OpenAsync().ConfigureAwait(false);
+                    using (var cmd = new System.Data.OleDb.OleDbCommand("SELECT UFI_Name, UFI_SQL FROM T_Ref_User_Filter ORDER BY UFI_Name", conn))
+                    using (var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
+                    {
+                        while (await reader.ReadAsync().ConfigureAwait(false))
+                        {
+                            var name = reader.IsDBNull(0) ? null : reader.GetString(0);
+                            var sql = reader.IsDBNull(1) ? null : reader.GetString(1);
+                            if (!string.IsNullOrWhiteSpace(name))
+                            {
+                                filters.Add(new UserFilter { UFI_Name = name, UFI_SQL = sql });
+                            }
+                        }
+                    }
+                }
+
+                lock (_referentialLock)
+                {
+                    _userFilters = filters;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[OfflineFirstService] Error refreshing user filters: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Exécute une requête sur la base de données d'une country
         /// </summary>
         /// <param name="countryId">ID du pays</param>

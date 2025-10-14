@@ -382,6 +382,8 @@ namespace RecoTool.Services.DTOs
                     OnPropertyChanged(nameof(IsReviewedToday));
                     OnPropertyChanged(nameof(IsToReview));
                     OnPropertyChanged(nameof(IsReviewed));
+                    OnPropertyChanged(nameof(CellBackgroundColor));
+                    OnPropertyChanged(nameof(CellBorderBrush));
                 }
             }
         }
@@ -398,6 +400,8 @@ namespace RecoTool.Services.DTOs
                     OnPropertyChanged(nameof(ActionDate));
                     // Notify dependent properties
                     OnPropertyChanged(nameof(IsReviewedToday));
+                    OnPropertyChanged(nameof(CellBackgroundColor));
+                    OnPropertyChanged(nameof(CellBorderBrush));
                 }
             }
         }
@@ -843,6 +847,18 @@ namespace RecoTool.Services.DTOs
                 return (_cachedIsReviewedToday = ActionStatus == true && ActionDate.HasValue && ActionDate.Value.Date == DateTime.Today).Value;
             }
         }
+        
+        /// <summary>
+        /// Background color for cells when reviewed today (replaces DataTrigger)
+        /// OPTIMIZED: Pre-calculated to eliminate 200+ DataTrigger evaluations per scroll frame
+        /// </summary>
+        public string CellBackgroundColor => IsReviewedToday ? "#E8F5E9" : "Transparent";
+        
+        /// <summary>
+        /// Border brush for cells when reviewed today (replaces DataTrigger)
+        /// OPTIMIZED: Pre-calculated to eliminate DataTrigger overhead
+        /// </summary>
+        public string CellBorderBrush => IsReviewedToday ? "#A5D6A7" : "#DDDDDD";
 
         /// <summary>
         /// Indicates if this row is "To Review" (has an action AND status is Pending)

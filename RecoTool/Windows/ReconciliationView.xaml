@@ -1060,15 +1060,13 @@
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                                 <Setter Property="VerticalContentAlignment" Value="Center"/>
                             </Style>
-                            <!-- Cell Style for Reviewed Today Highlight -->
+                            <!-- REMOVED: ReviewedTodayHighlight style with DataTrigger -->
+                            <!-- OPTIMIZED: Now using direct binding to CellBackgroundColor and CellBorderBrush properties -->
+                            <!-- This eliminates 200+ DataTrigger evaluations per scroll frame (5 columns × 40 rows) -->
                             <Style x:Key="ReviewedTodayHighlight" TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsReviewedToday}" Value="True">
-                                        <Setter Property="Background" Value="#E8F5E9"/>
-                                        <Setter Property="BorderBrush" Value="#A5D6A7"/>
-                                        <Setter Property="BorderThickness" Value="0,0,1,0"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
+                                <Setter Property="Background" Value="{Binding CellBackgroundColor}"/>
+                                <Setter Property="BorderBrush" Value="{Binding CellBorderBrush}"/>
+                                <Setter Property="BorderThickness" Value="0,0,1,0"/>
                             </Style>
                             <!-- Cell Style for Status Indicator Column -->
                             <Style x:Key="StatusIndicatorCellStyle" TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">

@@ -1035,10 +1035,10 @@
                               ScrollViewer.CanContentScroll="True"
                               ScrollViewer.IsDeferredScrollingEnabled="False"
                               ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                              VirtualizingPanel.CacheLength="100,100"
+                              VirtualizingPanel.CacheLength="20,20"
                               VirtualizingPanel.CacheLengthUnit="Item"
                               VirtualizingPanel.ScrollUnit="Pixel"
-                              RowHeight="25"
+                              RowHeight="28"
                               RowHeaderWidth="0"
                               MouseDoubleClick="ResultsDataGrid_MouseDoubleClick"
                               CellEditEnding="ResultsDataGrid_CellEditEnding">
@@ -1333,48 +1333,16 @@
                             <DataGridTextColumn Header="CCY" Binding="{Binding CCY}" Width="60" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
                             
                             <!-- Missing Amount: conditional formatting (Green=0, Orange>0, Red<0) -->
+                            <!-- OPTIMIZED: Use pre-calculated properties instead of converters to avoid overhead during scroll -->
                             <DataGridTemplateColumn Header="Missing Amount" Width="130" SortMemberPath="MissingAmount" IsReadOnly="True">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Border Padding="4,2">
-                                            <Border.Style>
-                                                <Style TargetType="Border">
-                                                    <Style.Triggers>
-                                                        <!-- Green: Balanced (= 0) -->
-                                                        <DataTrigger Binding="{Binding MissingAmount}" Value="0">
-                                                            <Setter Property="Background" Value="#E8F5E9"/>
-                                                        </DataTrigger>
-                                                        <!-- Orange: Waiting for payment (> 0) -->
-                                                        <DataTrigger Binding="{Binding MissingAmount, Converter={StaticResource IsPositiveConverter}}" Value="True">
-                                                            <Setter Property="Background" Value="#FFF3E0"/>
-                                                        </DataTrigger>
-                                                        <!-- Red: Overpayment (< 0) -->
-                                                        <DataTrigger Binding="{Binding MissingAmount, Converter={StaticResource IsNegativeConverter}}" Value="True">
-                                                            <Setter Property="Background" Value="#FFEBEE"/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Border.Style>
-                                            <TextBlock Text="{Binding MissingAmount, StringFormat={}{0:N2}}" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="Foreground" Value="#666"/>
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding MissingAmount}" Value="0">
-                                                                <Setter Property="Foreground" Value="#2E7D32"/>
-                                                                <Setter Property="FontWeight" Value="SemiBold"/>
-                                                            </DataTrigger>
-                                                            <DataTrigger Binding="{Binding MissingAmount, Converter={StaticResource IsPositiveConverter}}" Value="True">
-                                                                <Setter Property="Foreground" Value="#EF6C00"/>
-                                                                <Setter Property="FontWeight" Value="SemiBold"/>
-                                                            </DataTrigger>
-                                                            <DataTrigger Binding="{Binding MissingAmount, Converter={StaticResource IsNegativeConverter}}" Value="True">
-                                                                <Setter Property="Foreground" Value="#C62828"/>
-                                                                <Setter Property="FontWeight" Value="SemiBold"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
+                                        <Border Padding="4,2" Background="{Binding MissingAmountBackgroundColor}">
+                                            <TextBlock Text="{Binding MissingAmount, StringFormat={}{0:N2}}" 
+                                                       HorizontalAlignment="Right" 
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{Binding MissingAmountForegroundColor}"
+                                                       FontWeight="{Binding MissingAmountFontWeight}">
                                                 <TextBlock.ToolTip>
                                                     <ToolTip>
                                                         <StackPanel>

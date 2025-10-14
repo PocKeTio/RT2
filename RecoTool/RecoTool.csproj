@@ -79,6 +79,7 @@
     <Compile Include="App.xaml.cs">
       <DependentUpon>App.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Configuration\FeatureFlags.cs" />
     <Compile Include="Helpers\MultiUserHelper.cs" />
     <Compile Include="Models\TodoListItem.cs" />
     <Compile Include="Services\Ambre\AmbreConfigurationLoader.cs" />

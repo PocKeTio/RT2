@@ -253,9 +253,12 @@ namespace RecoTool.Services.DTOs
                 if (_action != value)
                 {
                     _action = value;
+                    _cachedIsToReview = null;
+                    _cachedIsReviewed = null;
                     OnPropertyChanged(nameof(Action));
                     // Notify dependent properties
                     OnPropertyChanged(nameof(IsToReview));
+                    OnPropertyChanged(nameof(IsReviewed));
                 }
             }
         }
@@ -324,7 +327,9 @@ namespace RecoTool.Services.DTOs
                 if (_toRemind != value)
                 {
                     _toRemind = value;
+                    _cachedHasActiveReminder = null;
                     OnPropertyChanged(nameof(ToRemind));
+                    OnPropertyChanged(nameof(HasActiveReminder));
                 }
             }
         }
@@ -338,7 +343,9 @@ namespace RecoTool.Services.DTOs
                 if (_toRemindDate != value)
                 {
                     _toRemindDate = value;
+                    _cachedHasActiveReminder = null;
                     OnPropertyChanged(nameof(ToRemindDate));
+                    OnPropertyChanged(nameof(HasActiveReminder));
                 }
             }
         }
@@ -367,6 +374,9 @@ namespace RecoTool.Services.DTOs
                 if (_actionStatus != value)
                 {
                     _actionStatus = value;
+                    _cachedIsReviewedToday = null;
+                    _cachedIsToReview = null;
+                    _cachedIsReviewed = null;
                     OnPropertyChanged(nameof(ActionStatus));
                     // Notify dependent properties
                     OnPropertyChanged(nameof(IsReviewedToday));
@@ -384,6 +394,7 @@ namespace RecoTool.Services.DTOs
                 if (_actionDate != value)
                 {
                     _actionDate = value;
+                    _cachedIsReviewedToday = null;
                     OnPropertyChanged(nameof(ActionDate));
                     // Notify dependent properties
                     OnPropertyChanged(nameof(IsReviewedToday));
@@ -800,25 +811,61 @@ namespace RecoTool.Services.DTOs
 
         /// <summary>
         /// Indicates if this row was reviewed today (based on ActionDate when status = Done)
+        /// CACHED to avoid recalculating DateTime.Today on every scroll
         /// </summary>
-        public bool IsReviewedToday => ActionStatus == true && ActionDate.HasValue && ActionDate.Value.Date == DateTime.Today;
+        private bool? _cachedIsReviewedToday;
+        public bool IsReviewedToday
+        {
+            get
+            {
+                if (_cachedIsReviewedToday.HasValue) return _cachedIsReviewedToday.Value;
+                return (_cachedIsReviewedToday = ActionStatus == true && ActionDate.HasValue && ActionDate.Value.Date == DateTime.Today).Value;
+            }
+        }
 
         /// <summary>
         /// Indicates if this row is "To Review" (has an action AND status is Pending)
         /// NOTE: Action = null/empty is considered N/A (Done by default)
+        /// CACHED to avoid recalculation on every scroll
         /// </summary>
-        public bool IsToReview => Action.HasValue && Action.Value > 0 && (ActionStatus == false || !ActionStatus.HasValue);
+        private bool? _cachedIsToReview;
+        public bool IsToReview
+        {
+            get
+            {
+                if (_cachedIsToReview.HasValue) return _cachedIsToReview.Value;
+                return (_cachedIsToReview = Action.HasValue && Action.Value > 0 && (ActionStatus == false || !ActionStatus.HasValue)).Value;
+            }
+        }
 
         /// <summary>
         /// Indicates if this row is "Reviewed" (action status is Done OR action is null/N/A)
         /// NOTE: Action = null/empty is considered N/A (Done by default)
+        /// CACHED to avoid recalculation on every scroll
         /// </summary>
-        public bool IsReviewed => ActionStatus == true || !Action.HasValue || Action.Value == 0;
+        private bool? _cachedIsReviewed;
+        public bool IsReviewed
+        {
+            get
+            {
+                if (_cachedIsReviewed.HasValue) return _cachedIsReviewed.Value;
+                return (_cachedIsReviewed = ActionStatus == true || !Action.HasValue || Action.Value == 0).Value;
+            }
+        }
         
         /// <summary>
         /// Indicates if this row has an active reminder (ToRemind = true and ToRemindDate <= today)
+        /// CACHED to avoid recalculating DateTime.Today on every scroll
         /// </summary>
-        public bool HasActiveReminder => ToRemind && ToRemindDate.HasValue && ToRemindDate.Value.Date <= DateTime.Today;
+        private bool? _cachedHasActiveReminder;
+        public bool HasActiveReminder
+        {
+            get
+            {
+                if (_cachedHasActiveReminder.HasValue) return _cachedHasActiveReminder.Value;
+                return (_cachedHasActiveReminder = ToRemind && ToRemindDate.HasValue && ToRemindDate.Value.Date <= DateTime.Today).Value;
+            }
+        }
         
         /// <summary>
         /// Missing amount when Receivable is grouped with multiple Pivot lines
@@ -835,11 +882,72 @@ namespace RecoTool.Services.DTOs
                 if (_missingAmount != value)
                 {
                     _missingAmount = value;
+                    // Invalidate cached colors/styles
+                    _cachedMissingAmountBackgroundColor = null;
+                    _cachedMissingAmountForegroundColor = null;
+                    _cachedMissingAmountFontWeight = null;
                     OnPropertyChanged(nameof(MissingAmount));
+                    OnPropertyChanged(nameof(MissingAmountBackgroundColor));
+                    OnPropertyChanged(nameof(MissingAmountForegroundColor));
+                    OnPropertyChanged(nameof(MissingAmountFontWeight));
                     InvalidateStatusCache();
                     OnPropertyChanged(nameof(StatusColor));
                     OnPropertyChanged(nameof(StatusTooltip));
                 }
+            }
+        }
+        
+        /// <summary>
+        /// Pre-calculated background color for MissingAmount column (avoids converter overhead during scroll)
+        /// Green: Balanced (0), Orange: Waiting for payment (>0), Red: Overpayment (<0)
+        /// </summary>
+        private string _cachedMissingAmountBackgroundColor;
+        public string MissingAmountBackgroundColor
+        {
+            get
+            {
+                if (_cachedMissingAmountBackgroundColor != null) return _cachedMissingAmountBackgroundColor;
+                
+                if (!_missingAmount.HasValue || _missingAmount.Value == 0)
+                    return _cachedMissingAmountBackgroundColor = "#E8F5E9"; // Light green - balanced
+                
+                if (_missingAmount.Value > 0)
+                    return _cachedMissingAmountBackgroundColor = "#FFF3E0"; // Orange - waiting for payment
+                
+                return _cachedMissingAmountBackgroundColor = "#FFEBEE"; // Red - overpayment
+            }
+        }
+        
+        /// <summary>
+        /// Pre-calculated foreground color for MissingAmount column (avoids converter overhead during scroll)
+        /// </summary>
+        private string _cachedMissingAmountForegroundColor;
+        public string MissingAmountForegroundColor
+        {
+            get
+            {
+                if (_cachedMissingAmountForegroundColor != null) return _cachedMissingAmountForegroundColor;
+                
+                if (!_missingAmount.HasValue || _missingAmount.Value == 0)
+                    return _cachedMissingAmountForegroundColor = "#2E7D32"; // Green
+                
+                if (_missingAmount.Value > 0)
+                    return _cachedMissingAmountForegroundColor = "#EF6C00"; // Orange
+                
+                return _cachedMissingAmountForegroundColor = "#C62828"; // Red
+            }
+        }
+        
+        /// <summary>
+        /// Pre-calculated font weight for MissingAmount column (avoids converter overhead during scroll)
+        /// </summary>
+        private string _cachedMissingAmountFontWeight;
+        public string MissingAmountFontWeight
+        {
+            get
+            {
+                if (_cachedMissingAmountFontWeight != null) return _cachedMissingAmountFontWeight;
+                return _cachedMissingAmountFontWeight = "SemiBold";
             }
         }
         

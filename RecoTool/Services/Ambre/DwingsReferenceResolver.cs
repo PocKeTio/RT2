@@ -252,11 +252,21 @@ namespace RecoTool.Services.AmbreImport
             // Match against invoice SENDER_REFERENCE
             // CRITICAL: Only take invoices with BUSINESS_CASE_ID (link to guarantee)
             // Without BUSINESS_CASE_ID, we can't link to guarantee => skip these invoices
+            // CRITICAL: Compare alphanumeric versions (same as tokenSet extraction)
             var hits = dwInvoices.Where(i =>
-                !string.IsNullOrWhiteSpace(i?.SENDER_REFERENCE) 
-                && tokenSet.Contains(i.SENDER_REFERENCE)
-                && !string.IsNullOrWhiteSpace(i?.BUSINESS_CASE_ID)  // Must have guarantee link
-            ).ToList();
+            {
+                if (string.IsNullOrWhiteSpace(i?.SENDER_REFERENCE)) return false;
+                if (string.IsNullOrWhiteSpace(i?.BUSINESS_CASE_ID)) return false;
+                
+                // Extract alphanumeric from SENDER_REFERENCE for comparison
+                var senderRefAlnum = Regex.Replace(i.SENDER_REFERENCE, @"[^A-Za-z0-9]", "");
+                return tokenSet.Any(token =>
+                {
+                    var tokenAlnum = Regex.Replace(token, @"[^A-Za-z0-9]", "");
+                    return !string.IsNullOrWhiteSpace(senderRefAlnum) 
+                        && senderRefAlnum.Equals(tokenAlnum, StringComparison.OrdinalIgnoreCase);
+                });
+            }).ToList();
 
             // EXTENDED: Also match against guarantee OFFICIALREF and PARTY_REF
             // Get guarantees linked to invoices via BUSINESS_CASE_REFERENCE/BUSINESS_CASE_ID

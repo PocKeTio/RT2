@@ -31,11 +31,11 @@ namespace RecoTool.Helpers
             return m.Success ? m.Groups[1].Value.ToUpperInvariant() : null;
         }
 
-        // Guarantee ID: G####AA######### (4 digits, 2 letters, 9 digits)
+        // Guarantee ID: G####AA######### or N####AA######### (G or N, 4 digits, 2 letters, 9 digits)
         public static string ExtractGuaranteeId(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return null;
-            var m = Regex.Match(s, @"(?:^|[^A-Za-z0-9])(G\d{4}[A-Za-z]{2}\d{9})(?![A-Za-z0-9])");
+            var m = Regex.Match(s, @"(?:^|[^A-Za-z0-9])([GN]\d{4}[A-Za-z]{2}\d{9})(?![A-Za-z0-9])");
             return m.Success ? m.Groups[1].Value : null;
         }
 

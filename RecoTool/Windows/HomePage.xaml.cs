@@ -39,6 +39,7 @@ namespace RecoTool.Windows
         private bool _canRefresh = true;
         private bool _hasLoadedOnce = false; 
         private List<ReconciliationViewData> _reconciliationViewData;
+        private List<ReconciliationViewData> _reconciliationHistoricalData; // Includes deleted records for historical charts
         private Brush _defaultBackground;
         private System.Windows.Threading.DispatcherTimer _dwingsCheckTimer;
         private System.Windows.Threading.DispatcherTimer _todoSessionRefreshTimer;
@@ -309,14 +310,15 @@ namespace RecoTool.Windows
         {
             try
             {
-                if (_reconciliationViewData == null || !_reconciliationViewData.Any())
+                // CRITICAL: Use historical data (includeDeleted=true) to show reconciliation duration
+                if (_reconciliationHistoricalData == null || !_reconciliationHistoricalData.Any())
                 {
                     DeletionDelaySeries = new SeriesCollection();
                     DeletionDelayLabels = new List<string>();
                     return;
                 }
 
-                var items = _reconciliationViewData
+                var items = _reconciliationHistoricalData
                     .Where(r => r.CreationDate.HasValue && r.DeleteDate.HasValue)
                     .Select(r => (int)(r.DeleteDate.Value.Date - r.CreationDate.Value.Date).TotalDays)
                     .Where(d => d >= 0)
@@ -367,14 +369,15 @@ namespace RecoTool.Windows
         {
             try
             {
-                if (_reconciliationViewData == null || !_reconciliationViewData.Any())
+                // CRITICAL: Use historical data (includeDeleted=true) to show daily new vs deleted trends
+                if (_reconciliationHistoricalData == null || !_reconciliationHistoricalData.Any())
                 {
                     NewDeletedDailySeries = new SeriesCollection();
                     NewDeletedDailyLabels = new List<string>();
                     return;
                 }
 
-                var deletions = _reconciliationViewData.Where(r => r.DeleteDate.HasValue).ToList();
+                var deletions = _reconciliationHistoricalData.Where(r => r.DeleteDate.HasValue).ToList();
                 if (!deletions.Any())
                 {
                     NewDeletedDailySeries = new SeriesCollection();
@@ -393,7 +396,7 @@ namespace RecoTool.Windows
                 var newPerDay = new ChartValues<int>();
                 var deletedPerDay = new ChartValues<int>();
 
-                var creations = _reconciliationViewData.Where(r => r.CreationDate.HasValue).ToList();
+                var creations = _reconciliationHistoricalData.Where(r => r.CreationDate.HasValue).ToList();
 
                 for (int i = 0; i < dayCount; i++)
                 {
@@ -1608,13 +1611,18 @@ namespace RecoTool.Windows
                 var reconciliationViewData = await _reconciliationService.GetReconciliationViewAsync(_offlineFirstService.CurrentCountryId, null);
                 _reconciliationViewData = reconciliationViewData ?? new List<ReconciliationViewData>();
 
+                // CRITICAL: Load historical data (includeDeleted=true) for Deletion Delay and New vs Deleted charts
+                // These charts need DeleteDate to calculate reconciliation duration and daily trends
+                var historicalData = await _reconciliationService.GetReconciliationViewAsync(_offlineFirstService.CurrentCountryId, null, includeDeleted: true);
+                _reconciliationHistoricalData = historicalData ?? new List<ReconciliationViewData>();
+
                 // Analyser la répartition des comptes pour diagnostic
                 AnalyzeAccountDistribution();
 
-                StatusMessage = $"Data loaded: {_reconciliationViewData.Count} rows";
+                StatusMessage = $"Data loaded: {_reconciliationViewData.Count} rows (Live), {_reconciliationHistoricalData.Count} rows (Historical)";
                 LastUpdateTime = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 
-                System.Diagnostics.Debug.WriteLine($"Data loaded via ReconciliationService: {_reconciliationViewData.Count} rows for {_offlineFirstService.CurrentCountryId}");
+                System.Diagnostics.Debug.WriteLine($"Data loaded via ReconciliationService: {_reconciliationViewData.Count} rows (Live), {_reconciliationHistoricalData.Count} rows (Historical) for {_offlineFirstService.CurrentCountryId}");
             }
             catch (Exception ex)
             {

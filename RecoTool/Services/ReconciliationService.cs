@@ -346,15 +346,24 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// Récupère les données jointes Ambre + Réconciliation
+        /// Récupère les données jointes Ambre + Réconciliation (Live only - DeleteDate IS NULL)
         /// REMOVED: dashboardOnly parameter - was incomplete and prevented cache reuse
         /// </summary>
         public async Task<List<ReconciliationViewData>> GetReconciliationViewAsync(string countryId, string filterSql = null)
         {
+            return await GetReconciliationViewAsync(countryId, filterSql, includeDeleted: false).ConfigureAwait(false);
+        }
+        
+        /// <summary>
+        /// Récupère les données jointes Ambre + Réconciliation avec option d'inclure les lignes supprimées
+        /// Used by HomePage for historical charts (Deletion Delay, New vs Deleted Daily)
+        /// </summary>
+        public async Task<List<ReconciliationViewData>> GetReconciliationViewAsync(string countryId, string filterSql, bool includeDeleted)
+        {
             // CRITICAL: Always ensure DWINGS caches are initialized for lazy loading
             await EnsureDwingsCachesInitializedAsync().ConfigureAwait(false);
             
-            var key = $"{countryId ?? string.Empty}|{NormalizeFilterForCache(filterSql)}";
+            var key = $"{countryId ?? string.Empty}|{includeDeleted}|{NormalizeFilterForCache(filterSql)}";
             if (_recoViewCache.TryGetValue(key, out var existing))
             {
                 var cached = await existing.Value.ConfigureAwait(false);
@@ -365,7 +374,7 @@ namespace RecoTool.Services
                 
                 return cached;
             }
-            var lazy = new Lazy<Task<List<ReconciliationViewData>>>(() => BuildReconciliationViewAsyncCore(countryId, filterSql, key));
+            var lazy = new Lazy<Task<List<ReconciliationViewData>>>(() => BuildReconciliationViewAsyncCore(countryId, filterSql, includeDeleted, key));
             var entry = _recoViewCache.GetOrAdd(key, lazy);
             var result = await entry.Value.ConfigureAwait(false);
             return result;
@@ -484,7 +493,7 @@ namespace RecoTool.Services
             catch { /* best-effort */ }
         }
 
-        private async Task<List<ReconciliationViewData>> BuildReconciliationViewAsyncCore(string countryId, string filterSql, string cacheKey)
+        private async Task<List<ReconciliationViewData>> BuildReconciliationViewAsyncCore(string countryId, string filterSql, bool includeDeleted, string cacheKey)
         {
             var swBuild = Stopwatch.StartNew();
             string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
@@ -498,8 +507,11 @@ namespace RecoTool.Services
             // Build the base query via centralized builder
             string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql);
 
-            // CRITICAL: Always filter out deleted records
-            query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
+            // CRITICAL: Filter out deleted records (unless includeDeleted=true for historical charts)
+            if (!includeDeleted)
+            {
+                query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
+            }
 
             // Apply Potential Duplicates predicate if requested via JSON
             if (dupOnly)

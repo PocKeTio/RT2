@@ -77,7 +77,15 @@ namespace RecoTool.Services.AmbreImport
                     var byOfficial = ResolveByOfficialRef(dataAmbre, dwInvoices);
                     if (!string.IsNullOrWhiteSpace(byOfficial))
                     {
-                        hit = dwInvoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, byOfficial, StringComparison.OrdinalIgnoreCase));
+                        // byOfficial can be:
+                        // - INVOICE_ID: found invoice via OfficialRef
+                        // - string.Empty: found guarantee via OfficialRef but no invoice
+                        // In both cases, _lastResolvedGuaranteeId may be set
+                        if (byOfficial != string.Empty)
+                        {
+                            hit = dwInvoices?.FirstOrDefault(i => string.Equals(i?.INVOICE_ID, byOfficial, StringComparison.OrdinalIgnoreCase));
+                        }
+                        // If byOfficial == string.Empty, hit stays null but _lastResolvedGuaranteeId is set
                     }
                 }
 
@@ -242,8 +250,12 @@ namespace RecoTool.Services.AmbreImport
             var ambreAmt = dataAmbre.SignedAmount;
 
             // Match against invoice SENDER_REFERENCE
+            // CRITICAL: Only take invoices with BUSINESS_CASE_ID (link to guarantee)
+            // Without BUSINESS_CASE_ID, we can't link to guarantee => skip these invoices
             var hits = dwInvoices.Where(i =>
-                !string.IsNullOrWhiteSpace(i?.SENDER_REFERENCE) && tokenSet.Contains(i.SENDER_REFERENCE)
+                !string.IsNullOrWhiteSpace(i?.SENDER_REFERENCE) 
+                && tokenSet.Contains(i.SENDER_REFERENCE)
+                && !string.IsNullOrWhiteSpace(i?.BUSINESS_CASE_ID)  // Must have guarantee link
             ).ToList();
 
             // EXTENDED: Also match against guarantee OFFICIALREF and PARTY_REF
@@ -284,9 +296,10 @@ namespace RecoTool.Services.AmbreImport
                         .First();
                     
                     // CRITICAL: Store the resolved GUARANTEE_ID so caller can use it
+                    // This is used even if no invoice is found (Pivot with OfficialRef but no invoice)
                     _lastResolvedGuaranteeId = bestGuarantee.GUARANTEE_ID;
                     
-                    // Now find the best matching invoice(s) linked to this guarantee
+                    // Try to find the best matching invoice(s) linked to this guarantee
                     // Use the same logic as ResolveInvoicesByGuarantee (date + amount ranking)
                     var invoicesForGuarantee = DwingsLinkingHelper.ResolveInvoicesByGuarantee(
                         dwInvoices,
@@ -297,6 +310,15 @@ namespace RecoTool.Services.AmbreImport
                     );
                     
                     hits = invoicesForGuarantee?.ToList() ?? new List<DwingsInvoiceDto>();
+                    
+                    // IMPORTANT: Even if no invoice found, we still have the GUARANTEE_ID
+                    // Return a placeholder to indicate we found something (will be null invoice but valid guarantee)
+                    if (hits.Count == 0)
+                    {
+                        // Return empty string to signal "found guarantee but no invoice"
+                        // Caller will use _lastResolvedGuaranteeId
+                        return string.Empty;
+                    }
                 }
             }
 
@@ -318,6 +340,14 @@ namespace RecoTool.Services.AmbreImport
             }
 
             var chosen = hits.OrderBy(DateScore).ThenBy(AmountScore).FirstOrDefault();
+            
+            // CRITICAL: Store GUARANTEE_ID from invoice's BUSINESS_CASE_ID
+            // This ensures SENDER_REFERENCE matches also get linked to guarantee
+            if (chosen != null && !string.IsNullOrWhiteSpace(chosen.BUSINESS_CASE_ID))
+            {
+                _lastResolvedGuaranteeId = chosen.BUSINESS_CASE_ID;
+            }
+            
             return chosen?.INVOICE_ID;
         }
 

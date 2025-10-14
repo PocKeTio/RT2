@@ -34,7 +34,11 @@ namespace RecoTool.Services.DTOs
                 {
                     if (!string.IsNullOrWhiteSpace(inv.INVOICE_ID))
                     {
-                        _dwingsInvoiceCache[inv.INVOICE_ID] = inv;
+                        // NOTE: INVOICE_ID is NOT unique - keep first occurrence
+                        if (!_dwingsInvoiceCache.ContainsKey(inv.INVOICE_ID))
+                        {
+                            _dwingsInvoiceCache[inv.INVOICE_ID] = inv;
+                        }
                     }
                 }
             }
@@ -45,7 +49,11 @@ namespace RecoTool.Services.DTOs
                 {
                     if (!string.IsNullOrWhiteSpace(guar.GUARANTEE_ID))
                     {
-                        _dwingsGuaranteeCache[guar.GUARANTEE_ID] = guar;
+                        // NOTE: GUARANTEE_ID should be unique, but check anyway
+                        if (!_dwingsGuaranteeCache.ContainsKey(guar.GUARANTEE_ID))
+                        {
+                            _dwingsGuaranteeCache[guar.GUARANTEE_ID] = guar;
+                        }
                     }
                 }
             }
@@ -60,36 +68,159 @@ namespace RecoTool.Services.DTOs
             _dwingsGuaranteeCache?.Clear();
         }
         
-        // Lazy-loaded DWINGS invoice data
-        private DwingsInvoiceDto _cachedInvoice;
-        private bool _invoiceLoaded;
-        private DwingsInvoiceDto GetInvoiceData()
+        /// <summary>
+        /// Refresh DWINGS data when user manually changes DWINGS_InvoiceID or DWINGS_GuaranteeID
+        /// Call this after user edits to recalculate all DWINGS-linked properties
+        /// </summary>
+        public void RefreshDwingsData()
         {
-            if (!_invoiceLoaded)
+            // Reload invoice data
+            DwingsInvoiceDto invoice = null;
+            if (!string.IsNullOrWhiteSpace(DWINGS_InvoiceID) && _dwingsInvoiceCache != null)
             {
-                _invoiceLoaded = true;
-                if (!string.IsNullOrWhiteSpace(DWINGS_InvoiceID) && _dwingsInvoiceCache != null)
-                {
-                    _dwingsInvoiceCache.TryGetValue(DWINGS_InvoiceID, out _cachedInvoice);
-                }
+                _dwingsInvoiceCache.TryGetValue(DWINGS_InvoiceID, out invoice);
             }
-            return _cachedInvoice;
+            
+            // Reload guarantee data
+            DwingsGuaranteeDto guarantee = null;
+            if (!string.IsNullOrWhiteSpace(DWINGS_GuaranteeID) && _dwingsGuaranteeCache != null)
+            {
+                _dwingsGuaranteeCache.TryGetValue(DWINGS_GuaranteeID, out guarantee);
+            }
+            
+            // Update all invoice properties
+            PopulateInvoiceProperties(invoice);
+            
+            // Update all guarantee properties
+            PopulateGuaranteeProperties(guarantee);
+            
+            // Notify all dependent properties
+            NotifyAllDwingsProperties();
         }
         
-        // Lazy-loaded DWINGS guarantee data
-        private DwingsGuaranteeDto _cachedGuarantee;
-        private bool _guaranteeLoaded;
-        private DwingsGuaranteeDto GetGuaranteeData()
+        /// <summary>
+        /// Initialize DWINGS properties from invoice data (called once during load or after user edit)
+        /// </summary>
+        internal void PopulateInvoiceProperties(DwingsInvoiceDto invoice)
         {
-            if (!_guaranteeLoaded)
-            {
-                _guaranteeLoaded = true;
-                if (!string.IsNullOrWhiteSpace(DWINGS_GuaranteeID) && _dwingsGuaranteeCache != null)
-                {
-                    _dwingsGuaranteeCache.TryGetValue(DWINGS_GuaranteeID, out _cachedGuarantee);
-                }
-            }
-            return _cachedGuarantee;
+            I_REQUESTED_INVOICE_AMOUNT = invoice?.REQUESTED_AMOUNT?.ToString();
+            I_SENDER_NAME = invoice?.SENDER_NAME;
+            I_RECEIVER_NAME = invoice?.RECEIVER_NAME;
+            I_SENDER_REFERENCE = invoice?.SENDER_REFERENCE;
+            I_RECEIVER_REFERENCE = invoice?.RECEIVER_REFERENCE;
+            I_T_INVOICE_STATUS = invoice?.T_INVOICE_STATUS;
+            _hasEmail = invoice?.COMM_ID_EMAIL;
+            I_BILLING_AMOUNT = invoice?.BILLING_AMOUNT?.ToString();
+            I_BILLING_CURRENCY = invoice?.BILLING_CURRENCY;
+            I_START_DATE = invoice?.START_DATE?.ToString("yyyy-MM-dd");
+            I_END_DATE = invoice?.END_DATE?.ToString("yyyy-MM-dd");
+            I_FINAL_AMOUNT = invoice?.FINAL_AMOUNT?.ToString();
+            I_BUSINESS_CASE_REFERENCE = invoice?.BUSINESS_CASE_REFERENCE;
+            I_BUSINESS_CASE_ID = invoice?.BUSINESS_CASE_ID;
+            I_SENDER_ACCOUNT_NUMBER = invoice?.SENDER_ACCOUNT_NUMBER;
+            I_SENDER_ACCOUNT_BIC = invoice?.SENDER_ACCOUNT_BIC;
+            I_REQUESTED_AMOUNT = invoice?.REQUESTED_AMOUNT?.ToString();
+            I_REQUESTED_EXECUTION_DATE = invoice?.REQUESTED_EXECUTION_DATE?.ToString("yyyy-MM-dd");
+            I_T_PAYMENT_REQUEST_STATUS = invoice?.T_PAYMENT_REQUEST_STATUS;
+            I_BGPMT = invoice?.BGPMT;
+            I_MT_STATUS = invoice?.MT_STATUS;
+            I_ERROR_MESSAGE = invoice?.ERROR_MESSAGE;
+            I_PAYMENT_METHOD = invoice?.PAYMENT_METHOD;
+            I_DEBTOR_PARTY_NAME = invoice?.DEBTOR_PARTY_NAME;
+        }
+        
+        /// <summary>
+        /// Initialize DWINGS properties from guarantee data (called once during load or after user edit)
+        /// </summary>
+        internal void PopulateGuaranteeProperties(DwingsGuaranteeDto guarantee)
+        {
+            G_GUARANTEE_TYPE = guarantee?.GUARANTEE_TYPE;
+            G_NATURE = guarantee?.NATURE;
+            G_EVENT_STATUS = guarantee?.EVENT_STATUS;
+            G_EVENT_EFFECTIVEDATE = guarantee?.EVENT_EFFECTIVEDATE?.ToString("yyyy-MM-dd");
+            G_ISSUEDATE = guarantee?.ISSUEDATE?.ToString("yyyy-MM-dd");
+            G_OFFICIALREF = guarantee?.OFFICIALREF;
+            G_UNDERTAKINGEVENT = guarantee?.UNDERTAKINGEVENT;
+            G_PROCESS = guarantee?.PROCESS;
+            G_EXPIRYDATETYPE = guarantee?.EXPIRYDATETYPE;
+            G_EXPIRYDATE = guarantee?.EXPIRYDATE?.ToString("yyyy-MM-dd");
+            G_PARTY_ID = guarantee?.PARTY_ID;
+            G_PARTY_REF = guarantee?.PARTY_REF;
+            G_SECONDARY_OBLIGOR = guarantee?.SECONDARY_OBLIGOR;
+            G_SECONDARY_OBLIGOR_NATURE = guarantee?.SECONDARY_OBLIGOR_NATURE;
+            G_ROLE = guarantee?.ROLE;
+            G_COUNTRY = guarantee?.COUNTRY;
+            G_CENTRAL_PARTY_CODE = guarantee?.CENTRAL_PARTY_CODE;
+            G_NAME1 = guarantee?.NAME1;
+            G_NAME2 = guarantee?.NAME2;
+            G_GROUPE = guarantee?.GROUPE;
+            G_PREMIUM = guarantee?.PREMIUM?.ToString();
+            G_BRANCH_CODE = guarantee?.BRANCH_CODE;
+            G_BRANCH_NAME = guarantee?.BRANCH_NAME;
+            G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY = guarantee?.OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY?.ToString();
+            G_CANCELLATIONDATE = guarantee?.CANCELLATIONDATE?.ToString("yyyy-MM-dd");
+            G_CONTROLER = guarantee?.CONTROLER;
+            G_AUTOMATICBOOKOFF = guarantee?.AUTOMATICBOOKOFF;
+            G_NATUREOFDEAL = guarantee?.NATUREOFDEAL;
+        }
+        
+        private void NotifyAllDwingsProperties()
+        {
+            // Invoice properties
+            OnPropertyChanged(nameof(I_REQUESTED_INVOICE_AMOUNT));
+            OnPropertyChanged(nameof(I_SENDER_NAME));
+            OnPropertyChanged(nameof(I_RECEIVER_NAME));
+            OnPropertyChanged(nameof(I_SENDER_REFERENCE));
+            OnPropertyChanged(nameof(I_RECEIVER_REFERENCE));
+            OnPropertyChanged(nameof(I_T_INVOICE_STATUS));
+            OnPropertyChanged(nameof(HasEmail));
+            OnPropertyChanged(nameof(I_BILLING_AMOUNT));
+            OnPropertyChanged(nameof(I_BILLING_CURRENCY));
+            OnPropertyChanged(nameof(I_START_DATE));
+            OnPropertyChanged(nameof(I_END_DATE));
+            OnPropertyChanged(nameof(I_FINAL_AMOUNT));
+            OnPropertyChanged(nameof(I_BUSINESS_CASE_REFERENCE));
+            OnPropertyChanged(nameof(I_BUSINESS_CASE_ID));
+            OnPropertyChanged(nameof(I_SENDER_ACCOUNT_NUMBER));
+            OnPropertyChanged(nameof(I_SENDER_ACCOUNT_BIC));
+            OnPropertyChanged(nameof(I_REQUESTED_AMOUNT));
+            OnPropertyChanged(nameof(I_REQUESTED_EXECUTION_DATE));
+            OnPropertyChanged(nameof(I_T_PAYMENT_REQUEST_STATUS));
+            OnPropertyChanged(nameof(I_BGPMT));
+            OnPropertyChanged(nameof(I_MT_STATUS));
+            OnPropertyChanged(nameof(I_ERROR_MESSAGE));
+            OnPropertyChanged(nameof(I_PAYMENT_METHOD));
+            OnPropertyChanged(nameof(I_DEBTOR_PARTY_NAME));
+            
+            // Guarantee properties
+            OnPropertyChanged(nameof(G_GUARANTEE_TYPE));
+            OnPropertyChanged(nameof(G_NATURE));
+            OnPropertyChanged(nameof(G_EVENT_STATUS));
+            OnPropertyChanged(nameof(G_EVENT_EFFECTIVEDATE));
+            OnPropertyChanged(nameof(G_ISSUEDATE));
+            OnPropertyChanged(nameof(G_OFFICIALREF));
+            OnPropertyChanged(nameof(G_UNDERTAKINGEVENT));
+            OnPropertyChanged(nameof(G_PROCESS));
+            OnPropertyChanged(nameof(G_EXPIRYDATETYPE));
+            OnPropertyChanged(nameof(G_EXPIRYDATE));
+            OnPropertyChanged(nameof(G_PARTY_ID));
+            OnPropertyChanged(nameof(G_PARTY_REF));
+            OnPropertyChanged(nameof(G_SECONDARY_OBLIGOR));
+            OnPropertyChanged(nameof(G_SECONDARY_OBLIGOR_NATURE));
+            OnPropertyChanged(nameof(G_ROLE));
+            OnPropertyChanged(nameof(G_COUNTRY));
+            OnPropertyChanged(nameof(G_CENTRAL_PARTY_CODE));
+            OnPropertyChanged(nameof(G_NAME1));
+            OnPropertyChanged(nameof(G_NAME2));
+            OnPropertyChanged(nameof(G_GROUPE));
+            OnPropertyChanged(nameof(G_PREMIUM));
+            OnPropertyChanged(nameof(G_BRANCH_CODE));
+            OnPropertyChanged(nameof(G_BRANCH_NAME));
+            OnPropertyChanged(nameof(G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY));
+            OnPropertyChanged(nameof(G_CANCELLATIONDATE));
+            OnPropertyChanged(nameof(G_CONTROLER));
+            OnPropertyChanged(nameof(G_AUTOMATICBOOKOFF));
+            OnPropertyChanged(nameof(G_NATUREOFDEAL));
         }
 
         // Propriétés de Reconciliation
@@ -380,77 +511,78 @@ namespace RecoTool.Services.DTOs
         // DWINGS guarantee type (raw code)
         public string GUARANTEE_TYPE { get; set; }
 
-        // DWINGS Guarantee extra fields (prefixed with G_ to avoid collisions) - LAZY LOADED
-        public string G_GUARANTEE_TYPE => GetGuaranteeData()?.GUARANTEE_TYPE;
-        public string G_NATURE => GetGuaranteeData()?.NATURE;
-        public string G_EVENT_STATUS => GetGuaranteeData()?.EVENT_STATUS;
-        public string G_EVENT_EFFECTIVEDATE => GetGuaranteeData()?.EVENT_EFFECTIVEDATE?.ToString("yyyy-MM-dd");
-        public string G_ISSUEDATE => GetGuaranteeData()?.ISSUEDATE?.ToString("yyyy-MM-dd");
-        public string G_OFFICIALREF => GetGuaranteeData()?.OFFICIALREF;
-        public string G_UNDERTAKINGEVENT => GetGuaranteeData()?.UNDERTAKINGEVENT;
-        public string G_PROCESS => GetGuaranteeData()?.PROCESS;
-        public string G_EXPIRYDATETYPE => GetGuaranteeData()?.EXPIRYDATETYPE;
-        public string G_EXPIRYDATE => GetGuaranteeData()?.EXPIRYDATE?.ToString("yyyy-MM-dd");
-        public string G_PARTY_ID => GetGuaranteeData()?.PARTY_ID;
-        public string G_PARTY_REF => GetGuaranteeData()?.PARTY_REF;
-        public string G_SECONDARY_OBLIGOR => GetGuaranteeData()?.SECONDARY_OBLIGOR;
-        public string G_SECONDARY_OBLIGOR_NATURE => GetGuaranteeData()?.SECONDARY_OBLIGOR_NATURE;
-        public string G_ROLE => GetGuaranteeData()?.ROLE;
-        public string G_COUNTRY => GetGuaranteeData()?.COUNTRY;
-        public string G_CENTRAL_PARTY_CODE => GetGuaranteeData()?.CENTRAL_PARTY_CODE;
-        public string G_NAME1 => GetGuaranteeData()?.NAME1;
-        public string G_NAME2 => GetGuaranteeData()?.NAME2;
-        public string G_GROUPE => GetGuaranteeData()?.GROUPE;
-        public string G_PREMIUM => GetGuaranteeData()?.PREMIUM?.ToString();
-        public string G_BRANCH_CODE => GetGuaranteeData()?.BRANCH_CODE;
-        public string G_BRANCH_NAME => GetGuaranteeData()?.BRANCH_NAME;
-        public string G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY => GetGuaranteeData()?.OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY?.ToString();
-        public string G_CANCELLATIONDATE => GetGuaranteeData()?.CANCELLATIONDATE?.ToString("yyyy-MM-dd");
-        public string G_CONTROLER => GetGuaranteeData()?.CONTROLER;
-        public string G_AUTOMATICBOOKOFF => GetGuaranteeData()?.AUTOMATICBOOKOFF;
-        public string G_NATUREOFDEAL => GetGuaranteeData()?.NATUREOFDEAL;
+        // DWINGS Guarantee extra fields (prefixed with G_ to avoid collisions) - PRE-CALCULATED
+        public string G_GUARANTEE_TYPE { get; set; }
+        public string G_NATURE { get; set; }
+        public string G_EVENT_STATUS { get; set; }
+        public string G_EVENT_EFFECTIVEDATE { get; set; }
+        public string G_ISSUEDATE { get; set; }
+        public string G_OFFICIALREF { get; set; }
+        public string G_UNDERTAKINGEVENT { get; set; }
+        public string G_PROCESS { get; set; }
+        public string G_EXPIRYDATETYPE { get; set; }
+        public string G_EXPIRYDATE { get; set; }
+        public string G_PARTY_ID { get; set; }
+        public string G_PARTY_REF { get; set; }
+        public string G_SECONDARY_OBLIGOR { get; set; }
+        public string G_SECONDARY_OBLIGOR_NATURE { get; set; }
+        public string G_ROLE { get; set; }
+        public string G_COUNTRY { get; set; }
+        public string G_CENTRAL_PARTY_CODE { get; set; }
+        public string G_NAME1 { get; set; }
+        public string G_NAME2 { get; set; }
+        public string G_GROUPE { get; set; }
+        public string G_PREMIUM { get; set; }
+        public string G_BRANCH_CODE { get; set; }
+        public string G_BRANCH_NAME { get; set; }
+        public string G_OUTSTANDING_AMOUNT_IN_BOOKING_CURRENCY { get; set; }
+        public string G_CANCELLATIONDATE { get; set; }
+        public string G_CONTROLER { get; set; }
+        public string G_AUTOMATICBOOKOFF { get; set; }
+        public string G_NATUREOFDEAL { get; set; }
 
-        // DWINGS Invoice extra fields (prefixed with I_) - LAZY LOADED
-        public string I_REQUESTED_INVOICE_AMOUNT => GetInvoiceData()?.REQUESTED_AMOUNT?.ToString();
-        public string I_SENDER_NAME => GetInvoiceData()?.SENDER_NAME;
-        public string I_RECEIVER_NAME => GetInvoiceData()?.RECEIVER_NAME;
-        public string I_SENDER_REFERENCE => GetInvoiceData()?.SENDER_REFERENCE;
-        public string I_RECEIVER_REFERENCE => GetInvoiceData()?.RECEIVER_REFERENCE;
-        public string I_T_INVOICE_STATUS => GetInvoiceData()?.T_INVOICE_STATUS;
+        // DWINGS Invoice extra fields (prefixed with I_) - PRE-CALCULATED
+        public string I_REQUESTED_INVOICE_AMOUNT { get; set; }
+        public string I_SENDER_NAME { get; set; }
+        public string I_RECEIVER_NAME { get; set; }
+        public string I_SENDER_REFERENCE { get; set; }
+        public string I_RECEIVER_REFERENCE { get; set; }
+        public string I_T_INVOICE_STATUS { get; set; }
         
         /// <summary>
         /// HasEmail: True if COMM_ID_EMAIL flag is set on the DWINGS invoice (used for rules)
         /// </summary>
-        public bool? HasEmail => GetInvoiceData()?.COMM_ID_EMAIL;
-        public string I_BILLING_AMOUNT => GetInvoiceData()?.BILLING_AMOUNT?.ToString();
-        public string I_BILLING_CURRENCY => GetInvoiceData()?.BILLING_CURRENCY;
-        public string I_START_DATE => GetInvoiceData()?.START_DATE?.ToString("yyyy-MM-dd");
-        public string I_END_DATE => GetInvoiceData()?.END_DATE?.ToString("yyyy-MM-dd");
-        public string I_FINAL_AMOUNT => GetInvoiceData()?.FINAL_AMOUNT?.ToString();
+        private bool? _hasEmail;
+        public bool? HasEmail => _hasEmail;
+        public string I_BILLING_AMOUNT { get; set; }
+        public string I_BILLING_CURRENCY { get; set; }
+        public string I_START_DATE { get; set; }
+        public string I_END_DATE { get; set; }
+        public string I_FINAL_AMOUNT { get; set; }
         public string I_T_COMMISSION_PERIOD_STATUS => null; // Not in DwingsInvoiceDto
-        public string I_BUSINESS_CASE_REFERENCE => GetInvoiceData()?.BUSINESS_CASE_REFERENCE;
-        public string I_BUSINESS_CASE_ID => GetInvoiceData()?.BUSINESS_CASE_ID;
+        public string I_BUSINESS_CASE_REFERENCE { get; set; }
+        public string I_BUSINESS_CASE_ID { get; set; }
         public string I_POSTING_PERIODICITY => null; // Not in DwingsInvoiceDto
         public string I_EVENT_ID => null; // Not in DwingsInvoiceDto
         public string I_COMMENTS => null; // Not in DwingsInvoiceDto
-        public string I_SENDER_ACCOUNT_NUMBER => GetInvoiceData()?.SENDER_ACCOUNT_NUMBER;
-        public string I_SENDER_ACCOUNT_BIC => GetInvoiceData()?.SENDER_ACCOUNT_BIC;
+        public string I_SENDER_ACCOUNT_NUMBER { get; set; }
+        public string I_SENDER_ACCOUNT_BIC { get; set; }
         public string I_RECEIVER_ACCOUNT_NUMBER => null; // Not in DwingsInvoiceDto
         public string I_RECEIVER_ACCOUNT_BIC => null; // Not in DwingsInvoiceDto
-        public string I_REQUESTED_AMOUNT => GetInvoiceData()?.REQUESTED_AMOUNT?.ToString();
+        public string I_REQUESTED_AMOUNT { get; set; }
         public string I_EXECUTED_AMOUNT => null; // Not in DwingsInvoiceDto
-        public string I_REQUESTED_EXECUTION_DATE => GetInvoiceData()?.REQUESTED_EXECUTION_DATE?.ToString("yyyy-MM-dd");
-        public string I_T_PAYMENT_REQUEST_STATUS => GetInvoiceData()?.T_PAYMENT_REQUEST_STATUS;
-        public string I_BGPMT => GetInvoiceData()?.BGPMT;
+        public string I_REQUESTED_EXECUTION_DATE { get; set; }
+        public string I_T_PAYMENT_REQUEST_STATUS { get; set; }
+        public string I_BGPMT { get; set; }
         public string I_DEBTOR_ACCOUNT_ID => null; // Not in DwingsInvoiceDto
         public string I_CREDITOR_ACCOUNT_ID => null; // Not in DwingsInvoiceDto
-        public string I_MT_STATUS => GetInvoiceData()?.MT_STATUS;
+        public string I_MT_STATUS { get; set; }
         public string I_REMINDER_NUMBER => null; // Not in DwingsInvoiceDto
-        public string I_ERROR_MESSAGE => GetInvoiceData()?.ERROR_MESSAGE;
+        public string I_ERROR_MESSAGE { get; set; }
         public string I_DEBTOR_PARTY_ID => null; // Not in DwingsInvoiceDto
-        public string I_PAYMENT_METHOD => GetInvoiceData()?.PAYMENT_METHOD;
+        public string I_PAYMENT_METHOD { get; set; }
         public string I_PAYMENT_TYPE => null; // Not in DwingsInvoiceDto
-        public string I_DEBTOR_PARTY_NAME => GetInvoiceData()?.DEBTOR_PARTY_NAME;
+        public string I_DEBTOR_PARTY_NAME { get; set; }
 
         /// <summary>
         /// Gets the TransactionType for receivable based on PAYMENT_METHOD from BGI
@@ -672,14 +804,16 @@ namespace RecoTool.Services.DTOs
         public bool IsReviewedToday => ActionStatus == true && ActionDate.HasValue && ActionDate.Value.Date == DateTime.Today;
 
         /// <summary>
-        /// Indicates if this row is "To Review" (has an action but status is Pending)
+        /// Indicates if this row is "To Review" (has an action AND status is Pending)
+        /// NOTE: Action = null/empty is considered N/A (Done by default)
         /// </summary>
-        public bool IsToReview => Action.HasValue && (ActionStatus == false || !ActionStatus.HasValue);
+        public bool IsToReview => Action.HasValue && Action.Value > 0 && (ActionStatus == false || !ActionStatus.HasValue);
 
         /// <summary>
-        /// Indicates if this row is "Reviewed" (action status is Done)
+        /// Indicates if this row is "Reviewed" (action status is Done OR action is null/N/A)
+        /// NOTE: Action = null/empty is considered N/A (Done by default)
         /// </summary>
-        public bool IsReviewed => ActionStatus == true;
+        public bool IsReviewed => ActionStatus == true || !Action.HasValue || Action.Value == 0;
         
         /// <summary>
         /// Indicates if this row has an active reminder (ToRemind = true and ToRemindDate <= today)

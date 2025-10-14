@@ -269,6 +269,7 @@ namespace RecoTool.Windows
             // Track if linking fields changed (to know if we need to recalculate grouping)
             var oldInternalRef = reco.InternalInvoiceReference;
             var oldDwingsInvoice = reco.DWINGS_InvoiceID;
+            var oldDwingsGuarantee = reco.DWINGS_GuaranteeID;
 
             // Map user-editable fields
             reco.Action = row.Action;
@@ -300,8 +301,17 @@ namespace RecoTool.Windows
             bool linkingFieldsChanged = !string.Equals(oldInternalRef, reco.InternalInvoiceReference, StringComparison.OrdinalIgnoreCase)
                                      || !string.Equals(oldDwingsInvoice, reco.DWINGS_InvoiceID, StringComparison.OrdinalIgnoreCase);
             
+            bool dwingsLinksChanged = !string.Equals(oldDwingsInvoice, reco.DWINGS_InvoiceID, StringComparison.OrdinalIgnoreCase)
+                                   || !string.Equals(oldDwingsGuarantee, reco.DWINGS_GuaranteeID, StringComparison.OrdinalIgnoreCase);
+            
             bool hasLinkingValue = !string.IsNullOrWhiteSpace(reco.InternalInvoiceReference) 
                                  || !string.IsNullOrWhiteSpace(reco.DWINGS_InvoiceID);
+            
+            // CRITICAL: If user changed DWINGS links, refresh all DWINGS-derived properties
+            if (dwingsLinksChanged)
+            {
+                row.RefreshDwingsData();
+            }
 
             // Preview rules and ask user confirmation for self outputs; apply to UI immediately
             var ruleApplied = await ConfirmAndApplyRuleOutputsAsync(row, reco);

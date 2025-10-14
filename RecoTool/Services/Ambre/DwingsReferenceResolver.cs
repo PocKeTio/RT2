@@ -16,6 +16,7 @@ namespace RecoTool.Services.AmbreImport
     public class DwingsReferenceResolver
     {
         private readonly ReconciliationService _reconciliationService;
+        private List<DwingsGuaranteeDto> _dwingsGuarantees;
 
         public DwingsReferenceResolver(ReconciliationService reconciliationService)
         {
@@ -28,8 +29,12 @@ namespace RecoTool.Services.AmbreImport
         public async Task<AmbreImport.DwingsTokens> ResolveReferencesAsync(
             DataAmbre dataAmbre,
             bool isPivot,
-            List<DwingsInvoiceDto> dwInvoices)
+            List<DwingsInvoiceDto> dwInvoices,
+            List<DwingsGuaranteeDto> dwGuarantees = null)
         {
+            // Store guarantees for use in ResolveByOfficialRef
+            _dwingsGuarantees = dwGuarantees;
+            
             var references = new AmbreImport.DwingsTokens();
 
             try
@@ -198,34 +203,98 @@ namespace RecoTool.Services.AmbreImport
             return null;
         }
 
-        // OfficialRef exact match (SenderReference): extract alphanumeric tokens from Reconciliation_Num
-        // and match equality (case-insensitive) against invoice SENDER_REFERENCE.
+        // OfficialRef exact match: extract alphanumeric tokens from Reconciliation_Num
+        // and match against invoice SENDER_REFERENCE, guarantee OFFICIALREF, and guarantee PARTY_REF
+        // NOTE: For Pivot account, Reconciliation_Num may contain IDs that don't match BGI/BGPMT/Guarantee patterns
         private string ResolveByOfficialRef(DataAmbre dataAmbre, List<DwingsInvoiceDto> dwInvoices)
         {
             if (dwInvoices == null || dwInvoices.Count == 0 || dataAmbre == null) return null;
 
-            // Build token set from Reconciliation_Num and fallback ReconciliationOrigin_Num
+            // Build alphanumeric token set from Reconciliation_Num and fallback ReconciliationOrigin_Num
+            // Remove punctuation, spaces, etc. - keep only alphanumeric
             var tokenSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             void AddTokens(string s)
             {
                 if (string.IsNullOrWhiteSpace(s)) return;
-                foreach (var t in Regex.Split(s, @"[^A-Za-z0-9]+").Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p.Trim()))
+                // Extract alphanumeric sequences (ignore "null", empty, or very short tokens)
+                foreach (var t in Regex.Split(s, @"[^A-Za-z0-9]+")
+                    .Where(p => !string.IsNullOrWhiteSpace(p) && p.Length >= 3 && !p.Equals("null", StringComparison.OrdinalIgnoreCase))
+                    .Select(p => p.Trim()))
+                {
                     tokenSet.Add(t);
+                }
             }
             AddTokens(dataAmbre.Reconciliation_Num);
             AddTokens(dataAmbre.ReconciliationOrigin_Num);
             if (tokenSet.Count == 0) return null;
 
+            // Prepare date and amount for ranking
+            var ambreDate = dataAmbre.Operation_Date ?? dataAmbre.Value_Date;
+            var ambreAmt = dataAmbre.SignedAmount;
+
+            // Match against invoice SENDER_REFERENCE
             var hits = dwInvoices.Where(i =>
                 !string.IsNullOrWhiteSpace(i?.SENDER_REFERENCE) && tokenSet.Contains(i.SENDER_REFERENCE)
             ).ToList();
 
+            // EXTENDED: Also match against guarantee OFFICIALREF and PARTY_REF
+            // Get guarantees linked to invoices via BUSINESS_CASE_REFERENCE/BUSINESS_CASE_ID
+            if (hits.Count == 0 && _dwingsGuarantees != null)
+            {
+                // Build alphanumeric versions of guarantee refs for matching
+                var guaranteeMatches = _dwingsGuarantees
+                    .Where(g => !string.IsNullOrWhiteSpace(g?.OFFICIALREF) || !string.IsNullOrWhiteSpace(g?.PARTY_REF))
+                    .Where(g =>
+                    {
+                        // Extract alphanumeric from OFFICIALREF and PARTY_REF
+                        var officialRefAlnum = string.IsNullOrWhiteSpace(g.OFFICIALREF) ? null : 
+                            Regex.Replace(g.OFFICIALREF, @"[^A-Za-z0-9]", "");
+                        var partyRefAlnum = string.IsNullOrWhiteSpace(g.PARTY_REF) ? null : 
+                            Regex.Replace(g.PARTY_REF, @"[^A-Za-z0-9]", "");
+                        
+                        // Check if any token matches (alphanumeric comparison)
+                        return tokenSet.Any(token =>
+                        {
+                            var tokenAlnum = Regex.Replace(token, @"[^A-Za-z0-9]", "");
+                            return (!string.IsNullOrWhiteSpace(officialRefAlnum) && 
+                                    officialRefAlnum.Equals(tokenAlnum, StringComparison.OrdinalIgnoreCase))
+                                || (!string.IsNullOrWhiteSpace(partyRefAlnum) && 
+                                    partyRefAlnum.Equals(tokenAlnum, StringComparison.OrdinalIgnoreCase));
+                        });
+                    })
+                    .ToList();
+
+                if (guaranteeMatches.Count > 0)
+                {
+                    // Found guarantee(s) via OFFICIALREF/PARTY_REF
+                    // Now find the best matching invoice(s) linked to these guarantees
+                    // Use the same logic as ResolveInvoicesByGuarantee (date + amount ranking)
+                    
+                    // For each matched guarantee, find linked invoices and rank them
+                    var allCandidates = new List<DwingsInvoiceDto>();
+                    foreach (var guarantee in guaranteeMatches)
+                    {
+                        var invoicesForGuarantee = DwingsLinkingHelper.ResolveInvoicesByGuarantee(
+                            dwInvoices,
+                            guarantee.GUARANTEE_ID,
+                            ambreDate,
+                            ambreAmt,
+                            take: 5  // Take top 5 per guarantee
+                        );
+                        allCandidates.AddRange(invoicesForGuarantee);
+                    }
+                    
+                    // Remove duplicates and keep unique invoices
+                    hits = allCandidates
+                        .GroupBy(i => i.INVOICE_ID, StringComparer.OrdinalIgnoreCase)
+                        .Select(g => g.First())
+                        .ToList();
+                }
+            }
+
             if (hits.Count == 0) return null;
 
-            // Rank by date then amount proximity
-            var ambreDate = dataAmbre.Operation_Date ?? dataAmbre.Value_Date;
-            var ambreAmt = dataAmbre.SignedAmount;
-
+            // Rank by date then amount proximity (ambreDate and ambreAmt already declared above)
             double DateScore(DwingsInvoiceDto i)
             {
                 if (!ambreDate.HasValue) return double.MaxValue;

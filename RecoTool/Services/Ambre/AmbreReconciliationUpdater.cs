@@ -106,7 +106,7 @@ namespace RecoTool.Services.AmbreImport
             var tasks = newRecords.Select(async dataAmbre =>
             {
                 var reconciliation = await CreateReconciliationAsync(
-                    dataAmbre, country, countryId, dwInvoices);
+                    dataAmbre, country, countryId, dwInvoices, dwGuarantees);
                     
                 return new ReconciliationStaging
                 {
@@ -160,7 +160,8 @@ namespace RecoTool.Services.AmbreImport
             DataAmbre dataAmbre,
             Country country,
             string countryId,
-            List<DwingsInvoiceDto> dwInvoices)
+            List<DwingsInvoiceDto> dwInvoices,
+            List<DwingsGuaranteeDto> dwGuarantees)
         {
             var reconciliation = new Reconciliation
             {
@@ -175,7 +176,7 @@ namespace RecoTool.Services.AmbreImport
 
             // Resolve DWINGS references
             var dwingsRefs = await _dwingsResolver.ResolveReferencesAsync(
-                dataAmbre, isPivot, dwInvoices);
+                dataAmbre, isPivot, dwInvoices, dwGuarantees);
                 
             reconciliation.DWINGS_InvoiceID = dwingsRefs.InvoiceId;
             reconciliation.DWINGS_BGPMT = dwingsRefs.CommissionId;
@@ -550,6 +551,10 @@ namespace RecoTool.Services.AmbreImport
                 var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
                 if (invoices == null || invoices.Count == 0) return;
                 var dwList = invoices.ToList();
+                
+                // Also get guarantees for OfficialRef/PartyRef matching
+                var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
+                var dwGuaranteeList = guarantees?.ToList();
 
                 var connectionString = _offlineFirstService.GetCountryConnectionString(countryId);
                 using (var conn = new OleDbConnection(connectionString))
@@ -564,7 +569,7 @@ namespace RecoTool.Services.AmbreImport
                             {
                                 if (amb == null || string.IsNullOrWhiteSpace(amb.ID)) continue;
                                 bool isPivot = amb.IsPivotAccount(country.CNT_AmbrePivot);
-                                var refs = await _dwingsResolver.ResolveReferencesAsync(amb, isPivot, dwList);
+                                var refs = await _dwingsResolver.ResolveReferencesAsync(amb, isPivot, dwList, dwGuaranteeList);
                                 if (refs != null)
                                 {
                                     if (!string.IsNullOrWhiteSpace(refs.InvoiceId))

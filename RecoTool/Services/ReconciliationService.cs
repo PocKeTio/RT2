@@ -382,10 +382,19 @@ namespace RecoTool.Services
         
         /// <summary>
         /// Re-applies critical enrichments to cached data (internal implementation)
+        /// OPTIMIZATION: Skip if data is already fully enriched (has pre-calculated DWINGS properties)
         /// </summary>
         private async Task ReapplyEnrichmentsAsync(List<ReconciliationViewData> list, string countryId)
         {
             if (list == null || list.Count == 0) return;
+            
+            // OPTIMIZATION: Check if data is already enriched by sampling first row
+            // If I_RECEIVER_NAME is populated, assume all DWINGS properties are already calculated
+            if (list.Count > 0 && !string.IsNullOrWhiteSpace(list[0].I_RECEIVER_NAME))
+            {
+                // Data is already fully enriched, skip expensive re-enrichment
+                return;
+            }
             
             try
             {
@@ -393,9 +402,30 @@ namespace RecoTool.Services
                 var invoices = await GetDwingsInvoicesAsync().ConfigureAwait(false);
                 ReconciliationViewEnricher.EnrichWithDwingsInvoices(list, invoices);
                 
-                // Re-link DWINGS guarantees heuristically
+                // PRE-CALCULATE all DWINGS properties (same as initial load)
+                // NOTE: INVOICE_ID is NOT unique - use GroupBy and take first match
+                var invoiceDict = invoices?
+                    .Where(i => !string.IsNullOrWhiteSpace(i.INVOICE_ID))
+                    .GroupBy(i => i.INVOICE_ID, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
+                    ?? new Dictionary<string, DwingsInvoiceDto>();
+                    
+                var guarantees = await GetDwingsGuaranteesAsync().ConfigureAwait(false);
+                var guaranteeDict = guarantees?
+                    .Where(g => !string.IsNullOrWhiteSpace(g.GUARANTEE_ID))
+                    .GroupBy(g => g.GUARANTEE_ID, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
+                    ?? new Dictionary<string, DwingsGuaranteeDto>();
+                
                 foreach (var row in list)
                 {
+                    // Populate invoice properties
+                    if (!string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID) && invoiceDict.TryGetValue(row.DWINGS_InvoiceID, out var invoice))
+                    {
+                        row.PopulateInvoiceProperties(invoice);
+                    }
+                    
+                    // Extract and populate guarantee properties
                     if (string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID))
                     {
                         var gid = DwingsLinkingHelper.ExtractGuaranteeId(row.Reconciliation_Num)
@@ -408,6 +438,11 @@ namespace RecoTool.Services
                         {
                             row.DWINGS_GuaranteeID = gid;
                         }
+                    }
+                    
+                    if (!string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID) && guaranteeDict.TryGetValue(row.DWINGS_GuaranteeID, out var guarantee))
+                    {
+                        row.PopulateGuaranteeProperties(guarantee);
                     }
                 }
                 
@@ -480,7 +515,7 @@ namespace RecoTool.Services
             var swExec = Stopwatch.StartNew();
             var list = await ExecuteQueryAsync<ReconciliationViewData>(query);
 
-            // OPTIMIZED: Initialize DWINGS caches for lazy loading (no longer enriches all properties)
+            // OPTIMIZED: Pre-calculate all DWINGS properties once during load
             try
             {
                 var invoices = await GetDwingsInvoicesAsync().ConfigureAwait(false);
@@ -491,6 +526,35 @@ namespace RecoTool.Services
                 
                 // Link rows to DWINGS invoices (sets DWINGS_InvoiceID only)
                 ReconciliationViewEnricher.EnrichWithDwingsInvoices(list, invoices);
+                
+                // PRE-CALCULATE all DWINGS properties for each row (eliminates lazy loading during scroll)
+                // NOTE: INVOICE_ID is NOT unique - use GroupBy and take first match
+                var invoiceDict = invoices?
+                    .Where(i => !string.IsNullOrWhiteSpace(i.INVOICE_ID))
+                    .GroupBy(i => i.INVOICE_ID, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
+                    ?? new Dictionary<string, DwingsInvoiceDto>();
+                    
+                var guaranteeDict = guarantees?
+                    .Where(g => !string.IsNullOrWhiteSpace(g.GUARANTEE_ID))
+                    .GroupBy(g => g.GUARANTEE_ID, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
+                    ?? new Dictionary<string, DwingsGuaranteeDto>();
+                
+                foreach (var row in list)
+                {
+                    // Populate invoice properties
+                    if (!string.IsNullOrWhiteSpace(row.DWINGS_InvoiceID) && invoiceDict.TryGetValue(row.DWINGS_InvoiceID, out var invoice))
+                    {
+                        row.PopulateInvoiceProperties(invoice);
+                    }
+                    
+                    // Populate guarantee properties
+                    if (!string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID) && guaranteeDict.TryGetValue(row.DWINGS_GuaranteeID, out var guarantee))
+                    {
+                        row.PopulateGuaranteeProperties(guarantee);
+                    }
+                }
             }
             catch { /* best-effort enrichment */ }
             

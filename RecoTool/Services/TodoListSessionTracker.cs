@@ -1,10 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Data.OleDb;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using OfflineFirstAccess.Helpers;
+using RecoTool.Configuration;
 
 namespace RecoTool.Services
 {
@@ -60,13 +61,16 @@ namespace RecoTool.Services
             _currentUserId = currentUserId;
             _offlineFirstService = offlineFirstService;
 
-            // Start heartbeat timer - check every 10 seconds
-            _heartbeatTimer = new Timer(HeartbeatCallback, null, CHECK_INTERVAL_MS, CHECK_INTERVAL_MS);
-            
-            // Register in static list for cleanup coordination
-            lock (_staticLock)
+            // Start heartbeat timer only if multi-user feature is enabled
+            if (FeatureFlags.ENABLE_MULTI_USER)
             {
-                _activeTrackers.Add(new WeakReference<TodoListSessionTracker>(this));
+                _heartbeatTimer = new Timer(HeartbeatCallback, null, CHECK_INTERVAL_MS, CHECK_INTERVAL_MS);
+                
+                // Register in static list for cleanup coordination
+                lock (_staticLock)
+                {
+                    _activeTrackers.Add(new WeakReference<TodoListSessionTracker>(this));
+                }
             }
         }
 
@@ -118,6 +122,10 @@ namespace RecoTool.Services
         /// </summary>
         public async Task<bool> RegisterViewingAsync(int todoId, string userName = null, bool isEditing = false)
         {
+            // Skip if multi-user feature is disabled
+            if (!FeatureFlags.ENABLE_MULTI_USER)
+                return true;
+            
             try
             {
                 System.Diagnostics.Debug.WriteLine($"[TodoSessionTracker.RegisterViewing] START - TodoId={todoId}, User={_currentUserId}, UserName={userName}");
@@ -198,6 +206,10 @@ namespace RecoTool.Services
         /// </summary>
         public async Task UnregisterViewingAsync(int todoId)
         {
+            // Skip if multi-user feature is disabled
+            if (!FeatureFlags.ENABLE_MULTI_USER)
+                return;
+            
             try
             {
                 lock (_lock)
@@ -229,6 +241,10 @@ namespace RecoTool.Services
         /// </summary>
         public async Task<List<TodoSessionInfo>> GetActiveSessionsAsync(int todoId)
         {
+            // Skip if multi-user feature is disabled
+            if (!FeatureFlags.ENABLE_MULTI_USER)
+                return new List<TodoSessionInfo>();
+            
             // Check cache first
             lock (_lock)
             {

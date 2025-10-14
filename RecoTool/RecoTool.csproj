@@ -90,6 +90,7 @@
     <Compile Include="Services\Ambre\DwingsReferenceResolver.cs" />
     <Compile Include="Infrastructure\DataAccess\DbConn.cs" />
     <Compile Include="Services\Analytics\DashboardAnalyticsService.cs" />
+    <Compile Include="Services\Cache\CacheService.cs" />
     <Compile Include="Services\Cache\CountryDataCache.cs" />
     <Compile Include="Services\Helpers\ReconciliationKpiCalculator.cs" />
     <Compile Include="Services\Rules\MtStatusCondition.cs" />

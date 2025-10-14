@@ -1021,7 +1021,7 @@
                               Margin="0,0,0,0"
                               ItemsSource="{Binding VM.ViewData, RelativeSource={RelativeSource AncestorType=UserControl}}"
                               EnableRowVirtualization="True"
-                              EnableColumnVirtualization="True"
+                              EnableColumnVirtualization="False"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling"
                               FrozenColumnCount="1"
@@ -1034,6 +1034,10 @@
                               VirtualizingStackPanel.IsVirtualizingWhenGrouping="True"
                               ScrollViewer.CanContentScroll="True"
                               ScrollViewer.IsDeferredScrollingEnabled="False"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                              VirtualizingPanel.CacheLength="100,100"
+                              VirtualizingPanel.CacheLengthUnit="Item"
+                              VirtualizingPanel.ScrollUnit="Pixel"
                               RowHeight="25"
                               RowHeaderWidth="0"
                               MouseDoubleClick="ResultsDataGrid_MouseDoubleClick"
@@ -1124,6 +1128,11 @@
                                 <Setter Property="BorderBrush" Value="#DDDDDD"/>
                                 <Setter Property="BorderThickness" Value="0,0,0,1"/>
                                 <Setter Property="Foreground" Value="Black"/>
+                                <Setter Property="CacheMode">
+                                    <Setter.Value>
+                                        <BitmapCache EnableClearType="True" RenderAtScale="1" SnapsToDevicePixels="True"/>
+                                    </Setter.Value>
+                                </Setter>
                                 <EventSetter Event="PreviewMouseLeftButtonDown" Handler="DataGridCell_PreviewMouseLeftButtonDown"/>
                                 <Setter Property="Template">
                                     <Setter.Value>
@@ -1167,6 +1176,11 @@
                             <Style TargetType="DataGridRow">
                                 <Setter Property="SnapsToDevicePixels" Value="True"/>
                                 <Setter Property="Foreground" Value="Black"/>
+                                <Setter Property="CacheMode">
+                                    <Setter.Value>
+                                        <BitmapCache EnableClearType="True" RenderAtScale="1" SnapsToDevicePixels="True"/>
+                                    </Setter.Value>
+                                </Setter>
                                 <Setter Property="ContextMenu">
                                     <Setter.Value>
                                         <ContextMenu>
@@ -1205,24 +1219,8 @@
                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                                             <!-- New/Updated badge (left side) with pulse animation -->
                                             <Border x:Name="StatusBadge" Background="#2196F3" CornerRadius="2" Padding="3,1" Margin="0,0,4,0"
-                                                    Visibility="{Binding HasStatusIndicator, Converter={StaticResource BoolToVisibilityConverter}}">
-                                                <Border.Style>
-                                                    <Style TargetType="Border">
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
-                                                                <DataTrigger.EnterActions>
-                                                                    <BeginStoryboard>
-                                                                        <Storyboard>
-                                                                            <DoubleAnimation Storyboard.TargetProperty="Opacity"
-                                                                                           From="1.0" To="0.3" Duration="0:0:0.8"
-                                                                                           AutoReverse="True" RepeatBehavior="3x"/>
-                                                                        </Storyboard>
-                                                                    </BeginStoryboard>
-                                                                </DataTrigger.EnterActions>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Border.Style>
+                                                    Visibility="{Binding HasStatusIndicator, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                    CacheMode="BitmapCache">
                                                 <TextBlock Text="{Binding StatusIndicator}" FontWeight="Bold" FontSize="9" Foreground="White"/>
                                             </Border>
                                             <!-- Status color dot (right side) -->
@@ -1805,12 +1803,12 @@
                             
                             <!-- DWINGS Guarantee extended fields -->
                             <DataGridTextColumn Header="NatureOfDeal" Binding="{Binding G_NATUREOFDEAL}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
-                            <DataGridTextColumn Header="Event Status" Binding="{Binding G_EVENT_STATUS}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
                             <DataGridTextColumn Header="Issue Date" Binding="{Binding G_ISSUEDATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
                             <DataGridTextColumn Header="PartyID" Binding="{Binding G_PARTY_ID}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
                             <DataGridTextColumn Header="PartyName" Binding="{Binding G_NAME1}" Width="160" IsReadOnly="True" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
                             
                             <!-- DWINGS Invoice extended fields -->
+                            <DataGridTextColumn Header="Payment Request Status" Binding="{Binding I_T_PAYMENT_REQUEST_STATUS}" Width="150" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
                             <DataGridTextColumn Header="Req Amount" Binding="{Binding I_REQUESTED_INVOICE_AMOUNT}" Width="130" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
                             <DataGridTextColumn Header="Cur" Binding="{Binding I_BILLING_CURRENCY}" Width="70" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
                             <DataGridTextColumn Header="StartDate" Binding="{Binding I_START_DATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>

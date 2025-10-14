@@ -446,15 +446,29 @@ namespace RecoTool.Services.Rules
                     if (!conditionMet) allConditionsMet = false;
                 }
 
-                // CurrentActionId
-                if (r.CurrentActionId.HasValue)
+                // CurrentActionId (supports multiple values)
+                if (!IsWildcard(r.CurrentActionId))
                 {
-                    bool conditionMet = c.CurrentActionId.HasValue && c.CurrentActionId.Value == r.CurrentActionId.Value;
+                    bool conditionMet = c.CurrentActionId.HasValue && MatchesSet(r.CurrentActionId, c.CurrentActionId.Value.ToString());
                     debugEval.Conditions.Add(new RuleConditionDebug
                     {
                         Field = "CurrentActionId",
-                        Expected = r.CurrentActionId.Value.ToString(),
+                        Expected = r.CurrentActionId,
                         Actual = c.CurrentActionId?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+                
+                // PaymentRequestStatus (supports multiple values)
+                if (!IsWildcard(r.PaymentRequestStatus))
+                {
+                    bool conditionMet = !string.IsNullOrWhiteSpace(c.PaymentRequestStatus) && MatchesSet(r.PaymentRequestStatus, c.PaymentRequestStatus);
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "PaymentRequestStatus",
+                        Expected = r.PaymentRequestStatus,
+                        Actual = c.PaymentRequestStatus ?? "(null)",
                         IsMet = conditionMet
                     });
                     if (!conditionMet) allConditionsMet = false;
@@ -493,7 +507,8 @@ namespace RecoTool.Services.Rules
                 // new DWINGS-derived inputs
                 MtStatus = ctx.MtStatus,
                 HasCommIdEmail = ctx.HasCommIdEmail,
-                IsBgiInitiated = ctx.IsBgiInitiated
+                IsBgiInitiated = ctx.IsBgiInitiated,
+                PaymentRequestStatus = ctx.PaymentRequestStatus
             };
             return n;
         }
@@ -601,6 +616,13 @@ namespace RecoTool.Services.Rules
                 if (c.IsBgiInitiated.Value != r.BgiStatusInitiated.Value) return false;
             }
 
+            // DWINGS: T_PAYMENT_REQUEST_STATUS
+            if (!IsWildcard(r.PaymentRequestStatus))
+            {
+                if (string.IsNullOrWhiteSpace(c.PaymentRequestStatus)) return false;
+                if (!MatchesSet(r.PaymentRequestStatus, c.PaymentRequestStatus)) return false;
+            }
+
             // TriggerDateIsNull
             if (r.TriggerDateIsNull.HasValue)
             {
@@ -656,11 +678,11 @@ namespace RecoTool.Services.Rules
                 if (r.DaysSinceReminderMax.HasValue && d > r.DaysSinceReminderMax.Value) return false;
             }
 
-            // CurrentActionId (input filter on existing Action)
-            if (r.CurrentActionId.HasValue)
+            // CurrentActionId (input filter on existing Action) - supports multiple values
+            if (!IsWildcard(r.CurrentActionId))
             {
                 if (!c.CurrentActionId.HasValue) return false;
-                if (c.CurrentActionId.Value != r.CurrentActionId.Value) return false;
+                if (!MatchesSet(r.CurrentActionId, c.CurrentActionId.Value.ToString())) return false;
             }
 
             return true;
@@ -947,17 +969,32 @@ namespace RecoTool.Services.Rules
                 }
             }
 
-            // CurrentActionId
-            if (r.CurrentActionId.HasValue)
+            // CurrentActionId (multiple values supported)
+            if (!IsWildcard(r.CurrentActionId))
             {
                 if (!c.CurrentActionId.HasValue)
                 {
-                    failures.Add($"CurrentActionId: Expected {r.CurrentActionId.Value}, Context CurrentActionId is null");
+                    failures.Add($"CurrentActionId: Expected '{r.CurrentActionId}', Context CurrentActionId is null");
                     return false;
                 }
-                if (c.CurrentActionId.Value != r.CurrentActionId.Value)
+                if (!MatchesSet(r.CurrentActionId, c.CurrentActionId.Value.ToString()))
                 {
-                    failures.Add($"CurrentActionId: Expected {r.CurrentActionId.Value}, Context={c.CurrentActionId.Value}");
+                    failures.Add($"CurrentActionId: Expected '{r.CurrentActionId}', Context={c.CurrentActionId.Value}");
+                    return false;
+                }
+            }
+
+            // PaymentRequestStatus (T_PAYMENT_REQUEST_STATUS from DWINGS)
+            if (!IsWildcard(r.PaymentRequestStatus))
+            {
+                if (string.IsNullOrWhiteSpace(c.PaymentRequestStatus))
+                {
+                    failures.Add($"PaymentRequestStatus: Expected '{r.PaymentRequestStatus}', Context PaymentRequestStatus is null/empty");
+                    return false;
+                }
+                if (!MatchesSet(r.PaymentRequestStatus, c.PaymentRequestStatus))
+                {
+                    failures.Add($"PaymentRequestStatus: Expected '{r.PaymentRequestStatus}', Context='{c.PaymentRequestStatus}'");
                     return false;
                 }
             }

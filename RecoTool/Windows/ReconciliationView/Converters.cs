@@ -665,19 +665,24 @@ namespace RecoTool.Windows
 
     public class BoolToPendingDoneConverter : IValueConverter
     {
+        private const string Done = "DONE";
+        private const string Pending = "PENDING";
+        private static readonly object TrueBox = true;
+        private static readonly object FalseBox = false;
+        
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
         {
             if (value == null || value is DBNull) return string.Empty;
-            if (value is bool b) return b ? "DONE" : "PENDING";
-            if (bool.TryParse(value.ToString(), out var parsed)) return parsed ? "DONE" : "PENDING";
+            if (value is bool b) return b ? Done : Pending;
+            if (bool.TryParse(value.ToString(), out var parsed)) return parsed ? Done : Pending;
             return string.Empty;
         }
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
         {
             var s = value?.ToString();
-            if (string.Equals(s, "DONE", StringComparison.OrdinalIgnoreCase)) return true;
-            if (string.Equals(s, "PENDING", StringComparison.OrdinalIgnoreCase)) return false;
+            if (string.Equals(s, "DONE", StringComparison.OrdinalIgnoreCase)) return TrueBox;
+            if (string.Equals(s, "PENDING", StringComparison.OrdinalIgnoreCase)) return FalseBox;
             return null;
         }
     }
@@ -688,12 +693,18 @@ namespace RecoTool.Windows
 
     public class IsPositiveConverter : IValueConverter
     {
+        private static readonly object TrueBox = true;
+        private static readonly object FalseBox = false;
+
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
         {
-            if (value is decimal d) return d > 0;
-            if (value is double db) return db > 0;
-            if (value is int i) return i > 0;
-            return false;
+            try
+            {
+                if (value == null) return FalseBox;
+                double val = System.Convert.ToDouble(value);
+                return val > 0 ? TrueBox : FalseBox;
+            }
+            catch { return FalseBox; }
         }
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
@@ -704,12 +715,15 @@ namespace RecoTool.Windows
 
     public class IsNegativeConverter : IValueConverter
     {
+        private static readonly object TrueBox = true;
+        private static readonly object FalseBox = false;
+        
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
         {
-            if (value is decimal d) return d < 0;
-            if (value is double db) return db < 0;
-            if (value is int i) return i < 0;
-            return false;
+            if (value is decimal d) return d < 0 ? TrueBox : FalseBox;
+            if (value is double db) return db < 0 ? TrueBox : FalseBox;
+            if (value is int i) return i < 0 ? TrueBox : FalseBox;
+            return FalseBox;
         }
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)

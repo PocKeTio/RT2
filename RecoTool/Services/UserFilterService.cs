@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Data.OleDb;
 using System.IO;
 using System.Text.RegularExpressions;
+using RecoTool.Services.Cache;
 
 namespace RecoTool.Services
 {
@@ -84,6 +85,10 @@ namespace RecoTool.Services
                     }
                 }
             }
+            
+            // OPTIMIZATION: Invalidate cache when filter is saved
+            CacheService.Instance.Invalidate($"UserFilter_Where_{name}");
+            CacheService.Instance.InvalidateByPrefix("UserFilter_Names_");
         }
 
         public static string SanitizeWhereClause(string where)
@@ -138,14 +143,19 @@ namespace RecoTool.Services
         {
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Filter name is required", nameof(name));
 
-            using (var conn = new OleDbConnection(_connString))
-            using (var cmd = new OleDbCommand("SELECT UFI_SQL FROM T_Ref_User_Filter WHERE UFI_Name = ?", conn))
+            // OPTIMIZATION: Cache filter SQL (filters rarely change)
+            var cacheKey = $"UserFilter_Where_{name}";
+            return CacheService.Instance.GetOrLoad(cacheKey, () =>
             {
-                conn.Open();
-                cmd.Parameters.AddWithValue("@p1", name);
-                var obj = cmd.ExecuteScalar();
-                return obj == null || obj == DBNull.Value ? null : obj.ToString();
-            }
+                using (var conn = new OleDbConnection(_connString))
+                using (var cmd = new OleDbCommand("SELECT UFI_SQL FROM T_Ref_User_Filter WHERE UFI_Name = ?", conn))
+                {
+                    conn.Open();
+                    cmd.Parameters.AddWithValue("@p1", name);
+                    var obj = cmd.ExecuteScalar();
+                    return obj == null || obj == DBNull.Value ? null : obj.ToString();
+                }
+            }, TimeSpan.FromHours(1)); // Cache for 1 hour (filters rarely change)
         }
 
         public IList<string> ListUserFilterNames()
@@ -155,26 +165,31 @@ namespace RecoTool.Services
 
         public IList<string> ListUserFilterNames(string contains = null)
         {
-            var names = new List<string>();
-            using (var conn = new OleDbConnection(_connString))
-            using (var cmd = string.IsNullOrWhiteSpace(contains)
-                ? new OleDbCommand("SELECT UFI_Name FROM T_Ref_User_Filter ORDER BY UFI_Name", conn)
-                : new OleDbCommand("SELECT UFI_Name FROM T_Ref_User_Filter WHERE UFI_Name LIKE ? ORDER BY UFI_Name", conn))
+            // OPTIMIZATION: Cache filter names list (filters rarely change)
+            var cacheKey = $"UserFilter_Names_{contains ?? "all"}";
+            return CacheService.Instance.GetOrLoad(cacheKey, () =>
             {
-                conn.Open();
-                if (!string.IsNullOrWhiteSpace(contains))
+                var names = new List<string>();
+                using (var conn = new OleDbConnection(_connString))
+                using (var cmd = string.IsNullOrWhiteSpace(contains)
+                    ? new OleDbCommand("SELECT UFI_Name FROM T_Ref_User_Filter ORDER BY UFI_Name", conn)
+                    : new OleDbCommand("SELECT UFI_Name FROM T_Ref_User_Filter WHERE UFI_Name LIKE ? ORDER BY UFI_Name", conn))
                 {
-                    cmd.Parameters.AddWithValue("@p1", "%" + contains + "%");
-                }
-                using (var rdr = cmd.ExecuteReader())
-                {
-                    while (rdr.Read())
+                    conn.Open();
+                    if (!string.IsNullOrWhiteSpace(contains))
                     {
-                        names.Add(rdr.GetString(0));
+                        cmd.Parameters.AddWithValue("@p1", "%" + contains + "%");
+                    }
+                    using (var rdr = cmd.ExecuteReader())
+                    {
+                        while (rdr.Read())
+                        {
+                            names.Add(rdr.GetString(0));
+                        }
                     }
                 }
-            }
-            return names;
+                return (IList<string>)names;
+            }, TimeSpan.FromHours(1)); // Cache for 1 hour
         }
 
         /// <summary>
@@ -214,7 +229,16 @@ namespace RecoTool.Services
             {
                 conn.Open();
                 cmd.Parameters.AddWithValue("@p1", name);
-                return cmd.ExecuteNonQuery() > 0;
+                var deleted = cmd.ExecuteNonQuery() > 0;
+                
+                // OPTIMIZATION: Invalidate cache when filter is deleted
+                if (deleted)
+                {
+                    CacheService.Instance.Invalidate($"UserFilter_Where_{name}");
+                    CacheService.Instance.InvalidateByPrefix("UserFilter_Names_");
+                }
+                
+                return deleted;
             }
         }
     }

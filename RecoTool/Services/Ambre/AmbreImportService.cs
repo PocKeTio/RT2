@@ -258,6 +258,11 @@ namespace RecoTool.Services
                 await _offlineFirstService.RefreshConfigurationAsync();
                 await _offlineFirstService.SetCurrentCountryAsync(countryId, suppressPush: true);
                 await _offlineFirstService.SetLastSyncAnchorAsync(countryId, DateTime.UtcNow);
+                
+                // Invalidate all caches for this country after AMBRE import
+                // This ensures fresh data is loaded for counts, status, and reconciliation views
+                ReconciliationService.InvalidateReconciliationViewCache(countryId);
+                LogManager.Info($"Cache invalidated for country {countryId} after AMBRE import");
             }
             catch (Exception refreshEx)
             {

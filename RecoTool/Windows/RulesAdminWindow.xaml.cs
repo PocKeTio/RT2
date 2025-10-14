@@ -477,6 +477,7 @@ namespace RecoTool.Windows
                 DaysSinceReminderMin = r.DaysSinceReminderMin,
                 DaysSinceReminderMax = r.DaysSinceReminderMax,
                 CurrentActionId = r.CurrentActionId,
+                PaymentRequestStatus = r.PaymentRequestStatus,
                 OutputActionId = r.OutputActionId,
                 OutputKpiId = r.OutputKpiId,
                 OutputIncidentTypeId = r.OutputIncidentTypeId,
@@ -522,6 +523,7 @@ namespace RecoTool.Windows
             target.DaysSinceReminderMin = source.DaysSinceReminderMin;
             target.DaysSinceReminderMax = source.DaysSinceReminderMax;
             target.CurrentActionId = source.CurrentActionId;
+            target.PaymentRequestStatus = source.PaymentRequestStatus;
             target.OutputActionId = source.OutputActionId;
             target.OutputKpiId = source.OutputKpiId;
             target.OutputIncidentTypeId = source.OutputIncidentTypeId;

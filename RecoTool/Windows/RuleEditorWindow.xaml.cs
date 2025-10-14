@@ -75,6 +75,7 @@ namespace RecoTool.Windows
 
         private void BuildStaticLists()
         {
+            // Note: These are now just for reference. Users can now enter multiple values separated by semicolons in TextBox
             GuaranteeTypes = new[] { "*", "ISSUANCE", "REISSUANCE", "ADVISING" };
             var tx = new List<string> { "*" };
             try { tx.AddRange(Enum.GetNames(typeof(TransactionType))); } catch { }
@@ -145,6 +146,7 @@ namespace RecoTool.Windows
                 DaysSinceReminderMin = r.DaysSinceReminderMin,
                 DaysSinceReminderMax = r.DaysSinceReminderMax,
                 CurrentActionId = r.CurrentActionId,
+                PaymentRequestStatus = r.PaymentRequestStatus,
                 OutputActionId = r.OutputActionId,
                 OutputKpiId = r.OutputKpiId,
                 OutputIncidentTypeId = r.OutputIncidentTypeId,

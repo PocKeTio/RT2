@@ -109,32 +109,20 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellEditingTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="GuaranteeType" Width="160">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate>
-                            <TextBlock Text="{Binding GuaranteeType, Converter={x:Static local:UIConverters.GuaranteeTypeToFriendly}, TargetNullValue='*'}" ToolTip="Example: ISSUANCE, REISSUANCE, ADVISING or * to ignore"/>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                    <DataGridTemplateColumn.CellEditingTemplate>
-                        <DataTemplate>
-                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=GuaranteeTypes}"
-                                      SelectedItem="{Binding GuaranteeType, UpdateSourceTrigger=PropertyChanged}"/>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellEditingTemplate>
-                </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="TransactionType" Width="160">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate>
-                            <TextBlock Text="{Binding TransactionType, Converter={x:Static local:UIConverters.TransactionTypeToFriendly}, TargetNullValue='*'}" ToolTip="Use enum name (e.g., INCOMING_PAYMENT) or * to ignore"/>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                    <DataGridTemplateColumn.CellEditingTemplate>
-                        <DataTemplate>
-                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=TransactionTypes}"
-                                      SelectedItem="{Binding TransactionType, UpdateSourceTrigger=PropertyChanged}"/>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellEditingTemplate>
-                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="GuaranteeType(s)" Binding="{Binding GuaranteeType, UpdateSourceTrigger=PropertyChanged}" Width="180">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="ToolTip" Value="Multiple values separated by semicolons (e.g., REISSUANCE;ADVISING) or * to ignore"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="TransactionType(s)" Binding="{Binding TransactionType, UpdateSourceTrigger=PropertyChanged}" Width="200">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="ToolTip" Value="Multiple values separated by semicolons (e.g., INCOMING_PAYMENT;PAYMENT) or * to ignore"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
                 <DataGridTextColumn Header="Booking" Binding="{Binding Booking, UpdateSourceTrigger=PropertyChanged}" Width="120"/>
                 <DataGridCheckBoxColumn Header="HasDwingsLink" Binding="{Binding HasDwingsLink, UpdateSourceTrigger=PropertyChanged}" Width="110"
                                         ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
@@ -163,27 +151,20 @@
                                         ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
                 <DataGridCheckBoxColumn Header="BGI Initiated" Binding="{Binding BgiStatusInitiated, UpdateSourceTrigger=PropertyChanged}" Width="120"
                                         ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
-                <DataGridTemplateColumn Header="CurrentAction" Width="140">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate>
-                            <TextBlock>
-                                <TextBlock.Text>
-                                    <MultiBinding Converter="{x:Static local:UIConverters.IdToOptionName}">
-                                        <Binding Path="CurrentActionId"/>
-                                        <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="ActionOptions"/>
-                                    </MultiBinding>
-                                </TextBlock.Text>
-                            </TextBlock>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                    <DataGridTemplateColumn.CellEditingTemplate>
-                        <DataTemplate>
-                            <ComboBox ItemsSource="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=ActionOptions}"
-                                      SelectedValuePath="Id" DisplayMemberPath="Name"
-                                      SelectedValue="{Binding CurrentActionId, UpdateSourceTrigger=PropertyChanged}"/>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellEditingTemplate>
-                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="PaymentRequestStatus" Binding="{Binding PaymentRequestStatus, UpdateSourceTrigger=PropertyChanged}" Width="180">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="ToolTip" Value="Multiple statuses separated by semicolons (e.g., CANCELLED;REJECTED) or * to ignore. Valid values: CANCELLED, FULLY_EXECUTED, INITIATED, REJECTED, REQUEST_FAILED, REQUESTED"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="CurrentAction(s)" Binding="{Binding CurrentActionId, UpdateSourceTrigger=PropertyChanged}" Width="150">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="ToolTip" Value="Multiple Action IDs separated by semicolons (e.g., 1;3;7) or * to ignore"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
                 <DataGridTemplateColumn Header="Sign" Width="70">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>

@@ -26,6 +26,7 @@ using RecoTool.Helpers;
 using RecoTool.Services.Rules;
 using RecoTool.Services.Helpers;
 using RecoTool.Infrastructure.Logging;
+using RecoTool.Services.Cache;
 
 namespace RecoTool.Services
 {
@@ -56,54 +57,60 @@ namespace RecoTool.Services
         /// <summary>
         /// Returns total absolute amounts by currency for Live rows matching the provided backend filter.
         /// Uses the same base query as GetReconciliationCountAsync and groups by CCY.
+        /// OPTIMIZED: Cached based on countryId + filterSql (AMBRE data rarely changes)
         /// </summary>
         public async Task<Dictionary<string, double>> GetCurrencySumsAsync(string countryId, string filterSql = null)
         {
-            try
+            // OPTIMIZATION: Cache currency sums (only changes on AMBRE import)
+            var cacheKey = $"CurrencySums_{countryId}_{NormalizeFilterForCache(filterSql)}";
+            return await CacheService.Instance.GetOrLoadAsync(cacheKey, async () =>
             {
-                string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
-                string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
-                string dwEsc = string.IsNullOrEmpty(dwPath) ? null : dwPath.Replace("'", "''");
-                string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
-
-                // Detect duplicates-only flag from optional JSON header (ignored for sums)
-                // Build base query
-                string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql, dashboardOnly: false);
-
-                // Always enforce Live scope
-                query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
-
-                var predicate = FilterSqlHelper.ExtractNormalizedPredicate(filterSql);
-                if (!string.IsNullOrEmpty(predicate))
+                try
                 {
-                    query += $" AND ({predicate})";
-                }
+                    string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
+                    string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
+                    string dwEsc = string.IsNullOrEmpty(dwPath) ? null : dwPath.Replace("'", "''");
+                    string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
 
-                var sumsSql = $"SELECT CCY, SUM(ABS(SignedAmount)) AS Amount FROM ({query}) AS q GROUP BY CCY";
+                    // Detect duplicates-only flag from optional JSON header (ignored for sums)
+                    // Build base query
+                    string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql, dashboardOnly: false);
 
-                var result = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-                using (var connection = new OleDbConnection(_connectionString))
-                {
-                    await connection.OpenAsync().ConfigureAwait(false);
-                    using (var cmd = new OleDbCommand(sumsSql, connection))
-                    using (var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
+                    // Always enforce Live scope
+                    query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
+
+                    var predicate = FilterSqlHelper.ExtractNormalizedPredicate(filterSql);
+                    if (!string.IsNullOrEmpty(predicate))
                     {
-                        while (await reader.ReadAsync().ConfigureAwait(false))
+                        query += $" AND ({predicate})";
+                    }
+
+                    var sumsSql = $"SELECT CCY, SUM(ABS(SignedAmount)) AS Amount FROM ({query}) AS q GROUP BY CCY";
+
+                    var result = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                    using (var connection = new OleDbConnection(_connectionString))
+                    {
+                        await connection.OpenAsync().ConfigureAwait(false);
+                        using (var cmd = new OleDbCommand(sumsSql, connection))
+                        using (var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
                         {
-                            string ccy = reader.IsDBNull(0) ? null : Convert.ToString(reader[0]);
-                            if (string.IsNullOrWhiteSpace(ccy)) continue;
-                            double amount = 0;
-                            try { amount = reader.IsDBNull(1) ? 0 : Convert.ToDouble(reader[1]); } catch { amount = 0; }
-                            if (result.ContainsKey(ccy)) result[ccy] += amount; else result[ccy] = amount;
+                            while (await reader.ReadAsync().ConfigureAwait(false))
+                            {
+                                string ccy = reader.IsDBNull(0) ? null : Convert.ToString(reader[0]);
+                                if (string.IsNullOrWhiteSpace(ccy)) continue;
+                                double amount = 0;
+                                try { amount = reader.IsDBNull(1) ? 0 : Convert.ToDouble(reader[1]); } catch { amount = 0; }
+                                if (result.ContainsKey(ccy)) result[ccy] += amount; else result[ccy] = amount;
+                            }
                         }
                     }
+                    return result;
                 }
-                return result;
-            }
-            catch
-            {
-                return new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-            }
+                catch
+                {
+                    return new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                }
+            }, TimeSpan.FromHours(24)).ConfigureAwait(false); // Cache for 24 hours (AMBRE changes only on import)
         }
         public event EventHandler<RuleAppliedEventArgs> RuleApplied;
         private void RaiseRuleApplied(string origin, string countryId, string recoId, string ruleId, string outputs, string message)
@@ -176,6 +183,7 @@ namespace RecoTool.Services
         /// <summary>
         /// Clears all reconciliation view caches (both task and materialized data caches).
         /// Call after external mutations (e.g., pull from network) to force a reload on next request.
+        /// OPTIMIZATION: Also clears CacheService entries for StatusCounts, RecoCount, and CurrencySums
         /// </summary>
         public static void InvalidateReconciliationViewCache()
         {
@@ -192,11 +200,21 @@ namespace RecoTool.Services
                 }
             }
             catch { }
+            
+            // OPTIMIZATION: Invalidate CacheService entries for counts and sums
+            try
+            {
+                CacheService.Instance.InvalidateByPrefix("StatusCounts_");
+                CacheService.Instance.InvalidateByPrefix("RecoCount_");
+                CacheService.Instance.InvalidateByPrefix("CurrencySums_");
+            }
+            catch { }
         }
 
         /// <summary>
         /// Clears reconciliation view caches for a specific country by prefix match on the cache key.
         /// Key format is "{countryId}|{dashboardOnly}|{normalizedFilter}".
+        /// OPTIMIZATION: Also clears CacheService entries for StatusCounts, RecoCount, and CurrencySums for this country
         /// </summary>
         public static void InvalidateReconciliationViewCache(string countryId)
         {
@@ -221,6 +239,15 @@ namespace RecoTool.Services
                 }
             }
             catch { }
+            
+            // OPTIMIZATION: Invalidate CacheService entries for this country
+            try
+            {
+                CacheService.Instance.InvalidateByPrefix($"StatusCounts_{countryId}_");
+                CacheService.Instance.InvalidateByPrefix($"RecoCount_{countryId}_");
+                CacheService.Instance.InvalidateByPrefix($"CurrencySums_{countryId}_");
+            }
+            catch { }
         }
 
         
@@ -231,14 +258,24 @@ namespace RecoTool.Services
 
         public async Task<IReadOnlyList<DwingsInvoiceDto>> GetDwingsInvoicesAsync()
         {
-            if (_dwingsService == null) _dwingsService = new DwingsService(_offlineFirstService);
-            return await _dwingsService.GetInvoicesAsync().ConfigureAwait(false);
+            // OPTIMIZATION: Cache DWINGS invoices permanently per country (never expires)
+            var cacheKey = $"DWINGS_Invoices_{_offlineFirstService?.CurrentCountryId}";
+            return await CacheService.Instance.GetOrLoadAsync(cacheKey, async () =>
+            {
+                if (_dwingsService == null) _dwingsService = new DwingsService(_offlineFirstService);
+                return await _dwingsService.GetInvoicesAsync().ConfigureAwait(false);
+            }).ConfigureAwait(false);
         }
 
         public async Task<IReadOnlyList<DwingsGuaranteeDto>> GetDwingsGuaranteesAsync()
         {
-            if (_dwingsService == null) _dwingsService = new DwingsService(_offlineFirstService);
-            return await _dwingsService.GetGuaranteesAsync().ConfigureAwait(false);
+            // OPTIMIZATION: Cache DWINGS guarantees permanently per country (never expires)
+            var cacheKey = $"DWINGS_Guarantees_{_offlineFirstService?.CurrentCountryId}";
+            return await CacheService.Instance.GetOrLoadAsync(cacheKey, async () =>
+            {
+                if (_dwingsService == null) _dwingsService = new DwingsService(_offlineFirstService);
+                return await _dwingsService.GetGuaranteesAsync().ConfigureAwait(false);
+            }).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -625,57 +662,266 @@ namespace RecoTool.Services
         }
 
         /// <summary>
+        /// DTO for status counts used in TodoCard display
+        /// </summary>
+        public class StatusCountsDto
+        {
+            public int NewCount { get; set; }
+            public int UpdatedCount { get; set; }
+            public int NotLinkedCount { get; set; }
+            public int NotGroupedCount { get; set; }
+            public int DiscrepancyCount { get; set; }
+            public int BalancedCount { get; set; }
+        }
+
+        /// <summary>
+        /// Lightweight DTO for status count calculation (loads only essential columns)
+        /// </summary>
+        private class StatusCountRow
+        {
+            public string ID { get; set; }
+            public string Account_ID { get; set; }
+            public double SignedAmount { get; set; }
+            public string DWINGS_InvoiceID { get; set; }
+            public string InternalInvoiceReference { get; set; }
+            public DateTime? Reco_CreationDate { get; set; }
+            public DateTime? Reco_LastModified { get; set; }
+            public string Reco_ModifiedBy { get; set; }
+            public bool IsNewlyAdded { get; set; }
+            public bool IsUpdated { get; set; }
+            public bool IsMatchedAcrossAccounts { get; set; }
+            public double? MissingAmount { get; set; }
+        }
+
+        /// <summary>
+        /// Returns status indicator counts for a filter (optimized with minimal data loading)
+        /// OPTIMIZATION: Loads only essential columns instead of full ReconciliationViewData
+        /// </summary>
+        public async Task<StatusCountsDto> GetStatusCountsAsync(string countryId, string filterSql = null)
+        {
+            // Cache status counts
+            var cacheKey = $"StatusCounts_{countryId}_{NormalizeFilterForCache(filterSql)}";
+            return await CacheService.Instance.GetOrLoadAsync(cacheKey, async () =>
+            {
+                try
+                {
+                    string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
+                    string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
+                    string dwEsc = string.IsNullOrEmpty(dwPath) ? null : dwPath.Replace("'", "''");
+                    string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
+
+                    // Build minimal query with only columns needed for status calculation
+                    string ambreJoin = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre AS a" : $"(SELECT * FROM [{ambreEsc}].T_Data_Ambre) AS a";
+                    
+                    string query = $@"
+                        SELECT 
+                            a.ID,
+                            a.Account_ID,
+                            a.SignedAmount,
+                            r.DWINGS_InvoiceID,
+                            r.InternalInvoiceReference,
+                            r.CreationDate AS Reco_CreationDate,
+                            r.LastModified AS Reco_LastModified,
+                            r.ModifiedBy AS Reco_ModifiedBy
+                        FROM {ambreJoin}
+                        LEFT JOIN T_Reconciliation AS r ON a.ID = r.ID
+                        WHERE a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
+
+                    var predicate = FilterSqlHelper.ExtractNormalizedPredicate(filterSql);
+                    if (!string.IsNullOrEmpty(predicate))
+                    {
+                        query += $" AND ({predicate})";
+                    }
+
+                    var rows = await ExecuteQueryAsync<StatusCountRow>(query).ConfigureAwait(false);
+                    if (rows == null || rows.Count == 0)
+                        return new StatusCountsDto();
+
+                    // Enrich rows with computed flags
+                    var today = DateTime.Today;
+                    var country = _countries?.TryGetValue(countryId, out var c) == true ? c : null;
+                    string pivotId = country?.CNT_AmbrePivot?.Trim();
+                    string receivableId = country?.CNT_AmbreReceivable?.Trim();
+
+                    // Set IsNewlyAdded and IsUpdated flags
+                    foreach (var row in rows)
+                    {
+                        // New if reconciliation CreationDate is today
+                        if (row.Reco_CreationDate.HasValue && row.Reco_CreationDate.Value.Date == today)
+                            row.IsNewlyAdded = true;
+                        
+                        // Updated if LastModified is today AND differs from CreationDate
+                        // AND ModifiedBy is empty/null (automatic update, not user edit)
+                        if (row.Reco_LastModified.HasValue && row.Reco_LastModified.Value.Date == today)
+                        {
+                            if (!row.Reco_CreationDate.HasValue || row.Reco_LastModified.Value > row.Reco_CreationDate.Value)
+                            {
+                                // Only mark as Updated if ModifiedBy is empty/null (import/rule)
+                                // User manual edits should NOT trigger the "U" indicator
+                                if (string.IsNullOrWhiteSpace(row.Reco_ModifiedBy))
+                                    row.IsUpdated = true;
+                            }
+                        }
+                    }
+
+                    // Calculate IsMatchedAcrossAccounts by grouping
+                    if (!string.IsNullOrWhiteSpace(pivotId) && !string.IsNullOrWhiteSpace(receivableId))
+                    {
+                        // Set AccountSide helper (not stored, just for grouping logic)
+                        var accountSides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var row in rows)
+                        {
+                            var acc = row.Account_ID?.Trim();
+                            if (string.Equals(acc, pivotId, StringComparison.OrdinalIgnoreCase))
+                                accountSides[row.ID] = "P";
+                            else if (string.Equals(acc, receivableId, StringComparison.OrdinalIgnoreCase))
+                                accountSides[row.ID] = "R";
+                        }
+
+                        // Group by DWINGS_InvoiceID
+                        var byInvoice = rows.Where(r => !string.IsNullOrWhiteSpace(r.DWINGS_InvoiceID))
+                                            .GroupBy(r => r.DWINGS_InvoiceID, StringComparer.OrdinalIgnoreCase);
+                        foreach (var g in byInvoice)
+                        {
+                            bool hasP = g.Any(x => accountSides.TryGetValue(x.ID, out var side) && side == "P");
+                            bool hasR = g.Any(x => accountSides.TryGetValue(x.ID, out var side) && side == "R");
+                            if (hasP && hasR)
+                            {
+                                foreach (var row in g) row.IsMatchedAcrossAccounts = true;
+                            }
+                        }
+
+                        // Group by InternalInvoiceReference
+                        var byInternal = rows.Where(r => !string.IsNullOrWhiteSpace(r.InternalInvoiceReference))
+                                             .GroupBy(r => r.InternalInvoiceReference, StringComparer.OrdinalIgnoreCase);
+                        foreach (var g in byInternal)
+                        {
+                            bool hasP = g.Any(x => accountSides.TryGetValue(x.ID, out var side) && side == "P");
+                            bool hasR = g.Any(x => accountSides.TryGetValue(x.ID, out var side) && side == "R");
+                            if (hasP && hasR)
+                            {
+                                foreach (var row in g) row.IsMatchedAcrossAccounts = true;
+                            }
+                        }
+
+                        // Calculate MissingAmount for matched groups
+                        var groupsToCalculate = rows
+                            .Where(r => r.IsMatchedAcrossAccounts && 
+                                       (!string.IsNullOrWhiteSpace(r.DWINGS_InvoiceID) || !string.IsNullOrWhiteSpace(r.InternalInvoiceReference)))
+                            .GroupBy(r => 
+                            {
+                                var key = !string.IsNullOrWhiteSpace(r.DWINGS_InvoiceID)
+                                    ? r.DWINGS_InvoiceID.Trim().ToUpperInvariant()
+                                    : r.InternalInvoiceReference?.Trim().ToUpperInvariant();
+                                return key;
+                            })
+                            .Where(g => !string.IsNullOrWhiteSpace(g.Key));
+
+                        foreach (var group in groupsToCalculate)
+                        {
+                            var receivableLines = group.Where(r => r.Account_ID == receivableId).ToList();
+                            var pivotLines = group.Where(r => r.Account_ID == pivotId).ToList();
+
+                            if (receivableLines.Count > 0 && pivotLines.Count > 0)
+                            {
+                                var receivableTotal = receivableLines.Sum(r => r.SignedAmount);
+                                var pivotTotal = pivotLines.Sum(r => r.SignedAmount);
+                                var missing = receivableTotal + pivotTotal;
+
+                                foreach (var r in receivableLines) r.MissingAmount = missing;
+                                foreach (var p in pivotLines) p.MissingAmount = missing;
+                            }
+                        }
+                    }
+
+                    // Calculate status counts based on status color logic
+                    var result = new StatusCountsDto
+                    {
+                        NewCount = rows.Count(r => r.IsNewlyAdded),
+                        UpdatedCount = rows.Count(r => r.IsUpdated),
+                        NotLinkedCount = rows.Count(r => 
+                            string.IsNullOrWhiteSpace(r.DWINGS_InvoiceID) && 
+                            string.IsNullOrWhiteSpace(r.InternalInvoiceReference)), // Red: No DWINGS link
+                        NotGroupedCount = rows.Count(r => 
+                            (!string.IsNullOrWhiteSpace(r.DWINGS_InvoiceID) || !string.IsNullOrWhiteSpace(r.InternalInvoiceReference)) &&
+                            !r.IsMatchedAcrossAccounts), // Orange: Has link but not grouped
+                        DiscrepancyCount = rows.Count(r => 
+                            r.IsMatchedAcrossAccounts && 
+                            r.MissingAmount.HasValue && 
+                            r.MissingAmount.Value != 0), // Yellow/Amber: Grouped but has discrepancy
+                        BalancedCount = rows.Count(r => 
+                            r.IsMatchedAcrossAccounts && 
+                            (!r.MissingAmount.HasValue || r.MissingAmount.Value == 0)) // Green: Balanced
+                    };
+
+                    return result;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"GetStatusCountsAsync error: {ex.Message}");
+                    return new StatusCountsDto();
+                }
+            }).ConfigureAwait(false);
+        }
+
+        /// <summary>
         /// Returns the number of Live reconciliation rows matching the provided backend filter for the given country.
         /// Live means a.DeleteDate IS NULL and r.DeleteDate IS NULL.
         /// The filterSql may optionally include a JSON preset header; only the predicate is applied.
+        /// OPTIMIZED: Cached based on countryId + filterSql (AMBRE data rarely changes)
         /// </summary>
         public async Task<int> GetReconciliationCountAsync(string countryId, string filterSql = null)
         {
-            try
+            // OPTIMIZATION: Cache reconciliation counts (only changes on AMBRE import or status updates)
+            var cacheKey = $"RecoCount_{countryId}_{NormalizeFilterForCache(filterSql)}";
+            return await CacheService.Instance.GetOrLoadAsync(cacheKey, async () =>
             {
-                string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
-                string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
-                string dwEsc = string.IsNullOrEmpty(dwPath) ? null : dwPath.Replace("'", "''");
-                string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
-
-                // Detect duplicates-only flag from optional JSON header
-                bool dupOnly = FilterSqlHelper.TryExtractPotentialDuplicatesFlag(filterSql);
-
-                // Base SELECT ... WHERE 1=1 with joins and dup subquery
-                string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql, dashboardOnly: false);
-
-                // Always enforce Live scope
-                query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
-
-                var predicate = FilterSqlHelper.ExtractNormalizedPredicate(filterSql);
-                if (!string.IsNullOrEmpty(predicate))
+                try
                 {
-                    query += $" AND ({predicate})";
-                }
+                    string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
+                    string ambrePath = _offlineFirstService?.GetLocalAmbreDatabasePath(countryId);
+                    string dwEsc = string.IsNullOrEmpty(dwPath) ? null : dwPath.Replace("'", "''");
+                    string ambreEsc = string.IsNullOrEmpty(ambrePath) ? null : ambrePath.Replace("'", "''");
 
-                if (dupOnly)
-                {
-                    query += " AND (dup.DupCount) > 1";
-                }
+                    // Detect duplicates-only flag from optional JSON header
+                    bool dupOnly = FilterSqlHelper.TryExtractPotentialDuplicatesFlag(filterSql);
 
-                var countSql = $"SELECT COUNT(*) FROM ({query}) AS q";
+                    // Base SELECT ... WHERE 1=1 with joins and dup subquery
+                    string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql, dashboardOnly: false);
 
-                using (var connection = new OleDbConnection(_connectionString))
-                {
-                    await connection.OpenAsync().ConfigureAwait(false);
-                    using (var cmd = new OleDbCommand(countSql, connection))
+                    // Always enforce Live scope
+                    query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
+
+                    var predicate = FilterSqlHelper.ExtractNormalizedPredicate(filterSql);
+                    if (!string.IsNullOrEmpty(predicate))
                     {
-                        var obj = await cmd.ExecuteScalarAsync().ConfigureAwait(false);
-                        if (obj == null || obj == DBNull.Value) return 0;
-                        int n;
-                        return int.TryParse(Convert.ToString(obj), out n) ? n : 0;
+                        query += $" AND ({predicate})";
+                    }
+
+                    if (dupOnly)
+                    {
+                        query += " AND (dup.DupCount) > 1";
+                    }
+
+                    var countSql = $"SELECT COUNT(*) FROM ({query}) AS q";
+
+                    using (var connection = new OleDbConnection(_connectionString))
+                    {
+                        await connection.OpenAsync().ConfigureAwait(false);
+                        using (var cmd = new OleDbCommand(countSql, connection))
+                        {
+                            var obj = await cmd.ExecuteScalarAsync().ConfigureAwait(false);
+                            if (obj == null || obj == DBNull.Value) return 0;
+                            int n;
+                            return int.TryParse(Convert.ToString(obj), out n) ? n : 0;
+                        }
                     }
                 }
-            }
-            catch
-            {
-                return 0;
-            }
+                catch
+                {
+                    return 0;
+                }
+            }, TimeSpan.FromHours(2)).ConfigureAwait(false); // Cache for 2 hours (only changes on AMBRE import or status updates)
         }
 
         // REMOVED: ComputeAutoAction - Legacy method replaced by AmbreReconciliationUpdater.ApplyTruthTableRulesAsync

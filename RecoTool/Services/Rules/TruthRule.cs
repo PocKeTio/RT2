@@ -54,6 +54,8 @@ namespace RecoTool.Services.Rules
         public bool? CommIdEmail { get; set; }
         // True when DWINGS invoice status is "INITIATED"
         public bool? BgiStatusInitiated { get; set; }
+        // T_PAYMENT_REQUEST_STATUS condition: "CANCELLED", "FULLY_EXECUTED", "INITIATED", "REJECTED", "REQUEST_FAILED", "REQUESTED" (semi-colon or comma separated, or '*' for any)
+        public string PaymentRequestStatus { get; set; }
 
         // Time/state conditions
         public bool? TriggerDateIsNull { get; set; }
@@ -68,7 +70,8 @@ namespace RecoTool.Services.Rules
         public int? DaysSinceReminderMax { get; set; }
 
         // Current state conditions
-        public int? CurrentActionId { get; set; }
+        // Semi-colon or comma separated action IDs (e.g., "1;3;7"). '*' for any or null to not filter.
+        public string CurrentActionId { get; set; }
 
         // Outputs
         public int? OutputActionId { get; set; }
@@ -115,6 +118,7 @@ namespace RecoTool.Services.Rules
         public bool? IsFirstRequest { get; set; }
         public int? DaysSinceReminder { get; set; }
         public int? CurrentActionId { get; set; }
+        public string PaymentRequestStatus { get; set; } // T_PAYMENT_REQUEST_STATUS from DWINGS invoice
     }
 
     public class RuleEvaluationResult

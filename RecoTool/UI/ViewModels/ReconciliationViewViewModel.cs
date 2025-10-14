@@ -209,164 +209,198 @@ namespace RecoTool.UI.ViewModels
         /// <summary>
         /// Apply filters held in CurrentFilter to the provided dataset.
         /// If excludeTransactionType is true, the TransactionTypeId step is skipped (used to refresh options).
+        /// OPTIMIZED: Uses single-pass filtering with combined predicate instead of chained LINQ Where() calls
         /// </summary>
         public List<ReconciliationViewData> ApplyFilters(IEnumerable<ReconciliationViewData> source, bool excludeTransactionType = false)
         {
             if (source == null) return new List<ReconciliationViewData>();
             var f = CurrentFilter ?? new FilterState();
-            var q = source;
-
-            // Account
-            if (!string.IsNullOrWhiteSpace(f.AccountId))
+            
+            // Pre-compute filter values once
+            var accountId = f.AccountId?.Trim();
+            var currency = f.Currency;
+            var reconciliationNum = f.ReconciliationNum;
+            var rawLabel = f.RawLabel;
+            var eventNum = f.EventNum;
+            var comments = f.Comments;
+            var guaranteeStatus = f.GuaranteeStatus?.Trim();
+            var dwInvoiceId = f.DwInvoiceId;
+            var dwGuaranteeId = f.DwGuaranteeId;
+            var dwCommissionId = f.DwCommissionId;
+            var assigneeId = f.AssigneeId;
+            var status = f.Status;
+            var deletedDay = f.DeletedDate?.Date;
+            var deletedNext = deletedDay?.AddDays(1);
+            var today = DateTime.Today;
+            var oneWeekAgo = today.AddDays(-7);
+            var oneMonthAgo = today.AddMonths(-1);
+            
+            // Single-pass filter with combined predicate
+            var result = new List<ReconciliationViewData>();
+            foreach (var x in source)
             {
-                var id = f.AccountId.Trim();
-                q = q.Where(x => string.Equals(x.Account_ID?.Trim(), id, System.StringComparison.OrdinalIgnoreCase));
-            }
+                // Account
+                if (!string.IsNullOrWhiteSpace(accountId) && 
+                    !string.Equals(x.Account_ID?.Trim(), accountId, System.StringComparison.OrdinalIgnoreCase))
+                    continue;
 
-            // Currency contains
-            if (!string.IsNullOrWhiteSpace(f.Currency))
-            {
-                var c = f.Currency;
-                q = q.Where(x => x.CCY != null && x.CCY.IndexOf(c, System.StringComparison.OrdinalIgnoreCase) >= 0);
-            }
+                // Currency contains
+                if (!string.IsNullOrWhiteSpace(currency) && 
+                    (x.CCY == null || x.CCY.IndexOf(currency, System.StringComparison.OrdinalIgnoreCase) < 0))
+                    continue;
 
-            // Amount range
-            if (f.MinAmount.HasValue) q = q.Where(x => x.SignedAmount >= f.MinAmount.Value);
-            if (f.MaxAmount.HasValue) q = q.Where(x => x.SignedAmount <= f.MaxAmount.Value);
+                // Amount range
+                if (f.MinAmount.HasValue && x.SignedAmount < f.MinAmount.Value) continue;
+                if (f.MaxAmount.HasValue && x.SignedAmount > f.MaxAmount.Value) continue;
 
-            // Date range (operation)
-            if (f.FromDate.HasValue) q = q.Where(x => x.Operation_Date.HasValue && x.Operation_Date.Value >= f.FromDate.Value);
-            if (f.ToDate.HasValue) q = q.Where(x => x.Operation_Date.HasValue && x.Operation_Date.Value <= f.ToDate.Value);
+                // Date range (operation)
+                if (f.FromDate.HasValue && (!x.Operation_Date.HasValue || x.Operation_Date.Value < f.FromDate.Value)) continue;
+                if (f.ToDate.HasValue && (!x.Operation_Date.HasValue || x.Operation_Date.Value > f.ToDate.Value)) continue;
 
-            // Reference contains
-            if (!string.IsNullOrWhiteSpace(f.ReconciliationNum))
-                q = q.Where(x => (x.Reconciliation_Num ?? string.Empty).IndexOf(f.ReconciliationNum, System.StringComparison.OrdinalIgnoreCase) >= 0);
-            if (!string.IsNullOrWhiteSpace(f.RawLabel))
-                q = q.Where(x => (x.RawLabel ?? string.Empty).IndexOf(f.RawLabel, System.StringComparison.OrdinalIgnoreCase) >= 0);
-            if (!string.IsNullOrWhiteSpace(f.EventNum))
-                q = q.Where(x => (x.Event_Num ?? string.Empty).IndexOf(f.EventNum, System.StringComparison.OrdinalIgnoreCase) >= 0);
+                // Reference contains
+                if (!string.IsNullOrWhiteSpace(reconciliationNum) && 
+                    (x.Reconciliation_Num ?? string.Empty).IndexOf(reconciliationNum, System.StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                if (!string.IsNullOrWhiteSpace(rawLabel) && 
+                    (x.RawLabel ?? string.Empty).IndexOf(rawLabel, System.StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                if (!string.IsNullOrWhiteSpace(eventNum) && 
+                    (x.Event_Num ?? string.Empty).IndexOf(eventNum, System.StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
 
-            // Comments contains (client-side filter on view data)
-            if (!string.IsNullOrWhiteSpace(f.Comments))
-                q = q.Where(x => (x.Comments ?? string.Empty).IndexOf(f.Comments, System.StringComparison.OrdinalIgnoreCase) >= 0);
+                // Comments contains
+                if (!string.IsNullOrWhiteSpace(comments) && 
+                    (x.Comments ?? string.Empty).IndexOf(comments, System.StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
 
-            // Guarantee status contains
-            if (!string.IsNullOrWhiteSpace(f.GuaranteeStatus))
-            {
-                var gs = f.GuaranteeStatus.Trim();
-                q = q.Where(x => (x.GUARANTEE_STATUS ?? string.Empty).IndexOf(gs, System.StringComparison.OrdinalIgnoreCase) >= 0);
-            }
+                // Guarantee status contains
+                if (!string.IsNullOrWhiteSpace(guaranteeStatus) && 
+                    (x.GUARANTEE_STATUS ?? string.Empty).IndexOf(guaranteeStatus, System.StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
 
-            // DW ids
-            if (!string.IsNullOrWhiteSpace(f.DwInvoiceId))
-            {
-                var id = f.DwInvoiceId;
-                q = q.Where(x => (x.DWINGS_InvoiceID ?? string.Empty).IndexOf(id, System.StringComparison.OrdinalIgnoreCase) >= 0
-                                 || (x.INVOICE_ID ?? string.Empty).IndexOf(id, System.StringComparison.OrdinalIgnoreCase) >= 0);
-            }
-            if (!string.IsNullOrWhiteSpace(f.DwGuaranteeId))
-            {
-                var id = f.DwGuaranteeId;
-                q = q.Where(x => (x.DWINGS_GuaranteeID ?? string.Empty).IndexOf(id, System.StringComparison.OrdinalIgnoreCase) >= 0
-                                 || (x.GUARANTEE_ID ?? string.Empty).IndexOf(id, System.StringComparison.OrdinalIgnoreCase) >= 0);
-            }
-            if (!string.IsNullOrWhiteSpace(f.DwCommissionId))
-            {
-                var id = f.DwCommissionId;
-                q = q.Where(x => (x.DWINGS_BGPMT ?? string.Empty).IndexOf(id, System.StringComparison.OrdinalIgnoreCase) >= 0
-                                 || (x.COMMISSION_ID ?? string.Empty).IndexOf(id, System.StringComparison.OrdinalIgnoreCase) >= 0);
-            }
-
-            // Deleted date exact day
-            if (f.DeletedDate.HasValue)
-            {
-                var day = f.DeletedDate.Value.Date;
-                var next = day.AddDays(1);
-                q = q.Where(a => a.DeleteDate.HasValue && a.DeleteDate.Value >= day && a.DeleteDate.Value < next);
-            }
-
-            // Status (Live/Archived)
-            if (!string.IsNullOrWhiteSpace(f.Status) && !string.Equals(f.Status, "All", System.StringComparison.OrdinalIgnoreCase))
-            {
-                if (string.Equals(f.Status, "Live", System.StringComparison.OrdinalIgnoreCase))
-                    q = q.Where(a => !a.DeleteDate.HasValue);
-                else if (string.Equals(f.Status, "Archived", System.StringComparison.OrdinalIgnoreCase))
-                    q = q.Where(a => a.DeleteDate.HasValue);
-            }
-
-            // Transaction type by enum id (Category)
-            if (!excludeTransactionType && f.TransactionTypeId.HasValue)
-            {
-                var t = f.TransactionTypeId.Value;
-                q = q.Where(x => x.Category.HasValue && x.Category.Value == t);
-            }
-
-            // Referential filters
-            if (f.ActionId.HasValue) q = q.Where(x => x.Action == f.ActionId);
-            if (f.KpiId.HasValue) q = q.Where(x => x.KPI == f.KpiId);
-            if (f.IncidentTypeId.HasValue) q = q.Where(x => x.IncidentType == f.IncidentTypeId);
-            if (!string.IsNullOrWhiteSpace(f.AssigneeId)) q = q.Where(x => string.Equals(x.Assignee, f.AssigneeId, System.StringComparison.OrdinalIgnoreCase));
-
-            // Potential Duplicates
-            if (f.PotentialDuplicates == true) q = q.Where(x => x.IsPotentialDuplicate);
-
-            // Unmatched: no invoice linked (DWINGS invoice id AND InternalInvoiceReference are blank)
-            if (f.Unmatched == true)
-            {
-                q = q.Where(x => string.IsNullOrWhiteSpace(x.DWINGS_InvoiceID)
-                                 && string.IsNullOrWhiteSpace(x.InternalInvoiceReference));
-            }
-
-            // New lines: appeared in Ambre today (based on AMBRE CreationDate)
-            if (f.NewLines == true)
-            {
-                var today = DateTime.Today;
-                q = q.Where(x => x.CreationDate.HasValue && x.CreationDate.Value.Date == today);
-            }
-
-            // Action Done and Action Date
-            if (f.ActionDone.HasValue)
-            {
-                if (f.ActionDone.Value) 
+                // DW ids
+                if (!string.IsNullOrWhiteSpace(dwInvoiceId))
                 {
-                    // Done = ActionStatus is true
-                    q = q.Where(x => x.ActionStatus == true);
+                    if ((x.DWINGS_InvoiceID ?? string.Empty).IndexOf(dwInvoiceId, System.StringComparison.OrdinalIgnoreCase) < 0 &&
+                        (x.INVOICE_ID ?? string.Empty).IndexOf(dwInvoiceId, System.StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
                 }
-                else 
+                if (!string.IsNullOrWhiteSpace(dwGuaranteeId))
                 {
-                    // Pending = has Action AND ActionStatus is false (or null)
-                    q = q.Where(x => x.Action.HasValue && (x.ActionStatus == false || !x.ActionStatus.HasValue));
+                    if ((x.DWINGS_GuaranteeID ?? string.Empty).IndexOf(dwGuaranteeId, System.StringComparison.OrdinalIgnoreCase) < 0 &&
+                        (x.GUARANTEE_ID ?? string.Empty).IndexOf(dwGuaranteeId, System.StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
                 }
-            }
-            if (f.ActionDateFrom.HasValue) q = q.Where(x => x.ActionDate.HasValue && x.ActionDate.Value >= f.ActionDateFrom.Value);
-            if (f.ActionDateTo.HasValue) q = q.Where(x => x.ActionDate.HasValue && x.ActionDate.Value <= f.ActionDateTo.Value);
-
-            // Last Reviewed filter (based on ActionStatus = Done and ActionDate)
-            if (!string.IsNullOrWhiteSpace(f.LastReviewed))
-            {
-                var today = DateTime.Today;
-                switch (f.LastReviewed)
+                if (!string.IsNullOrWhiteSpace(dwCommissionId))
                 {
-                    case "Never":
-                        // Not reviewed = no action or action status is Pending
-                        q = q.Where(x => !x.Action.HasValue || x.ActionStatus != true);
-                        break;
-                    case "Today":
-                        // Reviewed today = ActionStatus Done today
-                        q = q.Where(x => x.ActionStatus == true && x.ActionDate.HasValue && x.ActionDate.Value.Date == today);
-                        break;
-                    case "1week":
-                        var oneWeekAgo = today.AddDays(-7);
-                        q = q.Where(x => x.ActionStatus == true && x.ActionDate.HasValue && x.ActionDate.Value.Date >= oneWeekAgo);
-                        break;
-                    case "1month":
-                        var oneMonthAgo = today.AddMonths(-1);
-                        q = q.Where(x => x.ActionStatus == true && x.ActionDate.HasValue && x.ActionDate.Value.Date >= oneMonthAgo);
-                        break;
+                    if ((x.DWINGS_BGPMT ?? string.Empty).IndexOf(dwCommissionId, System.StringComparison.OrdinalIgnoreCase) < 0 &&
+                        (x.COMMISSION_ID ?? string.Empty).IndexOf(dwCommissionId, System.StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
                 }
+
+                // Deleted date exact day
+                if (deletedDay.HasValue)
+                {
+                    if (!x.DeleteDate.HasValue || x.DeleteDate.Value < deletedDay.Value || x.DeleteDate.Value >= deletedNext.Value)
+                        continue;
+                }
+
+                // Status (Live/Archived)
+                if (!string.IsNullOrWhiteSpace(status) && !string.Equals(status, "All", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.Equals(status, "Live", System.StringComparison.OrdinalIgnoreCase) && x.DeleteDate.HasValue)
+                        continue;
+                    if (string.Equals(status, "Archived", System.StringComparison.OrdinalIgnoreCase) && !x.DeleteDate.HasValue)
+                        continue;
+                }
+
+                // Transaction type by enum id (Category)
+                if (!excludeTransactionType && f.TransactionTypeId.HasValue)
+                {
+                    if (!x.Category.HasValue || x.Category.Value != f.TransactionTypeId.Value)
+                        continue;
+                }
+
+                // Referential filters
+                if (f.ActionId.HasValue && x.Action != f.ActionId) continue;
+                if (f.KpiId.HasValue && x.KPI != f.KpiId) continue;
+                if (f.IncidentTypeId.HasValue && x.IncidentType != f.IncidentTypeId) continue;
+                if (!string.IsNullOrWhiteSpace(assigneeId) && 
+                    !string.Equals(x.Assignee, assigneeId, System.StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // Potential Duplicates
+                if (f.PotentialDuplicates == true && !x.IsPotentialDuplicate)
+                    continue;
+
+                // Unmatched: no invoice linked (DWINGS invoice id AND InternalInvoiceReference are blank)
+                if (f.Unmatched == true)
+                {
+                    if (!string.IsNullOrWhiteSpace(x.DWINGS_InvoiceID) || !string.IsNullOrWhiteSpace(x.InternalInvoiceReference))
+                        continue;
+                }
+
+                // New lines: appeared in Ambre today (based on AMBRE CreationDate)
+                if (f.NewLines == true)
+                {
+                    if (!x.CreationDate.HasValue || x.CreationDate.Value.Date != today)
+                        continue;
+                }
+
+                // Action Done and Action Date
+                if (f.ActionDone.HasValue)
+                {
+                    if (f.ActionDone.Value) 
+                    {
+                        // Done = ActionStatus is true
+                        if (x.ActionStatus != true)
+                            continue;
+                    }
+                    else 
+                    {
+                        // Pending = has Action AND ActionStatus is false (or null)
+                        if (!x.Action.HasValue || x.ActionStatus == true)
+                            continue;
+                    }
+                }
+                if (f.ActionDateFrom.HasValue && (!x.ActionDate.HasValue || x.ActionDate.Value < f.ActionDateFrom.Value))
+                    continue;
+                if (f.ActionDateTo.HasValue && (!x.ActionDate.HasValue || x.ActionDate.Value > f.ActionDateTo.Value))
+                    continue;
+
+                // Last Reviewed filter (based on ActionStatus = Done and ActionDate)
+                if (!string.IsNullOrWhiteSpace(f.LastReviewed))
+                {
+                    switch (f.LastReviewed)
+                    {
+                        case "Never":
+                            // Not reviewed = no action or action status is Pending
+                            if (x.Action.HasValue && x.ActionStatus == true)
+                                continue;
+                            break;
+                        case "Today":
+                            // Reviewed today = ActionStatus Done today
+                            if (x.ActionStatus != true || !x.ActionDate.HasValue || x.ActionDate.Value.Date != today)
+                                continue;
+                            break;
+                        case "1week":
+                            // Reviewed in last week
+                            if (x.ActionStatus != true || !x.ActionDate.HasValue || x.ActionDate.Value.Date < oneWeekAgo)
+                                continue;
+                            break;
+                        case "1month":
+                            // Reviewed in last month
+                            if (x.ActionStatus != true || !x.ActionDate.HasValue || x.ActionDate.Value.Date < oneMonthAgo)
+                                continue;
+                            break;
+                    }
+                }
+
+                // Passed all filters - add to result
+                result.Add(x);
             }
 
-            return q.ToList();
+            return result;
         }
 
         // TransactionType options for UI binding

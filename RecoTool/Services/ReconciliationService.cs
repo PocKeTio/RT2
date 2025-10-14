@@ -74,7 +74,7 @@ namespace RecoTool.Services
 
                     // Detect duplicates-only flag from optional JSON header (ignored for sums)
                     // Build base query
-                    string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql, dashboardOnly: false);
+                    string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql);
 
                     // Always enforce Live scope
                     query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
@@ -347,13 +347,14 @@ namespace RecoTool.Services
 
         /// <summary>
         /// Récupère les données jointes Ambre + Réconciliation
+        /// REMOVED: dashboardOnly parameter - was incomplete and prevented cache reuse
         /// </summary>
-        public async Task<List<ReconciliationViewData>> GetReconciliationViewAsync(string countryId, string filterSql = null, bool dashboardOnly = false)
+        public async Task<List<ReconciliationViewData>> GetReconciliationViewAsync(string countryId, string filterSql = null)
         {
             // CRITICAL: Always ensure DWINGS caches are initialized for lazy loading
             await EnsureDwingsCachesInitializedAsync().ConfigureAwait(false);
             
-            var key = $"{countryId ?? string.Empty}|{dashboardOnly}|{NormalizeFilterForCache(filterSql)}";
+            var key = $"{countryId ?? string.Empty}|{NormalizeFilterForCache(filterSql)}";
             if (_recoViewCache.TryGetValue(key, out var existing))
             {
                 var cached = await existing.Value.ConfigureAwait(false);
@@ -364,7 +365,7 @@ namespace RecoTool.Services
                 
                 return cached;
             }
-            var lazy = new Lazy<Task<List<ReconciliationViewData>>>(() => BuildReconciliationViewAsyncCore(countryId, filterSql, dashboardOnly, key));
+            var lazy = new Lazy<Task<List<ReconciliationViewData>>>(() => BuildReconciliationViewAsyncCore(countryId, filterSql, key));
             var entry = _recoViewCache.GetOrAdd(key, lazy);
             var result = await entry.Value.ConfigureAwait(false);
             return result;
@@ -483,7 +484,7 @@ namespace RecoTool.Services
             catch { /* best-effort */ }
         }
 
-        private async Task<List<ReconciliationViewData>> BuildReconciliationViewAsyncCore(string countryId, string filterSql, bool dashboardOnly, string cacheKey)
+        private async Task<List<ReconciliationViewData>> BuildReconciliationViewAsyncCore(string countryId, string filterSql, string cacheKey)
         {
             var swBuild = Stopwatch.StartNew();
             string dwPath = _offlineFirstService?.GetLocalDWDatabasePath();
@@ -495,13 +496,10 @@ namespace RecoTool.Services
             bool dupOnly = FilterSqlHelper.TryExtractPotentialDuplicatesFlag(filterSql);
 
             // Build the base query via centralized builder
-            string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql, dashboardOnly);
+            string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql);
 
-            // CRITICAL: Always filter out deleted records (dashboardOnly=true already has this, but dashboardOnly=false needs it)
-            if (!dashboardOnly)
-            {
-                query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
-            }
+            // CRITICAL: Always filter out deleted records
+            query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";
 
             // Apply Potential Duplicates predicate if requested via JSON
             if (dupOnly)
@@ -957,7 +955,7 @@ namespace RecoTool.Services
                     bool dupOnly = FilterSqlHelper.TryExtractPotentialDuplicatesFlag(filterSql);
 
                     // Base SELECT ... WHERE 1=1 with joins and dup subquery
-                    string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql, dashboardOnly: false);
+                    string query = ReconciliationViewQueryBuilder.Build(dwEsc, ambreEsc, filterSql);
 
                     // Always enforce Live scope
                     query += " AND a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)";

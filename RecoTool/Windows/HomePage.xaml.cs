@@ -1602,11 +1602,10 @@ namespace RecoTool.Windows
                     return;
                 }
 
-                // OPTIMIZED: Use dashboardOnly=false to reuse ReconciliationView cache
-                // Previously used dashboardOnly=true which created a separate cache entry
-                // This caused 5-10s delay when switching from ReconciliationView to HomePage
-                // Now HomePage reuses the full dataset cache (instant load if already cached)
-                var reconciliationViewData = await _reconciliationService.GetReconciliationViewAsync(_offlineFirstService.CurrentCountryId, null, false);
+                // OPTIMIZED: Reuses ReconciliationView cache (instant load if already cached)
+                // Previously had dashboardOnly parameter that created separate cache entries
+                // Removed dashboardOnly - was incomplete (missing IsToReview, Assignee) and prevented cache reuse
+                var reconciliationViewData = await _reconciliationService.GetReconciliationViewAsync(_offlineFirstService.CurrentCountryId, null);
                 _reconciliationViewData = reconciliationViewData ?? new List<ReconciliationViewData>();
 
                 // Analyser la répartition des comptes pour diagnostic

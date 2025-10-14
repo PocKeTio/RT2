@@ -8,71 +8,15 @@ namespace RecoTool.Services.Queries
     internal static class ReconciliationViewQueryBuilder
     {
         /// <summary>
-        /// Builds the SQL string for the reconciliation view (dashboard or full) using escaped external DB paths.
-        /// This mirrors the original inline construction in ReconciliationService.BuildReconciliationViewAsyncCore.
+        /// Builds the SQL string for the reconciliation view using escaped external DB paths.
+        /// REMOVED: dashboardOnly parameter - was incomplete (missing IsToReview, IsReviewedToday, Assignee)
+        /// and created separate cache entries preventing cache reuse between HomePage and ReconciliationView.
         /// </summary>
-        public static string Build(string dwEsc, string ambreEsc, string filterSql, bool dashboardOnly)
+        public static string Build(string dwEsc, string ambreEsc, string filterSql)
         {
             string ambreJoin = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre AS a" : $"(SELECT * FROM [{ambreEsc}].T_Data_Ambre) AS a";
             // Base AMBRE source for subqueries/aggregates (no alias)
             string ambreBase = string.IsNullOrEmpty(ambreEsc) ? "T_Data_Ambre" : $"[{ambreEsc}].T_Data_Ambre";
-
-            // Detect PotentialDuplicates flag from optional JSON comment prefix (kept for parity; not used in SQL text)
-            try
-            {
-                if (!string.IsNullOrWhiteSpace(filterSql))
-                {
-                    var mDup = Regex.Match(filterSql, @"^/\*JSON:(.*?)\*/", RegexOptions.Singleline);
-                    if (mDup.Success)
-                    {
-                        var json = mDup.Groups[1].Value;
-                        var preset = JsonSerializer.Deserialize<FilterPreset>(json);
-                        var _ = preset?.PotentialDuplicates == true; // reserved for future use
-                    }
-                }
-            }
-            catch { }
-
-            if (dashboardOnly)
-            {
-                return $@"
-                        SELECT 
-                            a.ID, 
-                            a.Account_ID, 
-                            a.CCY, 
-                            a.SignedAmount, 
-                            a.Operation_Date, 
-                            a.Value_Date, 
-                            a.CreationDate, 
-                            a.DeleteDate,
-                            r.Action, 
-                            r.ActionStatus,
-                            r.ActionDate,
-                            r.KPI, 
-                            r.RiskyItem,
-                            r.DWINGS_GuaranteeID,
-                            r.DWINGS_InvoiceID,
-                            r.DWINGS_BGPMT,
-                            IIF(dup.DupCount > 1, True, False) AS IsPotentialDuplicate
-                        FROM 
-                            (
-                                (
-                                    {ambreJoin}
-                                    LEFT JOIN T_Reconciliation AS r 
-                                        ON a.ID = r.ID
-                                )
-                                LEFT JOIN 
-                                    (
-                                        SELECT Event_Num & Reconciliation_Num & Account_ID AS DupKey, COUNT(*) AS DupCount 
-                                        FROM {ambreBase} 
-                                        GROUP BY Event_Num & Reconciliation_Num & Account_ID
-                                    ) AS dup 
-                                    ON dup.DupKey = (a.Event_Num & a.Reconciliation_Num & a.Account_ID)
-                            )
-                        WHERE 
-                            a.DeleteDate IS NULL 
-                            AND (r.DeleteDate IS NULL) ";
-            }
 
             // Full view query (DWINGS joins removed to avoid row multiplication; enrichment fills fields later)
 

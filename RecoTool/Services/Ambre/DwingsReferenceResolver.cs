@@ -17,6 +17,7 @@ namespace RecoTool.Services.AmbreImport
     {
         private readonly ReconciliationService _reconciliationService;
         private List<DwingsGuaranteeDto> _dwingsGuarantees;
+        private string _lastResolvedGuaranteeId; // Stores GUARANTEE_ID found via OfficialRef
 
         public DwingsReferenceResolver(ReconciliationService reconciliationService)
         {
@@ -34,6 +35,7 @@ namespace RecoTool.Services.AmbreImport
         {
             // Store guarantees for use in ResolveByOfficialRef
             _dwingsGuarantees = dwGuarantees;
+            _lastResolvedGuaranteeId = null; // Reset for each resolution
             
             var references = new AmbreImport.DwingsTokens();
 
@@ -69,7 +71,7 @@ namespace RecoTool.Services.AmbreImport
                     hit = DwingsLinkingHelper.ResolveInvoiceByBgpmt(dwInvoices, tokens.Bgpmt);
                 }
 
-                // OfficialRef path
+                // OfficialRef path (CRITICAL: also resolves GUARANTEE_ID via _lastResolvedGuaranteeId)
                 if (hit == null)
                 {
                     var byOfficial = ResolveByOfficialRef(dataAmbre, dwInvoices);
@@ -100,7 +102,14 @@ namespace RecoTool.Services.AmbreImport
                 // Fill references from tokens and resolved invoice
                 references.InvoiceId = hit?.INVOICE_ID; // only if resolvable in DWINGS
                 references.CommissionId = !string.IsNullOrWhiteSpace(tokens.Bgpmt) ? tokens.Bgpmt : hit?.BGPMT;
-                references.GuaranteeId = !string.IsNullOrWhiteSpace(tokens.GuaranteeId) ? tokens.GuaranteeId : (hit?.BUSINESS_CASE_REFERENCE ?? hit?.BUSINESS_CASE_ID);
+                
+                // CRITICAL: Prioritize GUARANTEE_ID from OfficialRef resolution (_lastResolvedGuaranteeId)
+                // This ensures Pivot account with OfficialRef in Reconciliation_Num gets linked to guarantee
+                // Handle duplicates: _lastResolvedGuaranteeId already contains the LATEST (highest) GUARANTEE_ID
+                references.GuaranteeId = _lastResolvedGuaranteeId  // From OfficialRef (handles duplicates)
+                                        ?? tokens.GuaranteeId       // From text extraction
+                                        ?? hit?.BUSINESS_CASE_REFERENCE  // From invoice
+                                        ?? hit?.BUSINESS_CASE_ID;
             }
             catch (Exception ex)
             {
@@ -267,28 +276,27 @@ namespace RecoTool.Services.AmbreImport
                 if (guaranteeMatches.Count > 0)
                 {
                     // Found guarantee(s) via OFFICIALREF/PARTY_REF
-                    // Now find the best matching invoice(s) linked to these guarantees
+                    // CRITICAL: Handle duplicates (recreations) by taking LATEST GUARANTEE_ID (descending sort)
+                    // Guarantees with same OFFICIALREF but different GUARANTEE_ID = recreations
+                    // Always take the highest GUARANTEE_ID (most recent)
+                    var bestGuarantee = guaranteeMatches
+                        .OrderByDescending(g => g.GUARANTEE_ID, StringComparer.OrdinalIgnoreCase)
+                        .First();
+                    
+                    // CRITICAL: Store the resolved GUARANTEE_ID so caller can use it
+                    _lastResolvedGuaranteeId = bestGuarantee.GUARANTEE_ID;
+                    
+                    // Now find the best matching invoice(s) linked to this guarantee
                     // Use the same logic as ResolveInvoicesByGuarantee (date + amount ranking)
+                    var invoicesForGuarantee = DwingsLinkingHelper.ResolveInvoicesByGuarantee(
+                        dwInvoices,
+                        bestGuarantee.GUARANTEE_ID,
+                        ambreDate,
+                        ambreAmt,
+                        take: 5  // Take top 5 for this guarantee
+                    );
                     
-                    // For each matched guarantee, find linked invoices and rank them
-                    var allCandidates = new List<DwingsInvoiceDto>();
-                    foreach (var guarantee in guaranteeMatches)
-                    {
-                        var invoicesForGuarantee = DwingsLinkingHelper.ResolveInvoicesByGuarantee(
-                            dwInvoices,
-                            guarantee.GUARANTEE_ID,
-                            ambreDate,
-                            ambreAmt,
-                            take: 5  // Take top 5 per guarantee
-                        );
-                        allCandidates.AddRange(invoicesForGuarantee);
-                    }
-                    
-                    // Remove duplicates and keep unique invoices
-                    hits = allCandidates
-                        .GroupBy(i => i.INVOICE_ID, StringComparer.OrdinalIgnoreCase)
-                        .Select(g => g.First())
-                        .ToList();
+                    hits = invoicesForGuarantee?.ToList() ?? new List<DwingsInvoiceDto>();
                 }
             }
 

@@ -1038,7 +1038,6 @@
                               VirtualizingPanel.CacheLength="10,10"
                               VirtualizingPanel.CacheLengthUnit="Item"
                               VirtualizingPanel.ScrollUnit="Pixel"
-                              VirtualizingPanel.VirtualizationMode="Recycling"
                               RowHeight="28"
                               RowHeaderWidth="0"
                               MouseDoubleClick="ResultsDataGrid_MouseDoubleClick"
@@ -1199,10 +1198,9 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                            <!-- New/Updated badge (left side) with pulse animation -->
+                                            <!-- New/Updated badge (left side) - OPTIMIZED: Direct Visibility binding -->
                                             <Border x:Name="StatusBadge" Background="#2196F3" CornerRadius="2" Padding="3,1" Margin="0,0,4,0"
-                                                    Visibility="{Binding HasStatusIndicator, Converter={StaticResource BoolToVisibilityConverter}}"
-                                                    CacheMode="BitmapCache">
+                                                    Visibility="{Binding HasStatusIndicatorVisibility}">
                                                 <TextBlock Text="{Binding StatusIndicator}" FontWeight="Bold" FontSize="9" Foreground="White"/>
                                             </Border>
                                             <!-- Status color dot (right side) -->
@@ -1212,13 +1210,13 @@
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <!-- Group indicator (clickable) - SIMPLIFIED for performance -->
+                            <!-- Group indicator (clickable) - OPTIMIZED: Direct Visibility binding -->
                             <DataGridTemplateColumn Header="Group" Width="50" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource ReviewedTodayHighlight}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="G" Foreground="#2E7D32" FontWeight="Bold" HorizontalAlignment="Center" Cursor="Hand"
                                                    ToolTip="Open related entries across accounts (appears only when a cross-account pair exists: same BGI or Internal Reference)"
-                                                   Visibility="{Binding IsMatchedAcrossAccounts, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                   Visibility="{Binding IsMatchedAcrossAccountsVisibility}"
                                                    MouseLeftButtonUp="MatchedIndicator_MouseLeftButtonUp"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>

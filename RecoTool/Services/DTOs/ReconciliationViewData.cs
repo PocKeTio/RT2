@@ -504,6 +504,7 @@ namespace RecoTool.Services.DTOs
                 {
                     _isMatchedAcrossAccounts = value;
                     OnPropertyChanged(nameof(IsMatchedAcrossAccounts));
+                    OnPropertyChanged(nameof(IsMatchedAcrossAccountsVisibility));
                     InvalidateStatusCache();
                     OnPropertyChanged(nameof(StatusColor));
                     OnPropertyChanged(nameof(StatusTooltip));
@@ -629,6 +630,7 @@ namespace RecoTool.Services.DTOs
                     OnPropertyChanged(nameof(IsNewlyAdded));
                     OnPropertyChanged(nameof(StatusIndicator));
                     OnPropertyChanged(nameof(HasStatusIndicator));
+                    OnPropertyChanged(nameof(HasStatusIndicatorVisibility));
                     InvalidateStatusCache();
                     OnPropertyChanged(nameof(StatusTooltip));
                 }
@@ -650,6 +652,7 @@ namespace RecoTool.Services.DTOs
                     OnPropertyChanged(nameof(IsUpdated));
                     OnPropertyChanged(nameof(StatusIndicator));
                     OnPropertyChanged(nameof(HasStatusIndicator));
+                    OnPropertyChanged(nameof(HasStatusIndicatorVisibility));
                     InvalidateStatusCache();
                     OnPropertyChanged(nameof(StatusTooltip));
                 }
@@ -674,6 +677,20 @@ namespace RecoTool.Services.DTOs
         /// Returns true if there's any status indicator to show
         /// </summary>
         public bool HasStatusIndicator => _isNewlyAdded || _isUpdated;
+        
+        /// <summary>
+        /// Visibility for HasStatusIndicator (replaces BoolToVisibilityConverter)
+        /// OPTIMIZED: Pre-calculated to avoid converter overhead on every scroll
+        /// </summary>
+        public System.Windows.Visibility HasStatusIndicatorVisibility => 
+            HasStatusIndicator ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+        
+        /// <summary>
+        /// Visibility for IsMatchedAcrossAccounts (replaces BoolToVisibilityConverter)
+        /// OPTIMIZED: Pre-calculated to avoid converter overhead on every scroll
+        /// </summary>
+        public System.Windows.Visibility IsMatchedAcrossAccountsVisibility => 
+            _isMatchedAcrossAccounts ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
 
         /// <summary>
         /// Computed property for status color based on reconciliation completeness
@@ -791,20 +808,24 @@ namespace RecoTool.Services.DTOs
 
         // Display-only: human-friendly label for TransactionType stored in DataAmbre.Category
         // Example: INCOMING_PAYMENT -> "INCOMING PAYMENT"
+        // CACHED to avoid Enum.GetName + Replace on every scroll
+        private string _cachedCategoryLabel;
         public string CategoryLabel
         {
             get
             {
-                if (!this.Category.HasValue) return string.Empty;
+                if (_cachedCategoryLabel != null) return _cachedCategoryLabel;
+                
+                if (!this.Category.HasValue) return _cachedCategoryLabel = string.Empty;
                 try
                 {
                     var name = Enum.GetName(typeof(TransactionType), this.Category.Value);
-                    if (string.IsNullOrWhiteSpace(name)) return string.Empty;
-                    return name.Replace('_', ' ');
+                    if (string.IsNullOrWhiteSpace(name)) return _cachedCategoryLabel = string.Empty;
+                    return _cachedCategoryLabel = name.Replace('_', ' ');
                 }
                 catch
                 {
-                    return string.Empty;
+                    return _cachedCategoryLabel = string.Empty;
                 }
             }
         }

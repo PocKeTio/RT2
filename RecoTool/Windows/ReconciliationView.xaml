@@ -1035,9 +1035,10 @@
                               ScrollViewer.CanContentScroll="True"
                               ScrollViewer.IsDeferredScrollingEnabled="False"
                               ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                              VirtualizingPanel.CacheLength="20,20"
+                              VirtualizingPanel.CacheLength="10,10"
                               VirtualizingPanel.CacheLengthUnit="Item"
                               VirtualizingPanel.ScrollUnit="Pixel"
+                              VirtualizingPanel.VirtualizationMode="Recycling"
                               RowHeight="28"
                               RowHeaderWidth="0"
                               MouseDoubleClick="ResultsDataGrid_MouseDoubleClick"
@@ -1128,43 +1129,24 @@
                                 <Setter Property="BorderBrush" Value="#DDDDDD"/>
                                 <Setter Property="BorderThickness" Value="0,0,0,1"/>
                                 <Setter Property="Foreground" Value="Black"/>
-                                <Setter Property="CacheMode">
-                                    <Setter.Value>
-                                        <BitmapCache EnableClearType="True" RenderAtScale="1" SnapsToDevicePixels="True"/>
-                                    </Setter.Value>
-                                </Setter>
+                                <!-- REMOVED: BitmapCache on every cell causes GPU memory saturation and stuttering -->
                                 <EventSetter Event="PreviewMouseLeftButtonDown" Handler="DataGridCell_PreviewMouseLeftButtonDown"/>
+                                <!-- SIMPLIFIED: Removed custom template to use default DataGrid rendering (faster) -->
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate TargetType="DataGridCell">
-                                            <Grid>
-                                                <Border x:Name="CellBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
-                                                    <ContentPresenter VerticalAlignment="Center" Margin="2,0,18,0"/>
-                                                </Border>
-                                                <!-- subtle edit glyph -->
-                                                <TextBlock x:Name="EditGlyph" Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#9AA1B2"
-                                                           HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,4,0" Opacity="0"/>
-                                            </Grid>
+                                            <Border x:Name="CellBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+                                                <ContentPresenter VerticalAlignment="Center"/>
+                                            </Border>
                                             <ControlTemplate.Triggers>
-                                                <!-- editable state shows faint glyph -->
-                                                <Trigger Property="IsReadOnly" Value="False">
-                                                    <Setter TargetName="EditGlyph" Property="Opacity" Value="0.35"/>
-                                                    <Setter Property="ToolTip" Value="Editable"/>
-                                                </Trigger>
-                                                <!-- hover highlights subtly and increases glyph visibility -->
+                                                <!-- Minimal triggers for performance -->
                                                 <Trigger Property="IsMouseOver" Value="True">
                                                     <Setter TargetName="CellBorder" Property="Background" Value="#F7FAFF"/>
-                                                    <Setter TargetName="EditGlyph" Property="Opacity" Value="0.65"/>
                                                 </Trigger>
-                                                <!-- selection priority -->
                                                 <Trigger Property="IsSelected" Value="True">
                                                     <Setter TargetName="CellBorder" Property="Background" Value="#DCEBFF"/>
                                                     <Setter Property="BorderBrush" Value="#A7C5FF"/>
                                                     <Setter Property="Foreground" Value="Black"/>
-                                                </Trigger>
-                                                <!-- read-only hides glyph entirely -->
-                                                <Trigger Property="IsReadOnly" Value="True">
-                                                    <Setter TargetName="EditGlyph" Property="Opacity" Value="0"/>
                                                 </Trigger>
                                             </ControlTemplate.Triggers>
                                         </ControlTemplate>
@@ -1230,53 +1212,8 @@
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <!-- Group indicator (clickable) -->
-                            <DataGridTemplateColumn Header="Group" Width="50" IsReadOnly="True" CanUserResize="False" CanUserReorder="False">
-                                <!-- Override cell style to avoid global PreviewMouseLeftButtonDown edit interception -->
-                                <DataGridTemplateColumn.CellStyle>
-                                    <Style TargetType="DataGridCell">
-                                        <Setter Property="Padding" Value="6,2"/>
-                                        <Setter Property="Background" Value="Transparent"/>
-                                        <Setter Property="BorderBrush" Value="#DDDDDD"/>
-                                        <Setter Property="BorderThickness" Value="0,0,0,1"/>
-                                        <Setter Property="Foreground" Value="Black"/>
-                                        <Setter Property="Template">
-                                            <Setter.Value>
-                                                <ControlTemplate TargetType="DataGridCell">
-                                                    <Grid>
-                                                        <Border x:Name="CellBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
-                                                            <ContentPresenter VerticalAlignment="Center" Margin="2,0,18,0"/>
-                                                        </Border>
-                                                        <TextBlock x:Name="EditGlyph" Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#9AA1B2"
-                                                                   HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,4,0" Opacity="0"/>
-                                                    </Grid>
-                                                    <ControlTemplate.Triggers>
-                                                        <DataTrigger Binding="{Binding IsReviewedToday}" Value="True">
-                                                            <Setter TargetName="CellBorder" Property="Background" Value="#E8F5E9"/>
-                                                            <Setter Property="BorderBrush" Value="#A5D6A7"/>
-                                                        </DataTrigger>
-                                                        <Trigger Property="IsReadOnly" Value="False">
-                                                            <Setter TargetName="EditGlyph" Property="Opacity" Value="0.35"/>
-                                                            <Setter Property="ToolTip" Value="Editable"/>
-                                                        </Trigger>
-                                                        <Trigger Property="IsMouseOver" Value="True">
-                                                            <Setter TargetName="CellBorder" Property="Background" Value="#F7FAFF"/>
-                                                            <Setter TargetName="EditGlyph" Property="Opacity" Value="0.65"/>
-                                                        </Trigger>
-                                                        <Trigger Property="IsSelected" Value="True">
-                                                            <Setter TargetName="CellBorder" Property="Background" Value="#DCEBFF"/>
-                                                            <Setter Property="BorderBrush" Value="#A7C5FF"/>
-                                                            <Setter Property="Foreground" Value="Black"/>
-                                                        </Trigger>
-                                                        <Trigger Property="IsReadOnly" Value="True">
-                                                            <Setter TargetName="EditGlyph" Property="Opacity" Value="0"/>
-                                                        </Trigger>
-                                                    </ControlTemplate.Triggers>
-                                                </ControlTemplate>
-                                            </Setter.Value>
-                                        </Setter>
-                                    </Style>
-                                </DataGridTemplateColumn.CellStyle>
+                            <!-- Group indicator (clickable) - SIMPLIFIED for performance -->
+                            <DataGridTemplateColumn Header="Group" Width="50" IsReadOnly="True" CanUserResize="False" CanUserReorder="False" CellStyle="{StaticResource ReviewedTodayHighlight}">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="G" Foreground="#2E7D32" FontWeight="Bold" HorizontalAlignment="Center" Cursor="Hand"
@@ -1286,20 +1223,12 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <!-- Account side column (P/R) -->
+                            <!-- Account side column (P/R) - SIMPLIFIED: removed DataTriggers for performance -->
                             <DataGridTextColumn Header="Account" Binding="{Binding AccountSide}" Width="60" IsReadOnly="True" CellStyle="{StaticResource ReviewedTodayHighlight}" HeaderStyle="{StaticResource AmbreHeaderStyle}">
                                 <DataGridTextColumn.ElementStyle>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="HorizontalAlignment" Value="Center"/>
                                         <Setter Property="ToolTip" Value="P = Pivot, R = Receivable"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding AccountSide}" Value="P">
-                                                <Setter Property="ToolTip" Value="P = Pivot account"/>
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding AccountSide}" Value="R">
-                                                <Setter Property="ToolTip" Value="R = Receivable account"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
                                     </Style>
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>

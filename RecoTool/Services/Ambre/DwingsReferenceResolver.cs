@@ -244,150 +244,154 @@ namespace RecoTool.Services.AmbreImport
             return null;
         }
 
-        // OfficialRef exact match: extract alphanumeric tokens from Reconciliation_Num
-        // and match against invoice SENDER_REFERENCE, guarantee OFFICIALREF, and guarantee PARTY_REF
-        // NOTE: For Pivot account, Reconciliation_Num may contain IDs that don't match BGI/BGPMT/Guarantee patterns
+        /// <summary>
+        /// STEP 1: Find GUARANTEE_ID via OFFICIALREF/SENDER_REFERENCE/GUARANTEE_ID pattern matching
+        /// STEP 2: Find best invoice linked to this guarantee (with amount matching)
+        /// </summary>
         private string ResolveByOfficialRef(DataAmbre dataAmbre, List<DwingsInvoiceDto> dwInvoices)
         {
             if (dwInvoices == null || dwInvoices.Count == 0 || dataAmbre == null) return null;
 
-            // Build alphanumeric token set from Reconciliation_Num and fallback ReconciliationOrigin_Num
-            // CRITICAL: Keep as single alphanumeric string (don't split into multiple tokens)
-            // Example: "ABC-123-456" => "ABC123456" (not ["ABC", "123", "456"])
-            var tokenSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            void AddToken(string s)
-            {
-                if (string.IsNullOrWhiteSpace(s)) return;
-                // Remove all non-alphanumeric characters to create a single token
-                var cleaned = Regex.Replace(s, @"[^A-Za-z0-9]", "");
-                if (!string.IsNullOrWhiteSpace(cleaned) && cleaned.Length >= 3 && !cleaned.Equals("null", StringComparison.OrdinalIgnoreCase))
-                {
-                    tokenSet.Add(cleaned);
-                }
-            }
-            AddToken(dataAmbre.Reconciliation_Num);
-            AddToken(dataAmbre.ReconciliationOrigin_Num);
-            if (tokenSet.Count == 0) return null;
+            // STEP 1: Find GUARANTEE_ID
+            var guaranteeId = FindGuaranteeIdFromReferences(dataAmbre, dwInvoices);
+            if (string.IsNullOrWhiteSpace(guaranteeId)) return null;
 
-            // Prepare date and amount for ranking
-            var ambreDate = dataAmbre.Operation_Date ?? dataAmbre.Value_Date;
+            // Store the found GUARANTEE_ID
+            _lastResolvedGuaranteeId = guaranteeId;
+
+            // STEP 2: Find best invoice for this guarantee (with amount + date ranking)
+            var invoices = DwingsLinkingHelper.ResolveInvoicesByGuarantee(
+                dwInvoices,
+                guaranteeId,
+                dataAmbre.Operation_Date ?? dataAmbre.Value_Date,
+                dataAmbre.SignedAmount,
+                take: 5
+            );
+
+            if (invoices == null || invoices.Count == 0)
+            {
+                // Guarantee found but no invoice => return empty string (caller will use _lastResolvedGuaranteeId)
+                return string.Empty;
+            }
+
+            // Return best invoice
+            return invoices.FirstOrDefault()?.INVOICE_ID;
+        }
+
+        /// <summary>
+        /// STEP 1: Find GUARANTEE_ID via multiple matching strategies
+        /// Tries in order: SENDER_REFERENCE → OFFICIALREF → PARTY_REF
+        /// All use same alphanumeric cleaning logic for consistent matching
+        /// </summary>
+        private string FindGuaranteeIdFromReferences(DataAmbre dataAmbre, List<DwingsInvoiceDto> dwInvoices)
+        {
+            // Extract alphanumeric token from Reconciliation_Num
+            var token = ExtractAlphanumericToken(dataAmbre.Reconciliation_Num);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                // Fallback to ReconciliationOrigin_Num
+                token = ExtractAlphanumericToken(dataAmbre.ReconciliationOrigin_Num);
+            }
+            if (string.IsNullOrWhiteSpace(token)) return null;
+
             var ambreAmt = dataAmbre.SignedAmount;
 
-            // Match against invoice SENDER_REFERENCE
-            // CRITICAL: Only take invoices with BUSINESS_CASE_ID (link to guarantee)
-            // Without BUSINESS_CASE_ID, we can't link to guarantee => skip these invoices
-            // CRITICAL: Compare alphanumeric versions (same as tokenSet extraction)
-            // CRITICAL: Amount must match (avoid linking to wrong invoice)
-            var hits = dwInvoices.Where(i =>
+            // Strategy 1: Match via invoice SENDER_REFERENCE (must have BUSINESS_CASE_ID + amount match)
+            var guaranteeFromSender = FindGuaranteeViaSenderReference(token, ambreAmt, dwInvoices);
+            if (!string.IsNullOrWhiteSpace(guaranteeFromSender))
+                return guaranteeFromSender;
+
+            // Strategy 2: Match via guarantee OFFICIALREF or PARTY_REF
+            var guaranteeFromOfficial = FindGuaranteeViaOfficialRef(token);
+            if (!string.IsNullOrWhiteSpace(guaranteeFromOfficial))
+                return guaranteeFromOfficial;
+
+            return null;
+        }
+
+        /// <summary>
+        /// Extract single alphanumeric token from string (removes all non-alphanumeric chars)
+        /// Example: "ABC-123-456" => "ABC123456"
+        /// </summary>
+        private string ExtractAlphanumericToken(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            var cleaned = Regex.Replace(s, @"[^A-Za-z0-9]", "");
+            if (string.IsNullOrWhiteSpace(cleaned) || cleaned.Length < 3 || cleaned.Equals("null", StringComparison.OrdinalIgnoreCase))
+                return null;
+            return cleaned;
+        }
+
+        /// <summary>
+        /// Find GUARANTEE_ID via invoice SENDER_REFERENCE matching
+        /// Requirements: SENDER_REFERENCE matches token + BUSINESS_CASE_ID exists + amount matches
+        /// </summary>
+        private string FindGuaranteeViaSenderReference(string token, decimal ambreAmt, List<DwingsInvoiceDto> dwInvoices)
+        {
+            var tokenAlnum = Regex.Replace(token, @"[^A-Za-z0-9]", "");
+            
+            var match = dwInvoices.FirstOrDefault(i =>
             {
                 if (string.IsNullOrWhiteSpace(i?.SENDER_REFERENCE)) return false;
                 if (string.IsNullOrWhiteSpace(i?.BUSINESS_CASE_ID)) return false;
-                
-                // CRITICAL: Amount must match (tolerance 0.01)
+
+                // Amount must match (tolerance 0.01)
                 if (!DwingsLinkingHelper.AmountMatches(ambreAmt, i.BILLING_AMOUNT, tolerance: 0.01m))
                     return false;
-                
-                // Extract alphanumeric from SENDER_REFERENCE for comparison
+
+                // Alphanumeric comparison
                 var senderRefAlnum = Regex.Replace(i.SENDER_REFERENCE, @"[^A-Za-z0-9]", "");
-                return tokenSet.Any(token =>
-                {
-                    var tokenAlnum = Regex.Replace(token, @"[^A-Za-z0-9]", "");
-                    return !string.IsNullOrWhiteSpace(senderRefAlnum) 
-                        && senderRefAlnum.Equals(tokenAlnum, StringComparison.OrdinalIgnoreCase);
-                });
-            }).ToList();
+                return !string.IsNullOrWhiteSpace(senderRefAlnum) 
+                    && senderRefAlnum.Equals(tokenAlnum, StringComparison.OrdinalIgnoreCase);
+            });
 
-            // EXTENDED: Also match against guarantee OFFICIALREF and PARTY_REF
-            // Get guarantees linked to invoices via BUSINESS_CASE_REFERENCE/BUSINESS_CASE_ID
-            if (hits.Count == 0 && _dwingsGuarantees != null)
-            {
-                // Build alphanumeric versions of guarantee refs for matching
-                var guaranteeMatches = _dwingsGuarantees
-                    .Where(g => !string.IsNullOrWhiteSpace(g?.OFFICIALREF) || !string.IsNullOrWhiteSpace(g?.PARTY_REF))
-                    .Where(g =>
-                    {
-                        // Extract alphanumeric from OFFICIALREF and PARTY_REF
-                        var officialRefAlnum = string.IsNullOrWhiteSpace(g.OFFICIALREF) ? null : 
-                            Regex.Replace(g.OFFICIALREF, @"[^A-Za-z0-9]", "");
-                        var partyRefAlnum = string.IsNullOrWhiteSpace(g.PARTY_REF) ? null : 
-                            Regex.Replace(g.PARTY_REF, @"[^A-Za-z0-9]", "");
-                        
-                        // Check if any token matches (alphanumeric comparison)
-                        return tokenSet.Any(token =>
-                        {
-                            var tokenAlnum = Regex.Replace(token, @"[^A-Za-z0-9]", "");
-                            return (!string.IsNullOrWhiteSpace(officialRefAlnum) && 
-                                    officialRefAlnum.Equals(tokenAlnum, StringComparison.OrdinalIgnoreCase))
-                                || (!string.IsNullOrWhiteSpace(partyRefAlnum) && 
-                                    partyRefAlnum.Equals(tokenAlnum, StringComparison.OrdinalIgnoreCase));
-                        });
-                    })
-                    .ToList();
+            return match?.BUSINESS_CASE_ID;
+        }
 
-                if (guaranteeMatches.Count > 0)
+        /// <summary>
+        /// Find GUARANTEE_ID via guarantee OFFICIALREF or PARTY_REF matching
+        /// Handles duplicates (recreations) by taking latest GUARANTEE_ID (descending sort)
+        /// </summary>
+        private string FindGuaranteeViaOfficialRef(string token)
+        {
+            if (_dwingsGuarantees == null) return null;
+
+            var tokenAlnum = Regex.Replace(token, @"[^A-Za-z0-9]", "");
+
+            var guaranteeMatches = _dwingsGuarantees
+                .Where(g => !string.IsNullOrWhiteSpace(g?.OFFICIALREF) || !string.IsNullOrWhiteSpace(g?.PARTY_REF))
+                .Where(g =>
                 {
-                    // Found guarantee(s) via OFFICIALREF/PARTY_REF
-                    // CRITICAL: Handle duplicates (recreations) by taking LATEST GUARANTEE_ID (descending sort)
-                    // Guarantees with same OFFICIALREF but different GUARANTEE_ID = recreations
-                    // Always take the highest GUARANTEE_ID (most recent)
-                    var bestGuarantee = guaranteeMatches
-                        .OrderByDescending(g => g.GUARANTEE_ID, StringComparer.OrdinalIgnoreCase)
-                        .First();
-                    
-                    // CRITICAL: Store the resolved GUARANTEE_ID so caller can use it
-                    // This is used even if no invoice is found (Pivot with OfficialRef but no invoice)
-                    _lastResolvedGuaranteeId = bestGuarantee.GUARANTEE_ID;
-                    
-                    // Try to find the best matching invoice(s) linked to this guarantee
-                    // Use the same logic as ResolveInvoicesByGuarantee (date + amount ranking)
-                    var invoicesForGuarantee = DwingsLinkingHelper.ResolveInvoicesByGuarantee(
-                        dwInvoices,
-                        bestGuarantee.GUARANTEE_ID,
-                        ambreDate,
-                        ambreAmt,
-                        take: 5  // Take top 5 for this guarantee
-                    );
-                    
-                    hits = invoicesForGuarantee?.ToList() ?? new List<DwingsInvoiceDto>();
-                    
-                    // IMPORTANT: Even if no invoice found, we still have the GUARANTEE_ID
-                    // Return a placeholder to indicate we found something (will be null invoice but valid guarantee)
-                    if (hits.Count == 0)
+                    // Alphanumeric comparison for OFFICIALREF
+                    if (!string.IsNullOrWhiteSpace(g.OFFICIALREF))
                     {
-                        // Return empty string to signal "found guarantee but no invoice"
-                        // Caller will use _lastResolvedGuaranteeId
-                        return string.Empty;
+                        var officialRefAlnum = Regex.Replace(g.OFFICIALREF, @"[^A-Za-z0-9]", "");
+                        if (!string.IsNullOrWhiteSpace(officialRefAlnum) && 
+                            officialRefAlnum.Equals(tokenAlnum, StringComparison.OrdinalIgnoreCase))
+                            return true;
                     }
-                }
-            }
 
-            if (hits.Count == 0) return null;
+                    // Alphanumeric comparison for PARTY_REF
+                    if (!string.IsNullOrWhiteSpace(g.PARTY_REF))
+                    {
+                        var partyRefAlnum = Regex.Replace(g.PARTY_REF, @"[^A-Za-z0-9]", "");
+                        if (!string.IsNullOrWhiteSpace(partyRefAlnum) && 
+                            partyRefAlnum.Equals(tokenAlnum, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
 
-            // Rank by date then amount proximity (ambreDate and ambreAmt already declared above)
-            double DateScore(DwingsInvoiceDto i)
-            {
-                if (!ambreDate.HasValue) return double.MaxValue;
-                var best = i?.START_DATE ?? i?.END_DATE;
-                if (!best.HasValue) return double.MaxValue;
-                return Math.Abs((best.Value.Date - ambreDate.Value.Date).TotalDays);
-            }
+                    return false;
+                })
+                .ToList();
 
-            decimal AmountScore(DwingsInvoiceDto i)
-            {
-                if (!i.BILLING_AMOUNT.HasValue) return decimal.MaxValue;
-                return Math.Abs(ambreAmt - i.BILLING_AMOUNT.Value);
-            }
+            if (guaranteeMatches.Count == 0) return null;
 
-            var chosen = hits.OrderBy(DateScore).ThenBy(AmountScore).FirstOrDefault();
-            
-            // CRITICAL: Store GUARANTEE_ID from invoice's BUSINESS_CASE_ID
-            // This ensures SENDER_REFERENCE matches also get linked to guarantee
-            if (chosen != null && !string.IsNullOrWhiteSpace(chosen.BUSINESS_CASE_ID))
-            {
-                _lastResolvedGuaranteeId = chosen.BUSINESS_CASE_ID;
-            }
-            
-            return chosen?.INVOICE_ID;
+            // Handle duplicates (recreations): take LATEST GUARANTEE_ID (highest = most recent)
+            var bestGuarantee = guaranteeMatches
+                .OrderByDescending(g => g.GUARANTEE_ID, StringComparer.OrdinalIgnoreCase)
+                .First();
+
+            return bestGuarantee.GUARANTEE_ID;
         }
 
         private string GetGuaranteeIdFromInvoice(string invoiceId, List<DwingsInvoiceDto> dwInvoices)

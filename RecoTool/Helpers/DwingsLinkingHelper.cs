@@ -92,6 +92,21 @@ namespace RecoTool.Helpers
             var candidates = exact.Count > 0 ? exact : partial;
             
             if (candidates.Count == 0) return new List<DwingsInvoiceDto>();
+            
+            // CRITICAL: Filter by amount match (tolerance 0.01) to avoid linking to wrong invoice
+            if (ambreAmount.HasValue)
+            {
+                candidates = candidates.Where(i =>
+                {
+                    var absAmbre = Math.Abs(ambreAmount.Value);
+                    // Check REQUESTED_AMOUNT or BILLING_AMOUNT
+                    bool reqMatch = i?.REQUESTED_AMOUNT.HasValue == true && AmountMatches(absAmbre, Math.Abs(i.REQUESTED_AMOUNT.Value), tolerance: 0.01m);
+                    bool billMatch = i?.BILLING_AMOUNT.HasValue == true && AmountMatches(absAmbre, Math.Abs(i.BILLING_AMOUNT.Value), tolerance: 0.01m);
+                    return reqMatch || billMatch;
+                }).ToList();
+                
+                if (candidates.Count == 0) return new List<DwingsInvoiceDto>();
+            }
 
             Func<DwingsInvoiceDto, double> dateScore = (i) =>
             {

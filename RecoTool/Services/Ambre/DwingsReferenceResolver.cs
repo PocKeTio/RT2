@@ -63,12 +63,36 @@ namespace RecoTool.Services.AmbreImport
                 if (!string.IsNullOrWhiteSpace(bgiCandidate))
                 {
                     hit = DwingsLinkingHelper.ResolveInvoiceByBgi(dwInvoices, bgiCandidate);
+                    // CRITICAL: Verify amount matches (tolerance 0.01) to avoid linking to wrong invoice
+                    if (hit != null)
+                    {
+                        var ambreAmt = dataAmbre.SignedAmount;
+                        var absAmbre = Math.Abs(ambreAmt);
+                        bool reqMatch = hit.REQUESTED_AMOUNT.HasValue && DwingsLinkingHelper.AmountMatches(absAmbre, Math.Abs(hit.REQUESTED_AMOUNT.Value), tolerance: 0.01m);
+                        bool billMatch = hit.BILLING_AMOUNT.HasValue && DwingsLinkingHelper.AmountMatches(absAmbre, Math.Abs(hit.BILLING_AMOUNT.Value), tolerance: 0.01m);
+                        if (!reqMatch && !billMatch)
+                        {
+                            hit = null; // Amount mismatch, reject this invoice
+                        }
+                    }
                 }
 
                 // BGPMT path if not found yet
                 if (hit == null && !string.IsNullOrWhiteSpace(tokens.Bgpmt))
                 {
                     hit = DwingsLinkingHelper.ResolveInvoiceByBgpmt(dwInvoices, tokens.Bgpmt);
+                    // CRITICAL: Verify amount matches (tolerance 0.01) to avoid linking to wrong invoice
+                    if (hit != null)
+                    {
+                        var ambreAmt = dataAmbre.SignedAmount;
+                        var absAmbre = Math.Abs(ambreAmt);
+                        bool reqMatch = hit.REQUESTED_AMOUNT.HasValue && DwingsLinkingHelper.AmountMatches(absAmbre, Math.Abs(hit.REQUESTED_AMOUNT.Value), tolerance: 0.01m);
+                        bool billMatch = hit.BILLING_AMOUNT.HasValue && DwingsLinkingHelper.AmountMatches(absAmbre, Math.Abs(hit.BILLING_AMOUNT.Value), tolerance: 0.01m);
+                        if (!reqMatch && !billMatch)
+                        {
+                            hit = null; // Amount mismatch, reject this invoice
+                        }
+                    }
                 }
 
                 // OfficialRef path (CRITICAL: also resolves GUARANTEE_ID via _lastResolvedGuaranteeId)
@@ -253,10 +277,15 @@ namespace RecoTool.Services.AmbreImport
             // CRITICAL: Only take invoices with BUSINESS_CASE_ID (link to guarantee)
             // Without BUSINESS_CASE_ID, we can't link to guarantee => skip these invoices
             // CRITICAL: Compare alphanumeric versions (same as tokenSet extraction)
+            // CRITICAL: Amount must match (avoid linking to wrong invoice)
             var hits = dwInvoices.Where(i =>
             {
                 if (string.IsNullOrWhiteSpace(i?.SENDER_REFERENCE)) return false;
                 if (string.IsNullOrWhiteSpace(i?.BUSINESS_CASE_ID)) return false;
+                
+                // CRITICAL: Amount must match (tolerance 0.01)
+                if (!DwingsLinkingHelper.AmountMatches(ambreAmt, i.BILLING_AMOUNT, tolerance: 0.01m))
+                    return false;
                 
                 // Extract alphanumeric from SENDER_REFERENCE for comparison
                 var senderRefAlnum = Regex.Replace(i.SENDER_REFERENCE, @"[^A-Za-z0-9]", "");

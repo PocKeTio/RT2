@@ -1181,6 +1181,17 @@ namespace RecoTool.Windows
                 string where = null;
                 try { where = filterSvc.LoadUserFilterWhere(todo?.TDL_FilterName); } catch { }
                 
+                // Strip JSON comment if present (Access doesn't support SQL comments)
+                if (!string.IsNullOrWhiteSpace(where) && where.Contains("/*JSON:"))
+                {
+                    try
+                    {
+                        if (RecoTool.Domain.Filters.FilterSqlHelper.TryExtractPreset(where, out _, out var pureWhere))
+                            where = pureWhere;
+                    }
+                    catch { }
+                }
+                
                 // CRITICAL FIX: Use SanitizeWhereClause ONLY (same as direct filter selection)
                 // Do NOT use ExtractNormalizedPredicate which strips WHERE and causes double-processing
                 try { where = UserFilterService.SanitizeWhereClause(where); } catch { }

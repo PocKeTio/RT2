@@ -59,6 +59,17 @@ namespace RecoTool.Windows
                                 System.Diagnostics.Debug.WriteLine($"[TodoCard] {t.TDL_Name}: ERROR loading filter '{t.TDL_FilterName}': {ex.Message}");
                             }
                             
+                            // Strip JSON comment if present (Access doesn't support SQL comments)
+                            if (!string.IsNullOrWhiteSpace(where) && where.Contains("/*JSON:"))
+                            {
+                                try
+                                {
+                                    if (FilterSqlHelper.TryExtractPreset(where, out _, out var pureWhere))
+                                        where = pureWhere;
+                                }
+                                catch { }
+                            }
+                            
                             // CRITICAL FIX: Use SanitizeWhereClause ONLY (same as direct filter selection and ApplyTodoToNextViewAsync)
                             // Do NOT use ExtractNormalizedPredicate which strips WHERE and causes double-processing
                             try { where = UserFilterService.SanitizeWhereClause(where); } catch { }

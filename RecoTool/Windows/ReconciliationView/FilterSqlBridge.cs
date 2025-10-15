@@ -11,37 +11,86 @@ namespace RecoTool.Windows
     public partial class ReconciliationView
     {
         // ---- Generic saved filter snapshot support ----
+        // OPTIMIZATION: Only capture non-empty/non-default fields to keep saved filters minimal
         private FilterPreset GetCurrentFilterPreset()
         {
             var f = VM?.CurrentFilter ?? new RecoTool.Domain.Filters.FilterState();
-            return new FilterPreset
-            {
-                AccountId = f.AccountId,
-                Currency = f.Currency,
-                Country = _filterCountry, // informational only
-                MinAmount = f.MinAmount,
-                MaxAmount = f.MaxAmount,
-                FromDate = f.FromDate,
-                ToDate = f.ToDate,
-                Action = f.ActionId,
-                KPI = f.KpiId,
-                IncidentType = f.IncidentTypeId,
-                Status = f.Status,
-                ReconciliationNum = f.ReconciliationNum,
-                RawLabel = f.RawLabel,
-                EventNum = f.EventNum,
-                DwGuaranteeId = f.DwGuaranteeId,
-                DwCommissionId = f.DwCommissionId,
-                GuaranteeType = f.GuaranteeType,
-                Comments = f.Comments,
-                PotentialDuplicates = f.PotentialDuplicates,
-                Unmatched = f.Unmatched,
-                NewLines = f.NewLines,
-                // New
-                ActionDone = f.ActionDone,
-                ActionDateFrom = f.ActionDateFrom,
-                ActionDateTo = f.ActionDateTo
-            };
+            var preset = new FilterPreset();
+            
+            // Only set fields that have actual values (not null, not empty, not default)
+            if (!string.IsNullOrWhiteSpace(f.AccountId))
+                preset.AccountId = f.AccountId;
+            
+            if (!string.IsNullOrWhiteSpace(f.Currency))
+                preset.Currency = f.Currency;
+            
+            if (!string.IsNullOrWhiteSpace(_filterCountry))
+                preset.Country = _filterCountry;
+            
+            if (f.MinAmount.HasValue)
+                preset.MinAmount = f.MinAmount;
+            
+            if (f.MaxAmount.HasValue)
+                preset.MaxAmount = f.MaxAmount;
+            
+            if (f.FromDate.HasValue)
+                preset.FromDate = f.FromDate;
+            
+            if (f.ToDate.HasValue)
+                preset.ToDate = f.ToDate;
+            
+            if (f.ActionId.HasValue)
+                preset.Action = f.ActionId;
+            
+            if (f.KpiId.HasValue)
+                preset.KPI = f.KpiId;
+            
+            if (f.IncidentTypeId.HasValue)
+                preset.IncidentType = f.IncidentTypeId;
+            
+            if (!string.IsNullOrWhiteSpace(f.Status))
+                preset.Status = f.Status;
+            
+            if (!string.IsNullOrWhiteSpace(f.ReconciliationNum))
+                preset.ReconciliationNum = f.ReconciliationNum;
+            
+            if (!string.IsNullOrWhiteSpace(f.RawLabel))
+                preset.RawLabel = f.RawLabel;
+            
+            if (!string.IsNullOrWhiteSpace(f.EventNum))
+                preset.EventNum = f.EventNum;
+            
+            if (!string.IsNullOrWhiteSpace(f.DwGuaranteeId))
+                preset.DwGuaranteeId = f.DwGuaranteeId;
+            
+            if (!string.IsNullOrWhiteSpace(f.DwCommissionId))
+                preset.DwCommissionId = f.DwCommissionId;
+            
+            if (!string.IsNullOrWhiteSpace(f.GuaranteeType))
+                preset.GuaranteeType = f.GuaranteeType;
+            
+            if (!string.IsNullOrWhiteSpace(f.Comments))
+                preset.Comments = f.Comments;
+            
+            if (f.PotentialDuplicates.HasValue && f.PotentialDuplicates.Value)
+                preset.PotentialDuplicates = f.PotentialDuplicates;
+            
+            if (f.Unmatched.HasValue && f.Unmatched.Value)
+                preset.Unmatched = f.Unmatched;
+            
+            if (f.NewLines.HasValue && f.NewLines.Value)
+                preset.NewLines = f.NewLines;
+            
+            if (f.ActionDone.HasValue)
+                preset.ActionDone = f.ActionDone;
+            
+            if (f.ActionDateFrom.HasValue)
+                preset.ActionDateFrom = f.ActionDateFrom;
+            
+            if (f.ActionDateTo.HasValue)
+                preset.ActionDateTo = f.ActionDateTo;
+            
+            return preset;
         }
 
         private void ApplyFilterPreset(FilterPreset p)

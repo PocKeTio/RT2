@@ -58,8 +58,11 @@ namespace RecoTool.Windows
                             { 
                                 System.Diagnostics.Debug.WriteLine($"[TodoCard] {t.TDL_Name}: ERROR loading filter '{t.TDL_FilterName}': {ex.Message}");
                             }
-                            // Strip Account/Status parts like in ApplyTodoToNextViewAsync
+                            
+                            // CRITICAL FIX: Use SanitizeWhereClause ONLY (same as direct filter selection and ApplyTodoToNextViewAsync)
+                            // Do NOT use ExtractNormalizedPredicate which strips WHERE and causes double-processing
                             try { where = UserFilterService.SanitizeWhereClause(where); } catch { }
+                            System.Diagnostics.Debug.WriteLine($"[TodoCard] {t.TDL_Name}: SanitizedWhere='{where}'");
 
                             // Map a single account token exactly like ApplyTodoToNextViewAsync
                             string accId = null;
@@ -90,26 +93,51 @@ namespace RecoTool.Windows
                                 accSql = $"a.Account_ID = '{esc}'";
                             }
 
-                            var pred = FilterSqlHelper.ExtractNormalizedPredicate(where);
-                            System.Diagnostics.Debug.WriteLine($"[TodoCard] {t.TDL_Name}: ExtractedPredicate='{pred}'");
+                            // Build base filter using sanitized WHERE directly
+                            string baseCombined = where;
                             
-                            // Build base filter (same as ApplyTodoToNextViewAsync - no ActionStatus filter)
-                            var baseParts = new List<string>();
-                            baseParts.Add("a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)");
-                            if (!string.IsNullOrWhiteSpace(accSql)) baseParts.Add(accSql);
-                            if (!string.IsNullOrWhiteSpace(pred)) baseParts.Add($"({pred})");
-                            string baseCombined = baseParts.Count > 0 ? ("WHERE " + string.Join(" AND ", baseParts)) : null;
+                            // If we have an account filter, we need to add it to the WHERE clause
+                            if (!string.IsNullOrWhiteSpace(accSql))
+                            {
+                                if (string.IsNullOrWhiteSpace(baseCombined))
+                                {
+                                    baseCombined = $"WHERE {accSql}";
+                                }
+                                else if (baseCombined.StartsWith("WHERE ", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    baseCombined = baseCombined + $" AND {accSql}";
+                                }
+                                else
+                                {
+                                    baseCombined = $"WHERE {baseCombined} AND {accSql}";
+                                }
+                            }
+                            else if (!string.IsNullOrWhiteSpace(baseCombined) && !baseCombined.StartsWith("WHERE ", StringComparison.OrdinalIgnoreCase))
+                            {
+                                baseCombined = "WHERE " + baseCombined;
+                            }
+                            
                             System.Diagnostics.Debug.WriteLine($"[TodoCard] {t.TDL_Name}: FinalFilter='{baseCombined}'");
                             
                             // Get total count (all items matching filter, regardless of ActionStatus)
                             int totalCount = await _reconciliationService.GetReconciliationCountAsync(cid, baseCombined).ConfigureAwait(false);
                             
-                            // Build To Review filter (add ActionStatus = Pending)
-                            var toReviewParts = new List<string>(baseParts);
-                            toReviewParts.Add("(r.Action IS NOT NULL AND (r.ActionStatus = 0 OR r.ActionStatus IS NULL))");
-                            string toReviewCombined = toReviewParts.Count > 0 ? ("WHERE " + string.Join(" AND ", toReviewParts)) : null;
+                            // Build To Review filter (add ActionStatus = Pending to base filter)
+                            string toReviewCombined = baseCombined;
+                            if (!string.IsNullOrWhiteSpace(toReviewCombined))
+                            {
+                                if (toReviewCombined.StartsWith("WHERE ", StringComparison.OrdinalIgnoreCase))
+                                    toReviewCombined += " AND (r.Action IS NOT NULL AND (r.ActionStatus = 0 OR r.ActionStatus IS NULL))";
+                                else
+                                    toReviewCombined = "WHERE " + toReviewCombined + " AND (r.Action IS NOT NULL AND (r.ActionStatus = 0 OR r.ActionStatus IS NULL))";
+                            }
+                            else
+                            {
+                                toReviewCombined = "WHERE (r.Action IS NOT NULL AND (r.ActionStatus = 0 OR r.ActionStatus IS NULL))";
+                            }
                             
                             int count = await _reconciliationService.GetReconciliationCountAsync(cid, toReviewCombined).ConfigureAwait(false);
+                            
                             // Currency sums for display (use base filter to show all amounts)
                             var sums = await _reconciliationService.GetCurrencySumsAsync(cid, baseCombined).ConfigureAwait(false);
                             string amountsText = string.Empty;
@@ -125,9 +153,18 @@ namespace RecoTool.Windows
                             }
 
                             // Compute reviewed count (ActionStatus = Done)
-                            var reviewedParts = new List<string>(baseParts);
-                            reviewedParts.Add("(r.ActionStatus = -1)"); // True in Access
-                            string reviewedCombined = reviewedParts.Count > 0 ? ("WHERE " + string.Join(" AND ", reviewedParts)) : null;
+                            string reviewedCombined = baseCombined;
+                            if (!string.IsNullOrWhiteSpace(reviewedCombined))
+                            {
+                                if (reviewedCombined.StartsWith("WHERE ", StringComparison.OrdinalIgnoreCase))
+                                    reviewedCombined += " AND (r.ActionStatus = -1)";
+                                else
+                                    reviewedCombined = "WHERE " + reviewedCombined + " AND (r.ActionStatus = -1)";
+                            }
+                            else
+                            {
+                                reviewedCombined = "WHERE (r.ActionStatus = -1)";
+                            }
                             int reviewedCount = await _reconciliationService.GetReconciliationCountAsync(cid, reviewedCombined).ConfigureAwait(false);
 
                             // Percent based on total items in this filter

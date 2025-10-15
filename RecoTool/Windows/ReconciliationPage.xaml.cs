@@ -1180,6 +1180,9 @@ namespace RecoTool.Windows
                 var filterSvc = new UserFilterService(refCs, curUser);
                 string where = null;
                 try { where = filterSvc.LoadUserFilterWhere(todo?.TDL_FilterName); } catch { }
+                
+                // CRITICAL FIX: Use SanitizeWhereClause ONLY (same as direct filter selection)
+                // Do NOT use ExtractNormalizedPredicate which strips WHERE and causes double-processing
                 try { where = UserFilterService.SanitizeWhereClause(where); } catch { }
 
                 var country = _offlineFirstService?.CurrentCountry;
@@ -1192,19 +1195,8 @@ namespace RecoTool.Windows
                     else accId = token;
                 }
 
-                var parts = new List<string>();
-                parts.Add("a.DeleteDate IS NULL AND (r.DeleteDate IS NULL)");
-                // CRITICAL: Do NOT filter Account_ID in backend SQL - we need BOTH Pivot and Receivable
-                // to calculate MissingAmount correctly. The UI filter will handle display filtering.
-                // if (!string.IsNullOrWhiteSpace(accId))
-                // {
-                //     var safe = accId?.Replace("'", "''");
-                //     parts.Add($"a.Account_ID = '{safe}'");
-                // }
-                var pred = RecoTool.Domain.Filters.FilterSqlHelper.ExtractNormalizedPredicate(where);
-                if (!string.IsNullOrWhiteSpace(pred)) parts.Add($"({pred})");
-
-                _currentFilter = "WHERE " + string.Join(" AND ", parts);
+                // Store sanitized filter directly (same as SavedFiltersComboBox_SelectionChanged)
+                _currentFilter = where;
                 _currentFilterName = todo?.TDL_Name;
                 OnPropertyChanged(nameof(AddViewModeIndicator));
 

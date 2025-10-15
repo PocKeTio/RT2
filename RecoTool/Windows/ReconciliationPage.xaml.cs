@@ -1192,9 +1192,8 @@ namespace RecoTool.Windows
                     catch { }
                 }
                 
-                // CRITICAL FIX: Use SanitizeWhereClause ONLY (same as direct filter selection)
-                // Do NOT use ExtractNormalizedPredicate which strips WHERE and causes double-processing
-                try { where = UserFilterService.SanitizeWhereClause(where); } catch { }
+                // DO NOT sanitize - the WHERE clause is already clean from the saved filter
+                // SanitizeWhereClause would remove Status (DeleteDate) and other valid conditions
 
                 var country = _offlineFirstService?.CurrentCountry;
                 string accId = null;

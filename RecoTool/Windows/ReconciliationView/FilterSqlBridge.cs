@@ -12,20 +12,17 @@ namespace RecoTool.Windows
     {
         // ---- Generic saved filter snapshot support ----
         // OPTIMIZATION: Only capture non-empty/non-default fields to keep saved filters minimal
+        // IMPORTANT: Never save AccountId or Country - these are managed by page/todolist context
         private FilterPreset GetCurrentFilterPreset()
         {
             var f = VM?.CurrentFilter ?? new RecoTool.Domain.Filters.FilterState();
             var preset = new FilterPreset();
             
             // Only set fields that have actual values (not null, not empty, not default)
-            if (!string.IsNullOrWhiteSpace(f.AccountId))
-                preset.AccountId = f.AccountId;
+            // NEVER save AccountId or Country - managed externally
             
             if (!string.IsNullOrWhiteSpace(f.Currency))
                 preset.Currency = f.Currency;
-            
-            if (!string.IsNullOrWhiteSpace(_filterCountry))
-                preset.Country = _filterCountry;
             
             if (f.MinAmount.HasValue)
                 preset.MinAmount = f.MinAmount;
@@ -162,12 +159,17 @@ namespace RecoTool.Windows
         }
 
         // Build an Access SQL WHERE clause from current bound filters
+        // IMPORTANT: Never include AccountId - it's managed by page/todolist context
         private string GenerateWhereClause()
         {
             var f = VM?.CurrentFilter ?? new RecoTool.Domain.Filters.FilterState();
+            
+            // DEBUG: Log filter state before building WHERE
+            System.Diagnostics.Debug.WriteLine($"[GenerateWhereClause] ActionId={f.ActionId}, KpiId={f.KpiId}, Status={f.Status}");
+            
             var state = new RecoTool.Domain.Filters.FilterState
             {
-                AccountId = f.AccountId,
+                // AccountId excluded - managed by page/todolist
                 Currency = f.Currency,
                 MinAmount = f.MinAmount,
                 MaxAmount = f.MaxAmount,
@@ -185,11 +187,16 @@ namespace RecoTool.Windows
                 DwGuaranteeId = f.DwGuaranteeId,
                 DwCommissionId = f.DwCommissionId,
                 Status = f.Status,
+                ActionId = f.ActionId,
+                KpiId = f.KpiId,
+                IncidentTypeId = f.IncidentTypeId,
                 ActionDone = f.ActionDone,
                 ActionDateFrom = f.ActionDateFrom,
                 ActionDateTo = f.ActionDateTo,
             };
-            return RecoTool.Domain.Filters.FilterBuilder.BuildWhere(state);
+            var result = RecoTool.Domain.Filters.FilterBuilder.BuildWhere(state);
+            System.Diagnostics.Debug.WriteLine($"[GenerateWhereClause] Generated SQL: {result}");
+            return result;
         }
 
         // Parse the WHERE clause we generate and set bound properties accordingly

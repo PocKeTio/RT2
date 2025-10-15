@@ -48,9 +48,9 @@ namespace RecoTool.Services
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Filter name is required", nameof(name));
             if (string.IsNullOrWhiteSpace(whereClause)) whereClause = string.Empty;
 
-            // Sanitize: Filters should NOT persist Account or Status (Live/Archived) conditions.
-            // Remove JSON header comments, Account predicate (Account_ID = '...'), and status (DeleteDate IS [NOT] NULL).
-            whereClause = SanitizeWhereClause(whereClause);
+            // DO NOT sanitize during save - the WHERE clause is already clean from GenerateWhereClause
+            // which excludes AccountId. SanitizeWhereClause is only for loading legacy filters.
+            // whereClause = SanitizeWhereClause(whereClause);
 
             using (var conn = new OleDbConnection(_connString))
             {

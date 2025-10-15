@@ -70,10 +70,9 @@ namespace RecoTool.Windows
                                 catch { }
                             }
                             
-                            // CRITICAL FIX: Use SanitizeWhereClause ONLY (same as direct filter selection and ApplyTodoToNextViewAsync)
-                            // Do NOT use ExtractNormalizedPredicate which strips WHERE and causes double-processing
-                            try { where = UserFilterService.SanitizeWhereClause(where); } catch { }
-                            System.Diagnostics.Debug.WriteLine($"[TodoCard] {t.TDL_Name}: SanitizedWhere='{where}'");
+                            // DO NOT sanitize - the WHERE clause is already clean from the saved filter
+                            // SanitizeWhereClause would remove Status (DeleteDate) and other valid conditions
+                            System.Diagnostics.Debug.WriteLine($"[TodoCard] {t.TDL_Name}: CleanWhere='{where}'");
 
                             // Map a single account token exactly like ApplyTodoToNextViewAsync
                             string accId = null;

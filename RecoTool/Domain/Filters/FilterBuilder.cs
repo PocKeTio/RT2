@@ -83,6 +83,18 @@ namespace RecoTool.Domain.Filters
                     parts.Add("a.DeleteDate IS NOT NULL");
             }
 
+            // Action filter (by Action ID)
+            if (f.ActionId.HasValue)
+                parts.Add($"r.Action = {f.ActionId.Value}");
+
+            // KPI filter (by KPI ID)
+            if (f.KpiId.HasValue)
+                parts.Add($"r.KPI = {f.KpiId.Value}");
+
+            // Incident Type filter
+            if (f.IncidentTypeId.HasValue)
+                parts.Add($"r.IncidentType = {f.IncidentTypeId.Value}");
+
             if (f.ActionDone.HasValue)
                 parts.Add(f.ActionDone.Value ? "r.ActionStatus = TRUE" : "(r.ActionStatus = FALSE OR r.ActionStatus IS NULL)");
 

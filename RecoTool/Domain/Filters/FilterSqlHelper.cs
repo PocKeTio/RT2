@@ -55,12 +55,18 @@ namespace RecoTool.Domain.Filters
 
         /// <summary>
         /// Builds a SQL string that embeds a JSON snapshot in a comment prefix.
+        /// Only non-null values are serialized to keep the JSON minimal.
         /// </summary>
         public static string BuildSqlWithJson(object preset, string whereClause)
         {
             try
             {
-                var json = JsonSerializer.Serialize(preset, new JsonSerializerOptions { WriteIndented = false });
+                var options = new JsonSerializerOptions 
+                { 
+                    WriteIndented = false,
+                    DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+                };
+                var json = JsonSerializer.Serialize(preset, options);
                 return $"/*JSON:{json}*/ " + (whereClause ?? string.Empty);
             }
             catch

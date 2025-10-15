@@ -228,21 +228,21 @@ namespace RecoTool.Services.AmbreImport
             if (dwInvoices == null || dwInvoices.Count == 0 || dataAmbre == null) return null;
 
             // Build alphanumeric token set from Reconciliation_Num and fallback ReconciliationOrigin_Num
-            // Remove punctuation, spaces, etc. - keep only alphanumeric
+            // CRITICAL: Keep as single alphanumeric string (don't split into multiple tokens)
+            // Example: "ABC-123-456" => "ABC123456" (not ["ABC", "123", "456"])
             var tokenSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            void AddTokens(string s)
+            void AddToken(string s)
             {
                 if (string.IsNullOrWhiteSpace(s)) return;
-                // Extract alphanumeric sequences (ignore "null", empty, or very short tokens)
-                foreach (var t in Regex.Split(s, @"[^A-Za-z0-9]+")
-                    .Where(p => !string.IsNullOrWhiteSpace(p) && p.Length >= 3 && !p.Equals("null", StringComparison.OrdinalIgnoreCase))
-                    .Select(p => p.Trim()))
+                // Remove all non-alphanumeric characters to create a single token
+                var cleaned = Regex.Replace(s, @"[^A-Za-z0-9]", "");
+                if (!string.IsNullOrWhiteSpace(cleaned) && cleaned.Length >= 3 && !cleaned.Equals("null", StringComparison.OrdinalIgnoreCase))
                 {
-                    tokenSet.Add(t);
+                    tokenSet.Add(cleaned);
                 }
             }
-            AddTokens(dataAmbre.Reconciliation_Num);
-            AddTokens(dataAmbre.ReconciliationOrigin_Num);
+            AddToken(dataAmbre.Reconciliation_Num);
+            AddToken(dataAmbre.ReconciliationOrigin_Num);
             if (tokenSet.Count == 0) return null;
 
             // Prepare date and amount for ranking

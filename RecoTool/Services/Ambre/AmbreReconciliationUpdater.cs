@@ -164,14 +164,22 @@ namespace RecoTool.Services.AmbreImport
             // HARD-CODED RULE: For PIVOT lines with DIRECT_DEBIT payment method, set Category to COLLECTION
             ApplyDirectDebitCollectionRule(staged, dwInvoices);
 
+            // IMPORTANT: Save reconciliations to DB FIRST before applying MANUAL_OUTGOING rule
+            // This allows the rule to see ALL lines (new + existing) in the database
+            await SaveReconciliationsToDatabaseAsync(staged.Select(s => s.Reconciliation).ToList(), countryId);
+
             // Apply special MANUAL_OUTGOING pairing rule FIRST (before truth-table rules)
             // This prevents truth-table from overwriting guarantee-based matches
+            // Now works on ALL lines (new + existing) from database
             try
             {
                 var manualOutgoingMatches = await _reconciliationService.ApplyManualOutgoingRuleAsync(countryId).ConfigureAwait(false);
                 if (manualOutgoingMatches > 0)
                 {
-                    LogManager.Info($"MANUAL_OUTGOING rule: matched {manualOutgoingMatches} pair(s) - these will be excluded from truth-table rules");
+                    LogManager.Info($"MANUAL_OUTGOING rule: matched {manualOutgoingMatches} pair(s) on ALL lines - these will be excluded from truth-table rules");
+                    
+                    // Reload reconciliations that were updated by MANUAL_OUTGOING rule
+                    await ReloadReconciliationsFromDatabase(staged, countryId);
                 }
             }
             catch (Exception ex)
@@ -1324,6 +1332,91 @@ namespace RecoTool.Services.AmbreImport
                 rec.LastModified.HasValue ? (object)rec.LastModified.Value : DBNull.Value;
 
             return cmd;
+        }
+
+        /// <summary>
+        /// Save reconciliations to database (for new lines before applying MANUAL_OUTGOING rule)
+        /// </summary>
+        private async Task SaveReconciliationsToDatabaseAsync(List<Reconciliation> reconciliations, string countryId)
+        {
+            var connectionString = _offlineFirstService.GetCountryConnectionString(countryId);
+            using (var conn = new OleDbConnection(connectionString))
+            {
+                await conn.OpenAsync();
+                using (var tx = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        foreach (var rec in reconciliations)
+                        {
+                            // Check if exists
+                            using (var checkCmd = new OleDbCommand("SELECT COUNT(*) FROM [T_Reconciliation] WHERE [ID]=?", conn, tx))
+                            {
+                                checkCmd.Parameters.AddWithValue("@ID", rec.ID);
+                                var count = (int)await checkCmd.ExecuteScalarAsync();
+                                
+                                if (count == 0)
+                                {
+                                    // Insert
+                                    using (var cmd = CreateInsertCommand(conn, tx, rec))
+                                    {
+                                        await cmd.ExecuteNonQueryAsync();
+                                    }
+                                }
+                                // If exists, don't update (will be updated later by truth-table rules)
+                            }
+                        }
+                        tx.Commit();
+                    }
+                    catch
+                    {
+                        tx.Rollback();
+                        throw;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Reload reconciliations from database after MANUAL_OUTGOING rule updated them
+        /// </summary>
+        private async Task ReloadReconciliationsFromDatabase(List<ReconciliationStaging> staged, string countryId)
+        {
+            var connectionString = _offlineFirstService.GetCountryConnectionString(countryId);
+            using (var conn = new OleDbConnection(connectionString))
+            {
+                await conn.OpenAsync();
+                var ids = staged.Select(s => s.Reconciliation.ID).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                const int batchSize = 500;
+                
+                for (int i = 0; i < ids.Count; i += batchSize)
+                {
+                    var batch = ids.Skip(i).Take(batchSize).ToList();
+                    var inClause = string.Join(",", batch.Select((_, idx) => "?"));
+                    
+                    using (var cmd = new OleDbCommand($"SELECT * FROM [T_Reconciliation] WHERE [ID] IN ({inClause})", conn))
+                    {
+                        foreach (var id in batch)
+                            cmd.Parameters.AddWithValue("@ID", id);
+                        
+                        using (var reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var rec = MapReconciliationFromReader(reader);
+                                if (rec != null && !string.IsNullOrWhiteSpace(rec.ID))
+                                {
+                                    var stagedItem = staged.FirstOrDefault(s => string.Equals(s.Reconciliation.ID, rec.ID, StringComparison.OrdinalIgnoreCase));
+                                    if (stagedItem != null)
+                                    {
+                                        stagedItem.Reconciliation = rec;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         private class ReconciliationStaging

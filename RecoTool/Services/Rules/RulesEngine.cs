@@ -1010,12 +1010,16 @@ namespace RecoTool.Services.Rules
                     return true;
                     
                 case MtStatusCondition.Acked:
+                    // Consider both "ACKED" and "SENT" as acknowledged
                     return !string.IsNullOrWhiteSpace(actualMtStatus) && 
-                           string.Equals(actualMtStatus, "ACKED", StringComparison.OrdinalIgnoreCase);
+                           (string.Equals(actualMtStatus, "ACKED", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(actualMtStatus, "SENT", StringComparison.OrdinalIgnoreCase));
                     
                 case MtStatusCondition.NotAcked:
+                    // Not acked means present but not "ACKED" and not "SENT"
                     return !string.IsNullOrWhiteSpace(actualMtStatus) && 
-                           !string.Equals(actualMtStatus, "ACKED", StringComparison.OrdinalIgnoreCase);
+                           !string.Equals(actualMtStatus, "ACKED", StringComparison.OrdinalIgnoreCase) &&
+                           !string.Equals(actualMtStatus, "SENT", StringComparison.OrdinalIgnoreCase);
                     
                 case MtStatusCondition.Null:
                     return string.IsNullOrWhiteSpace(actualMtStatus);

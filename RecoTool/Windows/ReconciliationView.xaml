@@ -1246,7 +1246,7 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="MT Error message" Binding="{Binding I_ERROR_MESSAGE}" Width="220" IsReadOnly="True" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
-                            <DataGridTextColumn Header="Original Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="130" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
+                            <DataGridTextColumn Header="Amount in original CCY" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="150" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
                             <DataGridTextColumn Header="Operation Date" Binding="{Binding Operation_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
                             <DataGridTextColumn Header="Reconciliation Num" Binding="{Binding Reconciliation_Num}" Width="130" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
                             <DataGridTextColumn Header="Reconciliation Origin Num" Binding="{Binding ReconciliationOrigin_Num}" Width="150" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>

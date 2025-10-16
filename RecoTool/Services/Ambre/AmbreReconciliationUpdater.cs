@@ -161,6 +161,9 @@ namespace RecoTool.Services.AmbreImport
             kpiTimer.Stop();
             LogManager.Info($"[PERF] KPI calculation completed for {staged.Count} records in {kpiTimer.ElapsedMilliseconds}ms");
 
+            // HARD-CODED RULE: For PIVOT lines with DIRECT_DEBIT payment method, set Category to COLLECTION
+            ApplyDirectDebitCollectionRule(staged, dwInvoices);
+
             // Apply truth-table rules (import scope) - pass dwInvoices and dwGuarantees to avoid reloading
             await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
 
@@ -207,11 +210,55 @@ namespace RecoTool.Services.AmbreImport
             reconciliation.DWINGS_BGPMT = dwingsRefs.CommissionId;
             reconciliation.DWINGS_GuaranteeID = dwingsRefs.GuaranteeId;
 
+            // For PIVOT: Auto-fill PaymentReference for bulk trigger
+            if (isPivot)
+            {
+                reconciliation.PaymentReference = CalculatePaymentReferenceForPivot(
+                    dataAmbre, dwingsRefs.GuaranteeId, dwingsRefs.InvoiceId, dwGuarantees);
+            }
+
             // KPI and Action are set by truth-table rules only
 
             return reconciliation;
         }
 
+        /// <summary>
+        /// Calculates Payment Reference for PIVOT lines based on priority:
+        /// 1. Reconciliation_Num (if not empty)
+        /// 2. If guarantee type is REISSUANCE => Guarantee ID
+        /// 3. Else => BGI (Invoice ID)
+        /// 4. If none => blank (user will set manually)
+        /// </summary>
+        private string CalculatePaymentReferenceForPivot(
+            DataAmbre dataAmbre, 
+            string guaranteeId, 
+            string invoiceId,
+            IReadOnlyList<DwingsGuaranteeDto> dwGuarantees)
+        {
+            // Priority 1: Reconciliation_Num
+            if (!string.IsNullOrWhiteSpace(dataAmbre.Reconciliation_Num))
+                return dataAmbre.Reconciliation_Num.Trim();
+
+            // Priority 2: If guarantee type is REISSUANCE => use Guarantee ID
+            if (!string.IsNullOrWhiteSpace(guaranteeId) && dwGuarantees != null)
+            {
+                var guarantee = dwGuarantees.FirstOrDefault(g => 
+                    string.Equals(g?.GUARANTEE_ID, guaranteeId, StringComparison.OrdinalIgnoreCase));
+                
+                if (guarantee != null && 
+                    string.Equals(guarantee.GUARANTEE_TYPE, "REISSUANCE", StringComparison.OrdinalIgnoreCase))
+                {
+                    return guaranteeId.Trim();
+                }
+            }
+
+            // Priority 3: BGI (Invoice ID)
+            if (!string.IsNullOrWhiteSpace(invoiceId))
+                return invoiceId.Trim();
+
+            // Priority 4: Blank (user will set manually)
+            return null;
+        }
 
         private RuleContext BuildRuleContext(DataAmbre dataAmbre, Reconciliation reconciliation, Country country, string countryId, bool isPivot, IReadOnlyList<DwingsInvoiceDto> dwInvoices, IReadOnlyList<DwingsGuaranteeDto> dwGuarantees, bool isGrouped, decimal? missingAmount)
         {
@@ -346,6 +393,44 @@ namespace RecoTool.Services.AmbreImport
                 HasCommIdEmail = hasCommEmail,
                 IsBgiInitiated = bgiInitiated
             };
+        }
+
+        /// <summary>
+        /// HARD-CODED RULE: For PIVOT lines with DIRECT_DEBIT payment method, set Category to COLLECTION
+        /// This must run BEFORE truth-table rules
+        /// </summary>
+        private void ApplyDirectDebitCollectionRule(List<ReconciliationStaging> staged, IReadOnlyList<DwingsInvoiceDto> dwInvoices)
+        {
+            if (staged == null || dwInvoices == null) return;
+
+            int appliedCount = 0;
+            foreach (var s in staged)
+            {
+                // Only for PIVOT lines
+                if (!s.IsPivot) continue;
+
+                // Check if line has BGI or BGPMT
+                var bgi = s.Reconciliation?.DWINGS_InvoiceID;
+                var bgpmt = s.Reconciliation?.DWINGS_BGPMT;
+                
+                if (string.IsNullOrWhiteSpace(bgi) && string.IsNullOrWhiteSpace(bgpmt))
+                    continue;
+
+                // Find invoice and check payment method
+                var invoice = dwInvoices.FirstOrDefault(i => 
+                    (!string.IsNullOrWhiteSpace(bgi) && string.Equals(i?.INVOICE_ID, bgi, StringComparison.OrdinalIgnoreCase)) ||
+                    (!string.IsNullOrWhiteSpace(bgpmt) && string.Equals(i?.BGPMT, bgpmt, StringComparison.OrdinalIgnoreCase)));
+
+                if (invoice != null && string.Equals(invoice.PAYMENT_METHOD, "DIRECT_DEBIT", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Set Category to COLLECTION (enum value = 0)
+                    s.DataAmbre.Category = (int)TransactionType.COLLECTION;
+                    appliedCount++;
+                }
+            }
+
+            if (appliedCount > 0)
+                LogManager.Info($"[HARD-CODED RULE] DIRECT_DEBIT → COLLECTION: Applied to {appliedCount} PIVOT line(s)");
         }
 
         private async Task ApplyTruthTableRulesAsync(List<ReconciliationStaging> staged, Country country, string countryId, IReadOnlyList<DwingsInvoiceDto> dwInvoices, IReadOnlyList<DwingsGuaranteeDto> dwGuarantees)

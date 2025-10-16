@@ -181,7 +181,8 @@ namespace RecoTool.Services.AmbreImport
 
             // Apply truth-table rules (import scope) - pass dwInvoices and dwGuarantees to avoid reloading
             // Lines already processed by MANUAL_OUTGOING will be skipped
-            await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
+            // isNewLines=true enables FALLBACK rule for lines without matches
+            await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees, isNewLines: true);
 
             return staged.Select(s => s.Reconciliation).ToList();
         }
@@ -435,7 +436,7 @@ namespace RecoTool.Services.AmbreImport
                 LogManager.Info($"[HARD-CODED RULE] DIRECT_DEBIT → COLLECTION: Applied to {appliedCount} PIVOT line(s)");
         }
 
-        private async Task ApplyTruthTableRulesAsync(List<ReconciliationStaging> staged, Country country, string countryId, IReadOnlyList<DwingsInvoiceDto> dwInvoices, IReadOnlyList<DwingsGuaranteeDto> dwGuarantees)
+        private async Task ApplyTruthTableRulesAsync(List<ReconciliationStaging> staged, Country country, string countryId, IReadOnlyList<DwingsInvoiceDto> dwInvoices, IReadOnlyList<DwingsGuaranteeDto> dwGuarantees, bool isNewLines = true)
         {
             try
             {
@@ -609,55 +610,58 @@ namespace RecoTool.Services.AmbreImport
                 }
 
                 // FINAL FALLBACK RULE: If no rule matched (res == null or res.Rule == null), set to INVESTIGATE
-                // This ensures all new lines have at least a default action
-                var investigateActionId = 7; // Action ID for "INVESTIGATE"
-                int fallbackCount = 0;
-                
-                foreach (var result in evaluationResults)
+                // ONLY for NEW lines (not for existing lines being re-processed)
+                if (isNewLines)
                 {
-                    var s = result.Staging;
-                    var res = result.Result;
+                    var investigateActionId = 7; // Action ID for "INVESTIGATE"
+                    int fallbackCount = 0;
                     
-                    // Skip if already processed by MANUAL_OUTGOING or truth-table
-                    if (s.Reconciliation.Action.HasValue)
-                        continue;
-                    
-                    // No rule matched - apply fallback
-                    if (res == null || res.Rule == null)
+                    foreach (var result in evaluationResults)
                     {
-                        s.Reconciliation.Action = investigateActionId;
+                        var s = result.Staging;
+                        var res = result.Result;
                         
-                        // Add comment
-                        try
+                        // Skip if already processed by MANUAL_OUTGOING or truth-table
+                        if (s.Reconciliation.Action.HasValue)
+                            continue;
+                        
+                        // No rule matched - apply fallback
+                        if (res == null || res.Rule == null)
                         {
-                            var prefix = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {_currentUser}: ";
-                            var msg = prefix + "New line set to INVESTIGATE - no matching rule found";
-                            if (string.IsNullOrWhiteSpace(s.Reconciliation.Comments))
+                            s.Reconciliation.Action = investigateActionId;
+                            
+                            // Add comment
+                            try
                             {
-                                s.Reconciliation.Comments = msg;
+                                var prefix = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {_currentUser}: ";
+                                var msg = prefix + "New line set to INVESTIGATE - no matching rule found";
+                                if (string.IsNullOrWhiteSpace(s.Reconciliation.Comments))
+                                {
+                                    s.Reconciliation.Comments = msg;
+                                }
+                                else if (!s.Reconciliation.Comments.Contains("no matching rule found"))
+                                {
+                                    s.Reconciliation.Comments = msg + Environment.NewLine + s.Reconciliation.Comments;
+                                }
                             }
-                            else if (!s.Reconciliation.Comments.Contains("no matching rule found"))
+                            catch { }
+                            
+                            fallbackCount++;
+                            
+                            // Log fallback application
+                            try
                             {
-                                s.Reconciliation.Comments = msg + Environment.NewLine + s.Reconciliation.Comments;
+                                LogHelper.WriteRuleApplied("import", countryId, s.Reconciliation?.ID, "FALLBACK_INVESTIGATE", 
+                                    $"Action={investigateActionId}", "No matching rule - default to INVESTIGATE");
                             }
+                            catch { }
                         }
-                        catch { }
-                        
-                        fallbackCount++;
-                        
-                        // Log fallback application
-                        try
-                        {
-                            LogHelper.WriteRuleApplied("import", countryId, s.Reconciliation?.ID, "FALLBACK_INVESTIGATE", 
-                                $"Action={investigateActionId}", "No matching rule - default to INVESTIGATE");
-                        }
-                        catch { }
                     }
-                }
-                
-                if (fallbackCount > 0)
-                {
-                    LogManager.Info($"[FALLBACK RULE] Set {fallbackCount} line(s) to INVESTIGATE (no matching rules)");
+                    
+                    if (fallbackCount > 0)
+                    {
+                        LogManager.Info($"[FALLBACK RULE] Set {fallbackCount} line(s) to INVESTIGATE (no matching rules)");
+                    }
                 }
 
                 // Finalize default ActionStatus and ActionDate values after all rule outputs are applied
@@ -979,7 +983,8 @@ namespace RecoTool.Services.AmbreImport
                 // Apply truth-table rules (skip lines already processed by MANUAL_OUTGOING)
                 var rulesTimer = System.Diagnostics.Stopwatch.StartNew();
                 LogManager.Info($"Evaluating truth-table rules for {staged.Count} existing records...");
-                await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
+                // isNewLines=false disables FALLBACK rule (existing lines should keep their current state if no rule matches)
+                await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees, isNewLines: false);
 
                 // Count how many had rules applied
                 rulesTimer.Stop();

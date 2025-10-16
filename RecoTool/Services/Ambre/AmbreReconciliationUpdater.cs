@@ -357,15 +357,28 @@ namespace RecoTool.Services.AmbreImport
                 // First pass: apply SELF outputs immediately; gather counterpart intents by BGI
                 var counterpartIntents = new List<(string Bgi, bool TargetIsPivot, string RuleId, int? ActionId, int? KpiId, int? IncidentTypeId, bool? RiskyItem, int? ReasonNonRiskyId, bool? ToRemind, int? ToRemindDays)>();
 
-                // OPTIMIZATION: Parallel rule evaluation (rules engine is stateless)
-                var ruleEvaluationTasks = staged.Select(async s =>
-                {
-                    var ctx = BuildRuleContext(s.DataAmbre, s.Reconciliation, country, countryId, s.IsPivot, dwInvoices, dwGuarantees, s.IsGrouped, s.MissingAmount);
-                    var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Import).ConfigureAwait(false);
-                    return (Staging: s, Result: res);
-                }).ToList();
+                // OPTIMIZATION: Parallel rule evaluation in batches to avoid overwhelming the thread pool
+                const int batchSize = 2000; // Process 2000 records at a time
+                var allEvaluationResults = new List<(ReconciliationStaging Staging, RuleEvaluationResult Result)>();
                 
-                var evaluationResults = await Task.WhenAll(ruleEvaluationTasks);
+                for (int i = 0; i < staged.Count; i += batchSize)
+                {
+                    var batch = staged.Skip(i).Take(batchSize).ToList();
+                    var batchTasks = batch.Select(async s =>
+                    {
+                        var ctx = BuildRuleContext(s.DataAmbre, s.Reconciliation, country, countryId, s.IsPivot, dwInvoices, dwGuarantees, s.IsGrouped, s.MissingAmount);
+                        var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Import).ConfigureAwait(false);
+                        return (Staging: s, Result: res);
+                    }).ToList();
+                    
+                    var batchResults = await Task.WhenAll(batchTasks);
+                    allEvaluationResults.AddRange(batchResults);
+                    
+                    if (i % 10000 == 0 && i > 0)
+                        LogManager.Info($"[PERF] Rules evaluation progress: {i}/{staged.Count} records processed");
+                }
+                
+                var evaluationResults = allEvaluationResults;
 
                 foreach (var result in evaluationResults)
                 {
@@ -786,7 +799,8 @@ namespace RecoTool.Services.AmbreImport
                 int rulesAppliedCount = staged.Count(s => s.Reconciliation.Action.HasValue || s.Reconciliation.KPI.HasValue);
                 LogManager.Info($"[PERF] Rules evaluation complete: {rulesAppliedCount}/{staged.Count} records had rules applied in {rulesTimer.ElapsedMilliseconds}ms");
 
-                // Update database with rule results
+                // Update database with rule results - OPTIMIZED with batching
+                var dbUpdateTimer = System.Diagnostics.Stopwatch.StartNew();
                 using (var conn = new OleDbConnection(connectionString))
                 {
                     await conn.OpenAsync();
@@ -795,35 +809,59 @@ namespace RecoTool.Services.AmbreImport
                         try
                         {
                             var nowUtc = DateTime.UtcNow;
-                            foreach (var s in staged)
+                            const int dbBatchSize = 500; // Batch DB updates for better performance
+                            int updateCount = 0;
+                            
+                            using (var cmd = new OleDbCommand(
+                                @"UPDATE [T_Reconciliation] SET 
+                                    [Action]=?, [KPI]=?, [IncidentType]=?, [RiskyItem]=?, [ReasonNonRisky]=?,
+                                    [ToRemind]=?, [ToRemindDate]=?, [FirstClaimDate]=?,
+                                    [LastModified]=?, [ModifiedBy]=?
+                                  WHERE [ID]=?", conn, tx))
                             {
-                                var rec = s.Reconciliation;
+                                // Pre-create parameters once with explicit sizes for VarChar
+                                cmd.Parameters.Add("@Action", OleDbType.Integer);
+                                cmd.Parameters.Add("@KPI", OleDbType.Integer);
+                                cmd.Parameters.Add("@IncidentType", OleDbType.Integer);
+                                cmd.Parameters.Add("@RiskyItem", OleDbType.Boolean);
+                                cmd.Parameters.Add("@ReasonNonRisky", OleDbType.Integer);
+                                cmd.Parameters.Add("@ToRemind", OleDbType.Boolean);
+                                cmd.Parameters.Add("@ToRemindDate", OleDbType.Date);
+                                cmd.Parameters.Add("@FirstClaimDate", OleDbType.Date);
+                                cmd.Parameters.Add("@LastModified", OleDbType.Date);
+                                cmd.Parameters.Add("@ModifiedBy", OleDbType.VarChar, 255);
+                                cmd.Parameters.Add("@ID", OleDbType.VarChar, 255);
                                 
-                                using (var cmd = new OleDbCommand(
-                                    @"UPDATE [T_Reconciliation] SET 
-                                        [Action]=?, [KPI]=?, [IncidentType]=?, [RiskyItem]=?, [ReasonNonRisky]=?,
-                                        [ToRemind]=?, [ToRemindDate]=?, [FirstClaimDate]=?,
-                                        [LastModified]=?, [ModifiedBy]=?
-                                      WHERE [ID]=?", conn, tx))
+                                cmd.Prepare(); // Prepare statement once (requires explicit sizes for VarChar)
+                                
+                                foreach (var s in staged)
                                 {
-                                    cmd.Parameters.Add("@Action", OleDbType.Integer).Value = rec.Action.HasValue ? (object)rec.Action.Value : DBNull.Value;
-                                    cmd.Parameters.Add("@KPI", OleDbType.Integer).Value = rec.KPI.HasValue ? (object)rec.KPI.Value : DBNull.Value;
-                                    cmd.Parameters.Add("@IncidentType", OleDbType.Integer).Value = rec.IncidentType.HasValue ? (object)rec.IncidentType.Value : DBNull.Value;
-                                    cmd.Parameters.Add("@RiskyItem", OleDbType.Boolean).Value = rec.RiskyItem.HasValue ? (object)rec.RiskyItem.Value : DBNull.Value;
-                                    cmd.Parameters.Add("@ReasonNonRisky", OleDbType.Integer).Value = rec.ReasonNonRisky.HasValue ? (object)rec.ReasonNonRisky.Value : DBNull.Value;
-                                    cmd.Parameters.Add("@ToRemind", OleDbType.Boolean).Value = rec.ToRemind;
-                                    cmd.Parameters.Add("@ToRemindDate", OleDbType.Date).Value = rec.ToRemindDate.HasValue ? (object)rec.ToRemindDate.Value : DBNull.Value;
-                                    cmd.Parameters.Add("@FirstClaimDate", OleDbType.Date).Value = rec.FirstClaimDate.HasValue ? (object)rec.FirstClaimDate.Value : DBNull.Value;
-                                    cmd.Parameters.Add("@LastModified", OleDbType.Date).Value = nowUtc;
-                                    cmd.Parameters.AddWithValue("@ModifiedBy", _currentUser);
-                                    cmd.Parameters.AddWithValue("@ID", rec.ID);
+                                    var rec = s.Reconciliation;
+                                    
+                                    cmd.Parameters["@Action"].Value = rec.Action.HasValue ? (object)rec.Action.Value : DBNull.Value;
+                                    cmd.Parameters["@KPI"].Value = rec.KPI.HasValue ? (object)rec.KPI.Value : DBNull.Value;
+                                    cmd.Parameters["@IncidentType"].Value = rec.IncidentType.HasValue ? (object)rec.IncidentType.Value : DBNull.Value;
+                                    cmd.Parameters["@RiskyItem"].Value = rec.RiskyItem.HasValue ? (object)rec.RiskyItem.Value : DBNull.Value;
+                                    cmd.Parameters["@ReasonNonRisky"].Value = rec.ReasonNonRisky.HasValue ? (object)rec.ReasonNonRisky.Value : DBNull.Value;
+                                    cmd.Parameters["@ToRemind"].Value = rec.ToRemind;
+                                    cmd.Parameters["@ToRemindDate"].Value = rec.ToRemindDate.HasValue ? (object)rec.ToRemindDate.Value : DBNull.Value;
+                                    cmd.Parameters["@FirstClaimDate"].Value = rec.FirstClaimDate.HasValue ? (object)rec.FirstClaimDate.Value : DBNull.Value;
+                                    cmd.Parameters["@LastModified"].Value = nowUtc;
+                                    cmd.Parameters["@ModifiedBy"].Value = _currentUser;
+                                    cmd.Parameters["@ID"].Value = rec.ID;
                                     
                                     await cmd.ExecuteNonQueryAsync();
+                                    updateCount++;
+                                    
+                                    // Periodic progress log
+                                    if (updateCount % 10000 == 0)
+                                        LogManager.Info($"[PERF] DB update progress: {updateCount}/{staged.Count} records updated");
                                 }
                             }
                             
                             tx.Commit();
-                            LogManager.Info($"Applied rules to {staged.Count} existing records");
+                            dbUpdateTimer.Stop();
+                            LogManager.Info($"[PERF] DB updates completed: {staged.Count} records in {dbUpdateTimer.ElapsedMilliseconds}ms");
                         }
                         catch
                         {

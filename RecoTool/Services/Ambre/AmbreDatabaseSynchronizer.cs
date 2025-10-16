@@ -104,11 +104,11 @@ namespace RecoTool.Services.AmbreImport
                     recoTimer.Stop();
                     LogManager.Info($"[PERF] UpdateReconciliationTable completed in {recoTimer.ElapsedMilliseconds}ms");
 
-                    // Snapshot KPIs
-                    var kpiTimer = System.Diagnostics.Stopwatch.StartNew();
-                    await CreateKpiSnapshotAsync(countryId);
-                    kpiTimer.Stop();
-                    LogManager.Info($"[PERF] CreateKpiSnapshot completed in {kpiTimer.ElapsedMilliseconds}ms");
+                    // Snapshot KPIs - DISABLED for performance (not needed during import)
+                    // var kpiTimer = System.Diagnostics.Stopwatch.StartNew();
+                    // await CreateKpiSnapshotAsync(countryId);
+                    // kpiTimer.Stop();
+                    // LogManager.Info($"[PERF] CreateKpiSnapshot completed in {kpiTimer.ElapsedMilliseconds}ms");
 
                     // Publish to network
                     try { await _offlineFirstService.SetSyncStatusAsync("Publishing"); } catch { }

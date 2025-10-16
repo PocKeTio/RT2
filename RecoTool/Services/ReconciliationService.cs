@@ -1173,6 +1173,43 @@ namespace RecoTool.Services
             }
             catch { }
         }
+
+        /// <summary>
+        /// Validates and fixes dates to be compatible with Access database limits (1/1/100 to 12/31/9999).
+        /// Access throws "field too small" error for dates outside this range.
+        /// </summary>
+        private void ValidateDatesForAccess(Reconciliation r)
+        {
+            try
+            {
+                if (r == null) return;
+                
+                // Access date limits: 1/1/100 to 12/31/9999
+                var minAccessDate = new DateTime(100, 1, 1);
+                var maxAccessDate = new DateTime(9999, 12, 31);
+                
+                // Validate ActionDate
+                if (r.ActionDate.HasValue && (r.ActionDate.Value < minAccessDate || r.ActionDate.Value > maxAccessDate))
+                    r.ActionDate = null;
+                
+                // Validate FirstClaimDate
+                if (r.FirstClaimDate.HasValue && (r.FirstClaimDate.Value < minAccessDate || r.FirstClaimDate.Value > maxAccessDate))
+                    r.FirstClaimDate = null;
+                
+                // Validate LastClaimDate
+                if (r.LastClaimDate.HasValue && (r.LastClaimDate.Value < minAccessDate || r.LastClaimDate.Value > maxAccessDate))
+                    r.LastClaimDate = null;
+                
+                // Validate ToRemindDate
+                if (r.ToRemindDate.HasValue && (r.ToRemindDate.Value < minAccessDate || r.ToRemindDate.Value > maxAccessDate))
+                    r.ToRemindDate = null;
+                
+                // Validate TriggerDate
+                if (r.TriggerDate.HasValue && (r.TriggerDate.Value < minAccessDate || r.TriggerDate.Value > maxAccessDate))
+                    r.TriggerDate = null;
+            }
+            catch { }
+        }
         #endregion
 
         
@@ -1363,24 +1400,45 @@ namespace RecoTool.Services
                             reco1.Action = actionId;
                             reco1.KPI = kpiId;
                             EnsureActionDefaults(reco1);
+                            ValidateDatesForAccess(reco1);
                             
                             reco2.Action = actionId;
                             reco2.KPI = kpiId;
                             EnsureActionDefaults(reco2);
+                            ValidateDatesForAccess(reco2);
                             
                             // Add comment: Same guarantee Pair detected in pivot => to match in Ambre
                             var timestamp = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {_currentUser}: ";
                             var msg = $"Same guarantee Pair detected in pivot => to match in Ambre (GuaranteeID={guaranteeId})";
                             
+                            // Truncate guaranteeId if too long to avoid database field overflow
+                            var maxGuaranteeIdLength = 50;
+                            var displayGuaranteeId = guaranteeId.Length > maxGuaranteeIdLength 
+                                ? guaranteeId.Substring(0, maxGuaranteeIdLength) + "..." 
+                                : guaranteeId;
+                            msg = $"Same guarantee Pair detected in pivot => to match in Ambre (GuaranteeID={displayGuaranteeId})";
+                            
                             if (string.IsNullOrWhiteSpace(reco1.Comments))
                                 reco1.Comments = timestamp + msg;
                             else if (!reco1.Comments.Contains("Same guarantee Pair detected"))
-                                reco1.Comments = reco1.Comments + Environment.NewLine + timestamp + msg;
+                            {
+                                var newComment = reco1.Comments + Environment.NewLine + timestamp + msg;
+                                // Truncate if total comment exceeds safe limit (e.g., 32000 chars for LONGTEXT)
+                                if (newComment.Length > 30000)
+                                    newComment = newComment.Substring(newComment.Length - 30000);
+                                reco1.Comments = newComment;
+                            }
                             
                             if (string.IsNullOrWhiteSpace(reco2.Comments))
                                 reco2.Comments = timestamp + msg;
                             else if (!reco2.Comments.Contains("Same guarantee Pair detected"))
-                                reco2.Comments = reco2.Comments + Environment.NewLine + timestamp + msg;
+                            {
+                                var newComment = reco2.Comments + Environment.NewLine + timestamp + msg;
+                                // Truncate if total comment exceeds safe limit (e.g., 32000 chars for LONGTEXT)
+                                if (newComment.Length > 30000)
+                                    newComment = newComment.Substring(newComment.Length - 30000);
+                                reco2.Comments = newComment;
+                            }
                             
                             await SaveReconciliationsAsync(new List<Reconciliation> { reco1, reco2 }).ConfigureAwait(false);
                             

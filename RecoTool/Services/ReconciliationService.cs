@@ -1276,10 +1276,10 @@ namespace RecoTool.Services
 
                 var toMatchAction = allUserFields.FirstOrDefault(uf => 
                     string.Equals(uf.USR_Category, "Action", StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(uf.USR_FieldName, "TO MATCH", StringComparison.OrdinalIgnoreCase));
+                    string.Equals(uf.USR_FieldName, "MATCH", StringComparison.OrdinalIgnoreCase));
                 var payButNotReconciledKpi = allUserFields.FirstOrDefault(uf => 
                     string.Equals(uf.USR_Category, "KPI", StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(uf.USR_FieldName, "PAY BUT NOT RECONCILIED", StringComparison.OrdinalIgnoreCase));
+                    string.Equals(uf.USR_FieldName, "PAID BUT NOT RECONCILED", StringComparison.OrdinalIgnoreCase));
 
                 if (toMatchAction == null || payButNotReconciledKpi == null)
                 {

@@ -192,8 +192,7 @@ namespace RecoTool.UI.ViewModels
 
             return await _reconciliationService.GetReconciliationViewAsync(
                 _offlineFirstService.CurrentCountryId, 
-                null, 
-                dashboardOnly: true);
+                null);
         }
         #endregion
 

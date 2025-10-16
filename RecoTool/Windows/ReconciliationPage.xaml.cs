@@ -2047,10 +2047,16 @@ namespace RecoTool.Windows
             }
 
             // Appliquer layout/titre issu de la Saved View sélectionnée (layout-only)
-            // IMPORTANT: ne pas écraser le titre issu d'un ToDo ouvert
-            if (string.IsNullOrWhiteSpace(_currentFilterName) && SelectedSavedView != null && !string.IsNullOrWhiteSpace(SelectedSavedView.Name))
+            // Apply view layout even if there's a filter (TodoList can have both filter + view)
+            if (SelectedSavedView != null && !string.IsNullOrWhiteSpace(SelectedSavedView.Name))
             {
-                try { view.SetViewTitle(SelectedSavedView.Name); } catch { }
+                // Only set title if no filter name (to avoid overwriting TodoList/filter title)
+                if (string.IsNullOrWhiteSpace(_currentFilterName))
+                {
+                    try { view.SetViewTitle(SelectedSavedView.Name); } catch { }
+                }
+                
+                // Always apply view layout (column widths, visibility, etc.)
                 _ = System.Threading.Tasks.Task.Run(async () =>
                 {
                     try

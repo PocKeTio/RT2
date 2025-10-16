@@ -1259,8 +1259,8 @@ namespace RecoTool.Services
         }
 
         /// <summary>
-        /// Applique la règle spéciale MANUAL_OUTGOING: trouve les paires de lignes pivot avec montants opposés,
-        /// même numéro de réconciliation, et catégories MANUAL_OUTGOING + PAYMENT.
+        /// Applique la règle spéciale MANUAL_OUTGOING: trouve les paires de lignes pivot avec même guarantee ID
+        /// et montants qui somment à 0, puis les marque comme MATCH / PAID BUT NOT RECONCILED.
         /// </summary>
         public async Task<int> ApplyManualOutgoingRuleAsync(string countryId)
         {
@@ -1270,7 +1270,7 @@ namespace RecoTool.Services
                 var country = _countries.ContainsKey(countryId) ? _countries[countryId] : null;
                 if (country == null) return 0;
 
-                // Get Action and KPI IDs for "TO MATCH" and "PAY BUT NOT RECONCILIED"
+                // Get Action and KPI IDs for "MATCH" and "PAID BUT NOT RECONCILED"
                 var allUserFields = _offlineFirstService?.UserFields;
                 if (allUserFields == null) return 0;
 
@@ -1283,39 +1283,118 @@ namespace RecoTool.Services
 
                 if (toMatchAction == null || payButNotReconciledKpi == null)
                 {
-                    LogManager.Warning("MANUAL_OUTGOING rule: Required Action or KPI not found (TO MATCH or PAY BUT NOT RECONCILIED)");
+                    LogManager.Warning("MANUAL_OUTGOING rule: Required Action or KPI not found (MATCH or PAID BUT NOT RECONCILED)");
                     return 0;
                 }
 
                 int actionId = toMatchAction.USR_ID;
                 int kpiId = payButNotReconciledKpi.USR_ID;
 
-                // OPTIMIZATION: Only load MANUAL_OUTGOING and PAYMENT lines (not all Ambre data)
+                // Load PIVOT lines only
                 var loadTimer = System.Diagnostics.Stopwatch.StartNew();
                 var ambreData = await GetAmbreDataAsync(countryId);
                 var pivotLines = ambreData.Where(d => 
                     d.IsPivotAccount(country.CNT_AmbrePivot) && 
-                    !d.IsDeleted &&
-                    (d.Category == (int)TransactionType.MANUAL_OUTGOING || d.Category == (int)TransactionType.PAYMENT)
+                    !d.IsDeleted
                 ).ToList();
-                var receivableLines = ambreData.Where(d => d.IsReceivableAccount(country.CNT_AmbreReceivable) && !d.IsDeleted).ToList();
                 loadTimer.Stop();
-                LogManager.Info($"[PERF] MANUAL_OUTGOING rule: Loaded {pivotLines.Count} pivot lines (filtered) and {receivableLines.Count} receivable lines in {loadTimer.ElapsedMilliseconds}ms");
+                LogManager.Info($"[PERF] MANUAL_OUTGOING rule: Loaded {pivotLines.Count} pivot lines in {loadTimer.ElapsedMilliseconds}ms");
 
                 int matchCount = 0;
 
-                // Pre-load all reconciliations for performance (avoid N+1 queries)
-                var allLineIds = pivotLines.Select(p => p.ID).Concat(receivableLines.Select(r => r.ID)).Distinct().ToList();
+                // Pre-load all reconciliations for PIVOT lines
                 var reconciliations = new Dictionary<string, Reconciliation>(StringComparer.OrdinalIgnoreCase);
-                foreach (var id in allLineIds)
+                foreach (var line in pivotLines)
                 {
-                    var reco = await GetOrCreateReconciliationAsync(id).ConfigureAwait(false);
+                    var reco = await GetOrCreateReconciliationAsync(line.ID).ConfigureAwait(false);
                     if (reco != null)
                     {
-                        reconciliations[id] = reco;
+                        reconciliations[line.ID] = reco;
                     }
                 }
 
+                // SIMPLIFIED RULE: Find pairs in PIVOT with same guarantee ID and amounts that sum to 0
+                // Group by guarantee ID
+                var linesByGuarantee = new Dictionary<string, List<DataAmbre>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var line in pivotLines)
+                {
+                    if (!reconciliations.TryGetValue(line.ID, out var reco) || reco == null)
+                        continue;
+                    
+                    var guaranteeId = reco.DWINGS_GuaranteeID?.Trim();
+                    if (string.IsNullOrWhiteSpace(guaranteeId))
+                        continue;
+                    
+                    if (!linesByGuarantee.ContainsKey(guaranteeId))
+                        linesByGuarantee[guaranteeId] = new List<DataAmbre>();
+                    
+                    linesByGuarantee[guaranteeId].Add(line);
+                }
+
+                // For each guarantee group, find pairs that sum to 0
+                foreach (var kvp in linesByGuarantee)
+                {
+                    var guaranteeId = kvp.Key;
+                    var lines = kvp.Value;
+                    
+                    // Need at least 2 lines
+                    if (lines.Count < 2)
+                        continue;
+                    
+                    // Find all pairs that sum to 0
+                    for (int i = 0; i < lines.Count; i++)
+                    {
+                        for (int j = i + 1; j < lines.Count; j++)
+                        {
+                            var line1 = lines[i];
+                            var line2 = lines[j];
+                            
+                            // Check if amounts sum to 0 (within 0.01 tolerance)
+                            if (Math.Abs(line1.SignedAmount + line2.SignedAmount) >= 0.01m)
+                                continue;
+                            
+                            // Get reconciliations
+                            if (!reconciliations.TryGetValue(line1.ID, out var reco1) || reco1 == null)
+                                continue;
+                            if (!reconciliations.TryGetValue(line2.ID, out var reco2) || reco2 == null)
+                                continue;
+                            
+                            // Apply rule: set both to MATCH + PAID BUT NOT RECONCILED
+                            reco1.Action = actionId;
+                            reco1.KPI = kpiId;
+                            EnsureActionDefaults(reco1);
+                            
+                            reco2.Action = actionId;
+                            reco2.KPI = kpiId;
+                            EnsureActionDefaults(reco2);
+                            
+                            // Add comment: Same guarantee Pair detected in pivot => to match in Ambre
+                            var timestamp = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {_currentUser}: ";
+                            var msg = $"Same guarantee Pair detected in pivot => to match in Ambre (GuaranteeID={guaranteeId})";
+                            
+                            if (string.IsNullOrWhiteSpace(reco1.Comments))
+                                reco1.Comments = timestamp + msg;
+                            else if (!reco1.Comments.Contains("Same guarantee Pair detected"))
+                                reco1.Comments = reco1.Comments + Environment.NewLine + timestamp + msg;
+                            
+                            if (string.IsNullOrWhiteSpace(reco2.Comments))
+                                reco2.Comments = timestamp + msg;
+                            else if (!reco2.Comments.Contains("Same guarantee Pair detected"))
+                                reco2.Comments = reco2.Comments + Environment.NewLine + timestamp + msg;
+                            
+                            await SaveReconciliationsAsync(new List<Reconciliation> { reco1, reco2 }).ConfigureAwait(false);
+                            
+                            LogHelper.WriteRuleApplied("MANUAL_OUTGOING", countryId, line1.ID, "GUARANTEE_PAIR", 
+                                $"Action={actionId}; KPI={kpiId}", $"Matched with {line2.ID} (GuaranteeID={guaranteeId})");
+                            LogHelper.WriteRuleApplied("MANUAL_OUTGOING", countryId, line2.ID, "GUARANTEE_PAIR", 
+                                $"Action={actionId}; KPI={kpiId}", $"Matched with {line1.ID} (GuaranteeID={guaranteeId})");
+                            
+                            matchCount++;
+                        }
+                    }
+                }
+
+                /* OLD COMPLEX RULE - COMMENTED OUT
                 // Build BGPMT index for receivable lines (for fast lookup)
                 var receivableBgpmtIndex = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
                 foreach (var recLine in receivableLines)
@@ -1468,6 +1547,7 @@ namespace RecoTool.Services
                         }
                     }
                 }
+                */
 
                 timer.Stop();
                 LogManager.Info($"[PERF] MANUAL_OUTGOING rule completed: {matchCount} pair(s) matched in {timer.ElapsedMilliseconds}ms");

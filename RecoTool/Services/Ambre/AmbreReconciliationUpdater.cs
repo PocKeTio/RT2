@@ -116,8 +116,8 @@ namespace RecoTool.Services.AmbreImport
             List<DataAmbre> newRecords,
             Country country,
             string countryId,
-            List<DwingsInvoice> dwInvoices,
-            List<DwingsGuarantee> dwGuarantees)
+            IReadOnlyList<DwingsInvoiceDto> dwInvoices,
+            IReadOnlyList<DwingsGuaranteeDto> dwGuarantees)
         {
             // DWINGS data passed from caller to avoid reloading
             _transformationService = new TransformationService(new List<Country> { country });
@@ -185,8 +185,8 @@ namespace RecoTool.Services.AmbreImport
             DataAmbre dataAmbre,
             Country country,
             string countryId,
-            List<DwingsInvoiceDto> dwInvoices,
-            List<DwingsGuaranteeDto> dwGuarantees)
+            IReadOnlyList<DwingsInvoiceDto> dwInvoices,
+            IReadOnlyList<DwingsGuaranteeDto> dwGuarantees)
         {
             var reconciliation = new Reconciliation
             {
@@ -348,7 +348,7 @@ namespace RecoTool.Services.AmbreImport
             };
         }
 
-        private async Task ApplyTruthTableRulesAsync(List<ReconciliationStaging> staged, Country country, string countryId, List<DwingsInvoiceDto> dwInvoices, List<DwingsGuaranteeDto> dwGuarantees)
+        private async Task ApplyTruthTableRulesAsync(List<ReconciliationStaging> staged, Country country, string countryId, IReadOnlyList<DwingsInvoiceDto> dwInvoices, IReadOnlyList<DwingsGuaranteeDto> dwGuarantees)
         {
             try
             {
@@ -668,8 +668,8 @@ namespace RecoTool.Services.AmbreImport
             List<DataAmbre> updatedRecords,
             Country country,
             string countryId,
-            List<DwingsInvoice> dwInvoices,
-            List<DwingsGuarantee> dwGuarantees)
+            IReadOnlyList<DwingsInvoiceDto> dwInvoices,
+            IReadOnlyList<DwingsGuaranteeDto> dwGuarantees)
         {
             try
             {

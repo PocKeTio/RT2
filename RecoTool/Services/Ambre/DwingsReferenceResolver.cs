@@ -16,7 +16,7 @@ namespace RecoTool.Services.AmbreImport
     public class DwingsReferenceResolver
     {
         private readonly ReconciliationService _reconciliationService;
-        private List<DwingsGuaranteeDto> _dwingsGuarantees;
+        private IReadOnlyList<DwingsGuaranteeDto> _dwingsGuarantees;
         private string _lastResolvedGuaranteeId; // Stores GUARANTEE_ID found via OfficialRef
 
         public DwingsReferenceResolver(ReconciliationService reconciliationService)
@@ -30,8 +30,8 @@ namespace RecoTool.Services.AmbreImport
         public async Task<AmbreImport.DwingsTokens> ResolveReferencesAsync(
             DataAmbre dataAmbre,
             bool isPivot,
-            List<DwingsInvoiceDto> dwInvoices,
-            List<DwingsGuaranteeDto> dwGuarantees = null)
+            IReadOnlyList<DwingsInvoiceDto> dwInvoices,
+            IReadOnlyList<DwingsGuaranteeDto> dwGuarantees = null)
         {
             // Store guarantees for use in ResolveByOfficialRef
             _dwingsGuarantees = dwGuarantees;

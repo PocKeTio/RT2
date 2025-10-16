@@ -164,22 +164,24 @@ namespace RecoTool.Services.AmbreImport
             // HARD-CODED RULE: For PIVOT lines with DIRECT_DEBIT payment method, set Category to COLLECTION
             ApplyDirectDebitCollectionRule(staged, dwInvoices);
 
-            // Apply truth-table rules (import scope) - pass dwInvoices and dwGuarantees to avoid reloading
-            await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
-
-            // Apply special MANUAL_OUTGOING pairing rule
+            // Apply special MANUAL_OUTGOING pairing rule FIRST (before truth-table rules)
+            // This prevents truth-table from overwriting guarantee-based matches
             try
             {
                 var manualOutgoingMatches = await _reconciliationService.ApplyManualOutgoingRuleAsync(countryId).ConfigureAwait(false);
                 if (manualOutgoingMatches > 0)
                 {
-                    LogManager.Info($"MANUAL_OUTGOING rule: matched {manualOutgoingMatches} pair(s)");
+                    LogManager.Info($"MANUAL_OUTGOING rule: matched {manualOutgoingMatches} pair(s) - these will be excluded from truth-table rules");
                 }
             }
             catch (Exception ex)
             {
                 LogManager.Error($"Error applying MANUAL_OUTGOING rule: {ex.Message}", ex);
             }
+
+            // Apply truth-table rules (import scope) - pass dwInvoices and dwGuarantees to avoid reloading
+            // Lines already processed by MANUAL_OUTGOING will be skipped
+            await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
 
             return staged.Select(s => s.Reconciliation).ToList();
         }
@@ -472,6 +474,14 @@ namespace RecoTool.Services.AmbreImport
                     
                     if (res == null || res.Rule == null) continue;
 
+                    // SKIP if line already has Action/KPI set by MANUAL_OUTGOING rule
+                    // This prevents truth-table from overwriting guarantee-based matches
+                    if (s.Reconciliation.Action.HasValue && s.Reconciliation.KPI.HasValue)
+                    {
+                        // Line already processed by MANUAL_OUTGOING or another rule, skip
+                        continue;
+                    }
+
                     // Self application
                     // In Import scope, always apply rules (AutoApply only affects Edit scope)
                     if (res.Rule.ApplyTo == ApplyTarget.Self || res.Rule.ApplyTo == ApplyTarget.Both)
@@ -596,6 +606,58 @@ namespace RecoTool.Services.AmbreImport
                             catch { }
                         }
                     }
+                }
+
+                // FINAL FALLBACK RULE: If no rule matched (res == null or res.Rule == null), set to INVESTIGATE
+                // This ensures all new lines have at least a default action
+                var investigateActionId = 7; // Action ID for "INVESTIGATE"
+                int fallbackCount = 0;
+                
+                foreach (var result in evaluationResults)
+                {
+                    var s = result.Staging;
+                    var res = result.Result;
+                    
+                    // Skip if already processed by MANUAL_OUTGOING or truth-table
+                    if (s.Reconciliation.Action.HasValue)
+                        continue;
+                    
+                    // No rule matched - apply fallback
+                    if (res == null || res.Rule == null)
+                    {
+                        s.Reconciliation.Action = investigateActionId;
+                        
+                        // Add comment
+                        try
+                        {
+                            var prefix = $"[{DateTime.Now:yyyy-MM-dd HH:mm}] {_currentUser}: ";
+                            var msg = prefix + "New line set to INVESTIGATE - no matching rule found";
+                            if (string.IsNullOrWhiteSpace(s.Reconciliation.Comments))
+                            {
+                                s.Reconciliation.Comments = msg;
+                            }
+                            else if (!s.Reconciliation.Comments.Contains("no matching rule found"))
+                            {
+                                s.Reconciliation.Comments = msg + Environment.NewLine + s.Reconciliation.Comments;
+                            }
+                        }
+                        catch { }
+                        
+                        fallbackCount++;
+                        
+                        // Log fallback application
+                        try
+                        {
+                            LogHelper.WriteRuleApplied("import", countryId, s.Reconciliation?.ID, "FALLBACK_INVESTIGATE", 
+                                $"Action={investigateActionId}", "No matching rule - default to INVESTIGATE");
+                        }
+                        catch { }
+                    }
+                }
+                
+                if (fallbackCount > 0)
+                {
+                    LogManager.Info($"[FALLBACK RULE] Set {fallbackCount} line(s) to INVESTIGATE (no matching rules)");
                 }
 
                 // Finalize default ActionStatus and ActionDate values after all rule outputs are applied
@@ -860,24 +922,64 @@ namespace RecoTool.Services.AmbreImport
                 kpiTimer.Stop();
                 LogManager.Info($"[PERF] KPI calculation completed for {staged.Count} existing records in {kpiTimer.ElapsedMilliseconds}ms");
 
-                // Apply truth-table rules
-                var rulesTimer = System.Diagnostics.Stopwatch.StartNew();
-                LogManager.Info($"Evaluating truth-table rules for {staged.Count} existing records...");
-                await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
-
-                // Apply special MANUAL_OUTGOING pairing rule
+                // Apply special MANUAL_OUTGOING pairing rule FIRST (before truth-table rules)
+                // This prevents truth-table from overwriting guarantee-based matches
                 try
                 {
                     var manualOutgoingMatches = await _reconciliationService.ApplyManualOutgoingRuleAsync(countryId).ConfigureAwait(false);
                     if (manualOutgoingMatches > 0)
                     {
-                        LogManager.Info($"MANUAL_OUTGOING rule: matched {manualOutgoingMatches} pair(s)");
+                        LogManager.Info($"MANUAL_OUTGOING rule: matched {manualOutgoingMatches} pair(s) - these will be excluded from truth-table rules");
+                        
+                        // Reload reconciliations that were updated by MANUAL_OUTGOING rule
+                        // to ensure staged items have the latest Action/KPI values
+                        using (var conn = new OleDbConnection(connectionString))
+                        {
+                            await conn.OpenAsync();
+                            var ids = staged.Select(s => s.Reconciliation.ID).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                            const int reloadBatchSize = 500;
+                            
+                            for (int i = 0; i < ids.Count; i += reloadBatchSize)
+                            {
+                                var batch = ids.Skip(i).Take(reloadBatchSize).ToList();
+                                var inClause = string.Join(",", batch.Select((_, idx) => "?"));
+                                
+                                using (var cmd = new OleDbCommand(
+                                    $"SELECT * FROM [T_Reconciliation] WHERE [ID] IN ({inClause})", conn))
+                                {
+                                    foreach (var id in batch)
+                                        cmd.Parameters.AddWithValue("@ID", id);
+                                    
+                                    using (var reader = await cmd.ExecuteReaderAsync())
+                                    {
+                                        while (await reader.ReadAsync())
+                                        {
+                                            var rec = MapReconciliationFromReader(reader);
+                                            if (rec != null && !string.IsNullOrWhiteSpace(rec.ID))
+                                            {
+                                                // Update staged item with fresh data
+                                                var stagedItem = staged.FirstOrDefault(s => string.Equals(s.Reconciliation.ID, rec.ID, StringComparison.OrdinalIgnoreCase));
+                                                if (stagedItem != null)
+                                                {
+                                                    stagedItem.Reconciliation = rec;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)
                 {
                     LogManager.Error($"Error applying MANUAL_OUTGOING rule: {ex.Message}", ex);
                 }
+
+                // Apply truth-table rules (skip lines already processed by MANUAL_OUTGOING)
+                var rulesTimer = System.Diagnostics.Stopwatch.StartNew();
+                LogManager.Info($"Evaluating truth-table rules for {staged.Count} existing records...");
+                await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
 
                 // Count how many had rules applied
                 rulesTimer.Stop();

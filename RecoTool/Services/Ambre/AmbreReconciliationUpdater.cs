@@ -213,7 +213,7 @@ namespace RecoTool.Services.AmbreImport
         }
 
 
-        private RuleContext BuildRuleContext(DataAmbre dataAmbre, Reconciliation reconciliation, Country country, string countryId, bool isPivot, List<DwingsInvoiceDto> dwInvoices, List<DwingsGuaranteeDto> dwGuarantees, bool isGrouped, decimal? missingAmount)
+        private RuleContext BuildRuleContext(DataAmbre dataAmbre, Reconciliation reconciliation, Country country, string countryId, bool isPivot, IReadOnlyList<DwingsInvoiceDto> dwInvoices, IReadOnlyList<DwingsGuaranteeDto> dwGuarantees, bool isGrouped, decimal? missingAmount)
         {
             // Determine transaction type enum name
             TransactionType? tx;
@@ -367,8 +367,11 @@ namespace RecoTool.Services.AmbreImport
                 
                 var evaluationResults = await Task.WhenAll(ruleEvaluationTasks);
 
-                foreach (var (s, res) in evaluationResults)
+                foreach (var result in evaluationResults)
                 {
+                    var s = result.Staging;
+                    var res = result.Result;
+                    
                     if (res == null || res.Rule == null) continue;
 
                     // Self application

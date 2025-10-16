@@ -188,7 +188,7 @@ namespace RecoTool.Services.AmbreImport
         private string ResolveReceivableInvoice(
             DataAmbre dataAmbre,
             DwingsTokens tokens,
-            List<DwingsInvoiceDto> dwInvoices)
+            IReadOnlyList<DwingsInvoiceDto> dwInvoices)
         {
             // Receivable: ONLY use Reconciliation_Num (no fallback to other fields)
             var bgi = dataAmbre.Receivable_InvoiceFromAmbre?.Trim() 
@@ -207,7 +207,7 @@ namespace RecoTool.Services.AmbreImport
         private string ResolvePivotInvoice(
             DataAmbre dataAmbre,
             DwingsTokens tokens,
-            List<DwingsInvoiceDto> dwInvoices)
+            IReadOnlyList<DwingsInvoiceDto> dwInvoices)
         {
             // Try BGI first
             if (!string.IsNullOrWhiteSpace(tokens.Bgi))
@@ -248,7 +248,7 @@ namespace RecoTool.Services.AmbreImport
         /// STEP 1: Find GUARANTEE_ID via OFFICIALREF/SENDER_REFERENCE/GUARANTEE_ID pattern matching
         /// STEP 2: Find best invoice linked to this guarantee (with amount matching)
         /// </summary>
-        private string ResolveByOfficialRef(DataAmbre dataAmbre, List<DwingsInvoiceDto> dwInvoices)
+        private string ResolveByOfficialRef(DataAmbre dataAmbre, IReadOnlyList<DwingsInvoiceDto> dwInvoices)
         {
             if (dwInvoices == null || dwInvoices.Count == 0 || dataAmbre == null) return null;
 
@@ -283,7 +283,7 @@ namespace RecoTool.Services.AmbreImport
         /// Tries in order: SENDER_REFERENCE → OFFICIALREF → PARTY_REF
         /// All use same alphanumeric cleaning logic for consistent matching
         /// </summary>
-        private string FindGuaranteeIdFromReferences(DataAmbre dataAmbre, List<DwingsInvoiceDto> dwInvoices)
+        private string FindGuaranteeIdFromReferences(DataAmbre dataAmbre, IReadOnlyList<DwingsInvoiceDto> dwInvoices)
         {
             // Extract alphanumeric token from Reconciliation_Num
             var token = ExtractAlphanumericToken(dataAmbre.Reconciliation_Num);
@@ -326,7 +326,7 @@ namespace RecoTool.Services.AmbreImport
         /// Find GUARANTEE_ID via invoice SENDER_REFERENCE matching
         /// Requirements: SENDER_REFERENCE matches token + BUSINESS_CASE_ID exists + amount matches
         /// </summary>
-        private string FindGuaranteeViaSenderReference(string token, decimal ambreAmt, List<DwingsInvoiceDto> dwInvoices)
+        private string FindGuaranteeViaSenderReference(string token, decimal ambreAmt, IReadOnlyList<DwingsInvoiceDto> dwInvoices)
         {
             var tokenAlnum = Regex.Replace(token, @"[^A-Za-z0-9]", "");
             
@@ -390,7 +390,7 @@ namespace RecoTool.Services.AmbreImport
             return bestGuarantee.GUARANTEE_ID;
         }
 
-        private string GetGuaranteeIdFromInvoice(string invoiceId, List<DwingsInvoiceDto> dwInvoices)
+        private string GetGuaranteeIdFromInvoice(string invoiceId, IReadOnlyList<DwingsInvoiceDto> dwInvoices)
         {
             var invoice = dwInvoices?.FirstOrDefault(i => 
                 string.Equals(i?.INVOICE_ID, invoiceId, StringComparison.OrdinalIgnoreCase));
@@ -401,7 +401,7 @@ namespace RecoTool.Services.AmbreImport
         private string GetSuggestedInvoice(
             DataAmbre dataAmbre,
             DwingsTokens tokens,
-            List<DwingsInvoiceDto> dwInvoices,
+            IReadOnlyList<DwingsInvoiceDto> dwInvoices,
             bool isPivot)
         {
             // For receivable: ONLY use Reconciliation_Num
@@ -477,13 +477,13 @@ namespace RecoTool.Services.AmbreImport
             }
             else // BGI
             {
-                hit = FindInvoiceByBgi(invoices.ToList(), code);
+                hit = FindInvoiceByBgi(invoices, code);
             }
 
             return hit?.PAYMENT_METHOD;
         }
 
-        private DwingsInvoiceDto FindInvoiceByBgi(List<DwingsInvoiceDto> invoices, string code)
+        private DwingsInvoiceDto FindInvoiceByBgi(IReadOnlyList<DwingsInvoiceDto> invoices, string code)
         {
             return invoices.FirstOrDefault(i =>
                 MatchesField(i.INVOICE_ID, code) ||

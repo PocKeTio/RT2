@@ -180,6 +180,27 @@ namespace RecoTool.Services.AmbreImport
                     
                     // Reload reconciliations that were updated by MANUAL_OUTGOING rule
                     await ReloadReconciliationsFromDatabase(staged, countryId);
+                    
+                    // CRITICAL: Recalculate KPIs after reload because reconciliations changed
+                    // IsGrouped and MissingAmount may have changed after MANUAL_OUTGOING rule
+                    var kpiRecalcTimer = System.Diagnostics.Stopwatch.StartNew();
+                    var kpiRecalcStaging = staged.Select(s => new ReconciliationKpiCalculator.ReconciliationStaging
+                    {
+                        DataAmbre = s.DataAmbre,
+                        Reconciliation = s.Reconciliation,
+                        IsPivot = s.IsPivot
+                    }).ToList();
+                    
+                    ReconciliationKpiCalculator.CalculateKpis(kpiRecalcStaging);
+                    
+                    // Copy recalculated KPIs back to staging items
+                    for (int i = 0; i < staged.Count && i < kpiRecalcStaging.Count; i++)
+                    {
+                        staged[i].IsGrouped = kpiRecalcStaging[i].IsGrouped;
+                        staged[i].MissingAmount = kpiRecalcStaging[i].MissingAmount;
+                    }
+                    kpiRecalcTimer.Stop();
+                    LogManager.Info($"[PERF] KPI recalculation after MANUAL_OUTGOING completed in {kpiRecalcTimer.ElapsedMilliseconds}ms");
                 }
             }
             catch (Exception ex)

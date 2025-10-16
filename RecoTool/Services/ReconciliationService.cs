@@ -1264,6 +1264,7 @@ namespace RecoTool.Services
         /// </summary>
         public async Task<int> ApplyManualOutgoingRuleAsync(string countryId)
         {
+            var timer = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 var country = _countries.ContainsKey(countryId) ? _countries[countryId] : null;
@@ -1289,9 +1290,17 @@ namespace RecoTool.Services
                 int actionId = toMatchAction.USR_ID;
                 int kpiId = payButNotReconciledKpi.USR_ID;
 
+                // OPTIMIZATION: Only load MANUAL_OUTGOING and PAYMENT lines (not all Ambre data)
+                var loadTimer = System.Diagnostics.Stopwatch.StartNew();
                 var ambreData = await GetAmbreDataAsync(countryId);
-                var pivotLines = ambreData.Where(d => d.IsPivotAccount(country.CNT_AmbrePivot) && !d.IsDeleted).ToList();
+                var pivotLines = ambreData.Where(d => 
+                    d.IsPivotAccount(country.CNT_AmbrePivot) && 
+                    !d.IsDeleted &&
+                    (d.Category == (int)TransactionType.MANUAL_OUTGOING || d.Category == (int)TransactionType.PAYMENT)
+                ).ToList();
                 var receivableLines = ambreData.Where(d => d.IsReceivableAccount(country.CNT_AmbreReceivable) && !d.IsDeleted).ToList();
+                loadTimer.Stop();
+                LogManager.Info($"[PERF] MANUAL_OUTGOING rule: Loaded {pivotLines.Count} pivot lines (filtered) and {receivableLines.Count} receivable lines in {loadTimer.ElapsedMilliseconds}ms");
 
                 int matchCount = 0;
 
@@ -1340,6 +1349,18 @@ namespace RecoTool.Services
                         // Check if line is NOT grouped (no receivable counterpart with same BGPMT)
                         if (!reconciliations.TryGetValue(manualLine.ID, out var manualReco) || manualReco == null)
                             continue;
+                        
+                        // CRITICAL: Only apply rule if Action is NA or empty (don't overwrite manual actions)
+                        var naAction = allUserFields?.FirstOrDefault(uf => 
+                            string.Equals(uf.USR_Category, "Action", StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(uf.USR_FieldName, "NA", StringComparison.OrdinalIgnoreCase));
+                        var naActionId = naAction?.USR_ID;
+                        
+                        if (manualReco.Action.HasValue && manualReco.Action.Value != naActionId)
+                        {
+                            // Action already set to something other than NA, skip this line
+                            continue;
+                        }
                         
                         // Skip if line has a BGPMT and there's a receivable line with the same BGPMT
                         if (!string.IsNullOrWhiteSpace(manualReco.DWINGS_BGPMT))
@@ -1394,6 +1415,13 @@ namespace RecoTool.Services
                             if (!reconciliations.TryGetValue(matchingPayment.ID, out var paymentReco) || paymentReco == null)
                                 continue;
 
+                            // Also check payment line - only apply if Action is NA or empty
+                            if (paymentReco.Action.HasValue && paymentReco.Action.Value != naActionId)
+                            {
+                                // Payment line already has a manual action, skip this pair
+                                continue;
+                            }
+
                             manualReco.Action = actionId;
                             manualReco.KPI = kpiId;
                             EnsureActionDefaults(manualReco);
@@ -1441,11 +1469,14 @@ namespace RecoTool.Services
                     }
                 }
 
+                timer.Stop();
+                LogManager.Info($"[PERF] MANUAL_OUTGOING rule completed: {matchCount} pair(s) matched in {timer.ElapsedMilliseconds}ms");
                 return matchCount;
             }
             catch (Exception ex)
             {
-                LogManager.Error("ApplyManualOutgoingRuleAsync failed", ex);
+                timer.Stop();
+                LogManager.Error($"ApplyManualOutgoingRuleAsync failed after {timer.ElapsedMilliseconds}ms", ex);
                 return 0;
             }
         }

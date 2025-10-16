@@ -335,10 +335,6 @@ namespace RecoTool.Services.AmbreImport
                 if (string.IsNullOrWhiteSpace(i?.SENDER_REFERENCE)) return false;
                 if (string.IsNullOrWhiteSpace(i?.BUSINESS_CASE_ID)) return false;
 
-                // Amount must match (tolerance 0.01)
-                if (!DwingsLinkingHelper.AmountMatches(ambreAmt, i.BILLING_AMOUNT, tolerance: 0.01m))
-                    return false;
-
                 // Alphanumeric comparison
                 var senderRefAlnum = Regex.Replace(i.SENDER_REFERENCE, @"[^A-Za-z0-9]", "");
                 return !string.IsNullOrWhiteSpace(senderRefAlnum) 

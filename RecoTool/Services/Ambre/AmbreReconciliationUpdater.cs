@@ -40,32 +40,49 @@ namespace RecoTool.Services.AmbreImport
         }
 
         /// <summary>
-        /// Met à  jour la table T_Reconciliation avec les changements d'import
+        /// Met à  jour la table T_Reconciliation avec les changements d'import
         /// </summary>
         public async Task UpdateReconciliationTableAsync(
             ImportChanges changes,
             string countryId,
             Country country)
         {
-            LogManager.Info($"Updating T_Reconciliation for {countryId}");
+            var totalTimer = System.Diagnostics.Stopwatch.StartNew();
+            LogManager.Info($"[PERF] UpdateReconciliationTableAsync started for {countryId}");
 
             try
             {
-                // Préparer les enregistrements de réconciliation
-                var reconciliations = await PrepareReconciliationsAsync(
-                    changes.ToAdd, country, countryId);
+                // OPTIMIZATION: Load DWINGS data once for entire import (not per phase)
+                var dwTimer = System.Diagnostics.Stopwatch.StartNew();
+                var dwInvoices = (await _reconciliationService.GetDwingsInvoicesAsync()).ToList();
+                var dwGuarantees = (await _reconciliationService.GetDwingsGuaranteesAsync()).ToList();
+                dwTimer.Stop();
+                LogManager.Info($"[PERF] DWINGS data loaded: {dwInvoices.Count} invoices, {dwGuarantees.Count} guarantees in {dwTimer.ElapsedMilliseconds}ms");
 
-                // Appliquer les changements à  la base de données
+                // Préparer les enregistrements de réconciliation
+                var prepareTimer = System.Diagnostics.Stopwatch.StartNew();
+                var reconciliations = await PrepareReconciliationsAsync(
+                    changes.ToAdd, country, countryId, dwInvoices, dwGuarantees);
+                prepareTimer.Stop();
+                LogManager.Info($"[PERF] PrepareReconciliations completed for {changes.ToAdd.Count} new records in {prepareTimer.ElapsedMilliseconds}ms");
+
+                // Appliquer les changements à  la base de données
+                var applyTimer = System.Diagnostics.Stopwatch.StartNew();
                 await ApplyReconciliationChangesAsync(
                     reconciliations,
                     changes.ToUpdate,
                     changes.ToArchive,
                     countryId);
+                applyTimer.Stop();
+                LogManager.Info($"[PERF] ApplyReconciliationChanges completed in {applyTimer.ElapsedMilliseconds}ms");
 
                 // Remplir les références DWINGS manquantes pour les enregistrements mis à  jour (sans écraser les liens manuels)
                 try
                 {
+                    var fillTimer = System.Diagnostics.Stopwatch.StartNew();
                     await UpdateDwingsReferencesForUpdatesAsync(changes.ToUpdate, country, countryId);
+                    fillTimer.Stop();
+                    LogManager.Info($"[PERF] UpdateDwingsReferencesForUpdates completed in {fillTimer.ElapsedMilliseconds}ms");
                 }
                 catch (Exception fillEx)
                 {
@@ -75,29 +92,34 @@ namespace RecoTool.Services.AmbreImport
                 // Réappliquer les règles aux enregistrements existants
                 try
                 {
-                    await ApplyRulesToExistingRecordsAsync(changes.ToUpdate, country, countryId);
+                    var rulesTimer = System.Diagnostics.Stopwatch.StartNew();
+                    await ApplyRulesToExistingRecordsAsync(changes.ToUpdate, country, countryId, dwInvoices, dwGuarantees);
+                    rulesTimer.Stop();
+                    LogManager.Info($"[PERF] ApplyRulesToExistingRecords completed for {changes.ToUpdate.Count} records in {rulesTimer.ElapsedMilliseconds}ms");
                 }
                 catch (Exception rulesEx)
                 {
                     LogManager.Warning($"Non-blocking: failed to apply rules to existing records: {rulesEx.Message}");
                 }
 
-                LogManager.Info($"T_Reconciliation update completed for {countryId}");
+                totalTimer.Stop();
+                LogManager.Info($"[PERF] T_Reconciliation update completed for {countryId} in {totalTimer.ElapsedMilliseconds}ms (total)");
             }
             catch (Exception ex)
             {
-                LogManager.Error($"Error updating T_Reconciliation for {countryId}", ex);
+                totalTimer.Stop();
+                LogManager.Error($"Error updating T_Reconciliation for {countryId} after {totalTimer.ElapsedMilliseconds}ms", ex);
                 throw new InvalidOperationException($"Failed to update reconciliation table: {ex.Message}", ex);
             }
         }
         private async Task<List<Reconciliation>> PrepareReconciliationsAsync(
             List<DataAmbre> newRecords,
             Country country,
-            string countryId)
+            string countryId,
+            List<DwingsInvoice> dwInvoices,
+            List<DwingsGuarantee> dwGuarantees)
         {
-            // OPTIMIZATION: Load DWINGS data once and cache TransformationService
-            var dwInvoices = (await _reconciliationService.GetDwingsInvoicesAsync()).ToList();
-            var dwGuarantees = (await _reconciliationService.GetDwingsGuaranteesAsync()).ToList();
+            // DWINGS data passed from caller to avoid reloading
             _transformationService = new TransformationService(new List<Country> { country });
             
             var staged = new List<ReconciliationStaging>();
@@ -120,6 +142,7 @@ namespace RecoTool.Services.AmbreImport
             staged = (await Task.WhenAll(tasks)).ToList();
 
             // Calculate KPIs (IsGrouped, MissingAmount) before applying rules
+            var kpiTimer = System.Diagnostics.Stopwatch.StartNew();
             var kpiStaging = staged.Select(s => new ReconciliationKpiCalculator.ReconciliationStaging
             {
                 DataAmbre = s.DataAmbre,
@@ -135,6 +158,8 @@ namespace RecoTool.Services.AmbreImport
                 staged[i].IsGrouped = kpiStaging[i].IsGrouped;
                 staged[i].MissingAmount = kpiStaging[i].MissingAmount;
             }
+            kpiTimer.Stop();
+            LogManager.Info($"[PERF] KPI calculation completed for {staged.Count} records in {kpiTimer.ElapsedMilliseconds}ms");
 
             // Apply truth-table rules (import scope) - pass dwInvoices and dwGuarantees to avoid reloading
             await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
@@ -642,17 +667,18 @@ namespace RecoTool.Services.AmbreImport
         private async Task ApplyRulesToExistingRecordsAsync(
             List<DataAmbre> updatedRecords,
             Country country,
-            string countryId)
+            string countryId,
+            List<DwingsInvoice> dwInvoices,
+            List<DwingsGuarantee> dwGuarantees)
         {
             try
             {
                 if (updatedRecords == null || updatedRecords.Count == 0) return;
 
-                LogManager.Info($"Applying truth-table rules to {updatedRecords.Count} existing records");
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                LogManager.Info($"[PERF] Applying truth-table rules to {updatedRecords.Count} existing records");
 
-                // Load DWINGS data and transformation service
-                var dwInvoices = (await _reconciliationService.GetDwingsInvoicesAsync()).ToList();
-                var dwGuarantees = (await _reconciliationService.GetDwingsGuaranteesAsync()).ToList();
+                // DWINGS data passed from caller to avoid reloading
                 _transformationService = new TransformationService(new List<Country> { country });
 
                 // Load existing reconciliations from database
@@ -714,6 +740,7 @@ namespace RecoTool.Services.AmbreImport
                 }
 
                 // Calculate KPIs (IsGrouped, MissingAmount)
+                var kpiTimer = System.Diagnostics.Stopwatch.StartNew();
                 var kpiStaging = staged.Select(s => new ReconciliationKpiCalculator.ReconciliationStaging
                 {
                     DataAmbre = s.DataAmbre,
@@ -729,8 +756,11 @@ namespace RecoTool.Services.AmbreImport
                     staged[i].IsGrouped = kpiStaging[i].IsGrouped;
                     staged[i].MissingAmount = kpiStaging[i].MissingAmount;
                 }
+                kpiTimer.Stop();
+                LogManager.Info($"[PERF] KPI calculation completed for {staged.Count} existing records in {kpiTimer.ElapsedMilliseconds}ms");
 
                 // Apply truth-table rules
+                var rulesTimer = System.Diagnostics.Stopwatch.StartNew();
                 LogManager.Info($"Evaluating truth-table rules for {staged.Count} existing records...");
                 await ApplyTruthTableRulesAsync(staged, country, countryId, dwInvoices, dwGuarantees);
 
@@ -749,8 +779,9 @@ namespace RecoTool.Services.AmbreImport
                 }
 
                 // Count how many had rules applied
+                rulesTimer.Stop();
                 int rulesAppliedCount = staged.Count(s => s.Reconciliation.Action.HasValue || s.Reconciliation.KPI.HasValue);
-                LogManager.Info($"Rules evaluation complete: {rulesAppliedCount}/{staged.Count} records had rules applied");
+                LogManager.Info($"[PERF] Rules evaluation complete: {rulesAppliedCount}/{staged.Count} records had rules applied in {rulesTimer.ElapsedMilliseconds}ms");
 
                 // Update database with rule results
                 using (var conn = new OleDbConnection(connectionString))

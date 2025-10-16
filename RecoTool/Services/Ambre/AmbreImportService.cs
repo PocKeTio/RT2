@@ -73,36 +73,51 @@ namespace RecoTool.Services
             Action<string, int> progressCallback)
         {
             var result = new ImportResult { CountryId = countryId, StartTime = DateTime.UtcNow };
+            var totalTimer = System.Diagnostics.Stopwatch.StartNew();
+            LogManager.Info($"[PERF] ===== AMBRE IMPORT STARTED for {countryId} =====");
             
             try
             {
                 // 1. Initialisation et validation
+                var initTimer = System.Diagnostics.Stopwatch.StartNew();
                 await _configurationLoader.EnsureInitializedAsync();
                 progressCallback?.Invoke(isMultiFile ? "Validating files..." : "Validating file...", 0);
                 
                 var files = _validator.ValidateFiles(filePaths, isMultiFile, result);
                 if (result.Errors.Any()) return result;
+                initTimer.Stop();
+                LogManager.Info($"[PERF] Initialization and validation completed in {initTimer.ElapsedMilliseconds}ms");
 
                 // 2. Chargement des configurations
+                var configTimer = System.Diagnostics.Stopwatch.StartNew();
                 progressCallback?.Invoke("Loading configurations...", 10);
                 var config = await _configurationLoader.LoadConfigurationsAsync(countryId, result);
                 if (result.Errors.Any()) return result;
+                configTimer.Stop();
+                LogManager.Info($"[PERF] Configuration loading completed in {configTimer.ElapsedMilliseconds}ms");
 
                 // 3. Préparation de l'environnement
+                var prepTimer = System.Diagnostics.Stopwatch.StartNew();
                 progressCallback?.Invoke("Preparing environment...", 15);
                 if (!await PrepareEnvironmentAsync(countryId, result))
                     return result;
+                prepTimer.Stop();
+                LogManager.Info($"[PERF] Environment preparation completed in {prepTimer.ElapsedMilliseconds}ms");
 
                 // 4. Import avec verrou global
+                var lockTimer = System.Diagnostics.Stopwatch.StartNew();
                 using (_offlineFirstService.BeginAmbreImportScope())
                 using (var globalLock = await AcquireGlobalLockAsync(countryId, result))
                 {
                     if (globalLock == null) return result;
+                    lockTimer.Stop();
+                    LogManager.Info($"[PERF] Global lock acquired in {lockTimer.ElapsedMilliseconds}ms");
 
                     // Set sync status now that we have the lock
                     try { await _offlineFirstService.SetSyncStatusAsync("Processing"); } catch { }
 
                     // 5. Lecture et traitement des données
+                    var processTimer = System.Diagnostics.Stopwatch.StartNew();
                     var processedData = await ProcessDataAsync(
                         files, config, countryId, isMultiFile, result, progressCallback);
                     
@@ -111,15 +126,23 @@ namespace RecoTool.Services
                         result.Errors.Add("No valid data after processing.");
                         return result;
                     }
+                    processTimer.Stop();
+                    LogManager.Info($"[PERF] Data processing completed: {processedData.Count} records in {processTimer.ElapsedMilliseconds}ms");
 
                     // 6. Synchronisation avec la base de données
                     try { await _offlineFirstService.SetSyncStatusAsync("Synchronizing"); } catch { }
+                    var syncTimer = System.Diagnostics.Stopwatch.StartNew();
                     await _databaseSynchronizer.SynchronizeAsync(
                         processedData, countryId, result, progressCallback);
+                    syncTimer.Stop();
+                    LogManager.Info($"[PERF] Database synchronization completed in {syncTimer.ElapsedMilliseconds}ms");
                 }
 
                 // 7. Finalisation
+                var finalTimer = System.Diagnostics.Stopwatch.StartNew();
                 await FinalizeImportAsync(countryId, result, progressCallback);
+                finalTimer.Stop();
+                LogManager.Info($"[PERF] Finalization completed in {finalTimer.ElapsedMilliseconds}ms");
                 
                 // Force reconnection of TodoListSessionTracker to avoid lingering OleDbExceptions
                 // after import completes (in case Access DB had lock contention issues)
@@ -132,12 +155,16 @@ namespace RecoTool.Services
                 
                 result.IsSuccess = true;
                 result.EndTime = DateTime.UtcNow;
+                totalTimer.Stop();
+                LogManager.Info($"[PERF] ===== AMBRE IMPORT COMPLETED for {countryId} in {totalTimer.ElapsedMilliseconds}ms (total) =====");
                 return result;
             }
             catch (Exception ex)
             {
+                totalTimer.Stop();
                 result.Errors.Add($"Error during import: {ex.Message}");
                 result.EndTime = DateTime.UtcNow;
+                LogManager.Error($"[PERF] ===== AMBRE IMPORT FAILED for {countryId} after {totalTimer.ElapsedMilliseconds}ms =====", ex);
                 
                 // Force reconnection even on error to avoid lingering OleDbExceptions
                 try { TodoListSessionTracker.CloseAllConnections(); } catch { }

@@ -85,32 +85,50 @@ namespace RecoTool.Services.AmbreImport
                 try
                 {
                     // Backup
+                    var backupTimer = System.Diagnostics.Stopwatch.StartNew();
                     try { await _offlineFirstService.CreateLocalReconciliationBackupAsync(countryId, "PreImport"); } catch { }
+                    backupTimer.Stop();
+                    LogManager.Info($"[PERF] Backup completed in {backupTimer.ElapsedMilliseconds}ms");
 
                     // Apply changes
                     try { await _offlineFirstService.SetSyncStatusAsync("ApplyingChanges"); } catch { }
+                    var applyTimer = System.Diagnostics.Stopwatch.StartNew();
                     await ApplyChangesAsync(changes, countryId);
+                    applyTimer.Stop();
+                    LogManager.Info($"[PERF] ApplyChanges (T_Data_Ambre) completed in {applyTimer.ElapsedMilliseconds}ms");
 
                     // Update reconciliation
                     try { await _offlineFirstService.SetSyncStatusAsync("Reconciling"); } catch { }
+                    var recoTimer = System.Diagnostics.Stopwatch.StartNew();
                     await UpdateReconciliationTableAsync(changes, countryId);
+                    recoTimer.Stop();
+                    LogManager.Info($"[PERF] UpdateReconciliationTable completed in {recoTimer.ElapsedMilliseconds}ms");
 
                     // Snapshot KPIs
+                    var kpiTimer = System.Diagnostics.Stopwatch.StartNew();
                     await CreateKpiSnapshotAsync(countryId);
+                    kpiTimer.Stop();
+                    LogManager.Info($"[PERF] CreateKpiSnapshot completed in {kpiTimer.ElapsedMilliseconds}ms");
 
                     // Publish to network
                     try { await _offlineFirstService.SetSyncStatusAsync("Publishing"); } catch { }
+                    var publishTimer = System.Diagnostics.Stopwatch.StartNew();
                     // 1) Publish AMBRE as ZIP to network
                     try { await _offlineFirstService.CopyLocalToNetworkAmbreAsync(countryId).ConfigureAwait(false); } catch (Exception ex) { LogManager.Warning($"AMBRE: publish to network failed: {ex.Message}"); }
                     // 2) Publish country reconciliation DB to network
                     await _offlineFirstService.CopyLocalToNetworkAsync(countryId).ConfigureAwait(false);
+                    publishTimer.Stop();
+                    LogManager.Info($"[PERF] Publish to network completed in {publishTimer.ElapsedMilliseconds}ms");
 
                     // Finalize
                     try { await _offlineFirstService.SetSyncStatusAsync("Finalizing"); } catch { }
+                    var finalizeTimer = System.Diagnostics.Stopwatch.StartNew();
                     await _offlineFirstService.MarkAllLocalChangesAsSyncedAsync(countryId);
                     
                     // Cleanup
                     try { await _offlineFirstService.CleanupChangeLogAndCompactAsync(countryId); } catch { }
+                    finalizeTimer.Stop();
+                    LogManager.Info($"[PERF] Finalize and cleanup completed in {finalizeTimer.ElapsedMilliseconds}ms");
                 }
                 catch (Exception ex)
                 {

@@ -50,8 +50,6 @@ namespace RecoTool.Windows
             {
                 FilterCurrency = null;
                 _filterCountry = null; // informational only
-                FilterMinAmount = null;
-                FilterMaxAmount = null;
                 FilterFromDate = null;
                 FilterGuaranteeType = null;
                 FilterTransactionType = null;
@@ -66,8 +64,6 @@ namespace RecoTool.Windows
                 FilterUnmatched = false;
                 FilterNewLines = false;
                 FilterActionDone = null;
-                FilterActionDateFrom = null;
-                FilterActionDateTo = null;
                 FilterDwGuaranteeId = null;
                 FilterDwCommissionId = null;
                 FilterReconciliationNum = null;

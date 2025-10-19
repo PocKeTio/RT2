@@ -43,8 +43,6 @@ namespace RecoTool.Windows
                 FilterFromDate = null;
                 FilterToDate = null;
                 FilterDeletedDate = null;
-                FilterMinAmount = null;
-                FilterMaxAmount = null;
                 FilterReconciliationNum = null;
                 FilterRawLabel = null;
                 FilterEventNum = null;
@@ -70,8 +68,6 @@ namespace RecoTool.Windows
                 FilterUnmatched = false;
                 FilterNewLines = false;
                 FilterActionDone = null; // reset to All
-                FilterActionDateFrom = null;
-                FilterActionDateTo = null;
                 FilterLastReviewed = null; // reset to All
 
                 // Apply and refresh title/status

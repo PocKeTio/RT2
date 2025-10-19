@@ -24,11 +24,20 @@ namespace RecoTool.Windows
             if (!string.IsNullOrWhiteSpace(f.Currency))
                 preset.Currency = f.Currency;
             
-            if (f.MinAmount.HasValue)
-                preset.MinAmount = f.MinAmount;
-            
-            if (f.MaxAmount.HasValue)
-                preset.MaxAmount = f.MaxAmount;
+            // Amount with tolerance - store as MinAmount/MaxAmount for backward compatibility
+            if (f.Amount.HasValue)
+            {
+                if (f.AmountWithTolerance)
+                {
+                    preset.MinAmount = f.Amount.Value - 1m;
+                    preset.MaxAmount = f.Amount.Value + 1m;
+                }
+                else
+                {
+                    preset.MinAmount = f.Amount.Value;
+                    preset.MaxAmount = f.Amount.Value;
+                }
+            }
             
             if (f.FromDate.HasValue)
                 preset.FromDate = f.FromDate;
@@ -81,11 +90,15 @@ namespace RecoTool.Windows
             if (f.ActionDone.HasValue)
                 preset.ActionDone = f.ActionDone;
             
-            if (f.ActionDateFrom.HasValue)
-                preset.ActionDateFrom = f.ActionDateFrom;
+            // ActionDate - store as ActionDateFrom/ActionDateTo for backward compatibility
+            if (f.ActionDate.HasValue)
+            {
+                preset.ActionDateFrom = f.ActionDate.Value.Date;
+                preset.ActionDateTo = f.ActionDate.Value.Date.AddDays(1).AddSeconds(-1);
+            }
             
-            if (f.ActionDateTo.HasValue)
-                preset.ActionDateTo = f.ActionDateTo;
+            // ToRemind and RemindDate - note: FilterPreset may not have these fields yet
+            // They will be handled in-memory only for now
             
             return preset;
         }
@@ -99,8 +112,30 @@ namespace RecoTool.Windows
                 // FilterAccountId = p.AccountId;
                 FilterCurrency = p.Currency;
                 _filterCountry = p.Country; // informational
-                FilterMinAmount = p.MinAmount;
-                FilterMaxAmount = p.MaxAmount;
+                
+                // Restore Amount from MinAmount/MaxAmount
+                if (p.MinAmount.HasValue && p.MaxAmount.HasValue)
+                {
+                    if (p.MinAmount.Value == p.MaxAmount.Value)
+                    {
+                        // Exact amount
+                        FilterAmount = p.MinAmount.Value.ToString();
+                    }
+                    else if (Math.Abs(p.MaxAmount.Value - p.MinAmount.Value - 2m) < 0.01m)
+                    {
+                        // Tolerance range (+/- 1)
+                        var midpoint = (p.MinAmount.Value + p.MaxAmount.Value) / 2m;
+                        FilterAmount = midpoint.ToString() + "!";
+                    }
+                }
+                else if (p.MinAmount.HasValue)
+                {
+                    FilterAmount = p.MinAmount.Value.ToString();
+                }
+                else if (p.MaxAmount.HasValue)
+                {
+                    FilterAmount = p.MaxAmount.Value.ToString();
+                }
                 FilterFromDate = p.FromDate;
                 FilterToDate = p.ToDate;
                 // Prefer ID-based restore
@@ -121,8 +156,12 @@ namespace RecoTool.Windows
                 FilterNewLines = p.NewLines ?? false;
                 // New
                 FilterActionDone = p.ActionDone;
-                FilterActionDateFrom = p.ActionDateFrom;
-                FilterActionDateTo = p.ActionDateTo;
+                
+                // Restore ActionDate from ActionDateFrom (use From date as the specific date)
+                if (p.ActionDateFrom.HasValue)
+                {
+                    FilterActionDate = p.ActionDateFrom.Value;
+                }
             }
             catch { }
         }
@@ -171,8 +210,8 @@ namespace RecoTool.Windows
             {
                 // AccountId excluded - managed by page/todolist
                 Currency = f.Currency,
-                MinAmount = f.MinAmount,
-                MaxAmount = f.MaxAmount,
+                Amount = f.Amount,
+                AmountWithTolerance = f.AmountWithTolerance,
                 FromDate = f.FromDate,
                 ToDate = f.ToDate,
                 DeletedDate = f.DeletedDate,
@@ -191,8 +230,9 @@ namespace RecoTool.Windows
                 KpiId = f.KpiId,
                 IncidentTypeId = f.IncidentTypeId,
                 ActionDone = f.ActionDone,
-                ActionDateFrom = f.ActionDateFrom,
-                ActionDateTo = f.ActionDateTo,
+                ActionDate = f.ActionDate,
+                ToRemind = f.ToRemind,
+                RemindDate = f.RemindDate,
             };
             var result = RecoTool.Domain.Filters.FilterBuilder.BuildWhere(state);
             System.Diagnostics.Debug.WriteLine($"[GenerateWhereClause] Generated SQL: {result}");
@@ -225,10 +265,27 @@ namespace RecoTool.Windows
                 return DateTime.TryParse(v, out var dt) ? dt : (DateTime?)null;
             }
 
-            FilterAccountId = GetString(@"Account_ID\s*=\s*'([^']*)'");
-            FilterCurrency = GetString(@"CCY\s*=\s*'([^']*)'");
-            FilterMinAmount = GetDecimal(@"SignedAmount\s*>=\s*([0-9]+(?:\.[0-9]+)?)");
-            FilterMaxAmount = GetDecimal(@"SignedAmount\s*<=\s*([0-9]+(?:\.[0-9]+)?)");
+            FilterAccountId = GetString(@"Account_ID\s*=\s*'([^']*)'" );
+            FilterCurrency = GetString(@"CCY\s*=\s*'([^']*)'" );
+            
+            // Try to restore Amount filter (exact or with tolerance)
+            var exactAmount = GetDecimal(@"SignedAmount\s*=\s*([0-9]+(?:\.[0-9]+)?)" );
+            var minAmount = GetDecimal(@"SignedAmount\s*>=\s*([0-9]+(?:\.[0-9]+)?)" );
+            var maxAmount = GetDecimal(@"SignedAmount\s*<=\s*([0-9]+(?:\.[0-9]+)?)" );
+            
+            if (exactAmount.HasValue)
+            {
+                FilterAmount = exactAmount.Value.ToString();
+            }
+            else if (minAmount.HasValue && maxAmount.HasValue)
+            {
+                // Check if it's a tolerance range (+/- 1)
+                if (Math.Abs(maxAmount.Value - minAmount.Value - 2m) < 0.01m)
+                {
+                    var midpoint = (minAmount.Value + maxAmount.Value) / 2m;
+                    FilterAmount = midpoint.ToString() + "!";
+                }
+            }
             var d1 = GetDate(@"Operation_Date\s*>=\s*#([0-9]{4}-[0-9]{2}-[0-9]{2})#");
             var d2 = GetDate(@"Operation_Date\s*<=\s*#([0-9]{4}-[0-9]{2}-[0-9]{2})#");
             FilterFromDate = d1;

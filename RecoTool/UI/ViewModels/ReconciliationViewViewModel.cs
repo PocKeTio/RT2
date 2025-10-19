@@ -79,16 +79,36 @@ namespace RecoTool.UI.ViewModels
             set { if (CurrentFilter.Currency != value) { CurrentFilter.Currency = value; OnPropertyChanged(); } }
         }
 
-        public decimal? FilterMinAmount
+        public string FilterAmount
         {
-            get => CurrentFilter.MinAmount;
-            set { if (CurrentFilter.MinAmount != value) { CurrentFilter.MinAmount = value; OnPropertyChanged(); } }
-        }
-
-        public decimal? FilterMaxAmount
-        {
-            get => CurrentFilter.MaxAmount;
-            set { if (CurrentFilter.MaxAmount != value) { CurrentFilter.MaxAmount = value; OnPropertyChanged(); } }
+            get => CurrentFilter.Amount?.ToString();
+            set 
+            { 
+                // Parse amount and check for tolerance indicator (!)
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    CurrentFilter.Amount = null;
+                    CurrentFilter.AmountWithTolerance = false;
+                }
+                else
+                {
+                    var trimmed = value.Trim();
+                    var hasTolerance = trimmed.EndsWith("!");
+                    var amountStr = hasTolerance ? trimmed.TrimEnd('!') : trimmed;
+                    
+                    if (decimal.TryParse(amountStr, out var amount))
+                    {
+                        CurrentFilter.Amount = amount;
+                        CurrentFilter.AmountWithTolerance = hasTolerance;
+                    }
+                    else
+                    {
+                        CurrentFilter.Amount = null;
+                        CurrentFilter.AmountWithTolerance = false;
+                    }
+                }
+                OnPropertyChanged(); 
+            }
         }
 
         public string FilterDwGuaranteeId
@@ -151,16 +171,22 @@ namespace RecoTool.UI.ViewModels
             set { if (CurrentFilter.ActionDone != value) { CurrentFilter.ActionDone = value; OnPropertyChanged(); } }
         }
 
-        public DateTime? FilterActionDateFrom
+        public DateTime? FilterActionDate
         {
-            get => CurrentFilter.ActionDateFrom;
-            set { if (CurrentFilter.ActionDateFrom != value) { CurrentFilter.ActionDateFrom = value; OnPropertyChanged(); } }
+            get => CurrentFilter.ActionDate;
+            set { if (CurrentFilter.ActionDate != value) { CurrentFilter.ActionDate = value; OnPropertyChanged(); } }
         }
 
-        public DateTime? FilterActionDateTo
+        public bool? FilterToRemind
         {
-            get => CurrentFilter.ActionDateTo;
-            set { if (CurrentFilter.ActionDateTo != value) { CurrentFilter.ActionDateTo = value; OnPropertyChanged(); } }
+            get => CurrentFilter.ToRemind;
+            set { if (CurrentFilter.ToRemind != value) { CurrentFilter.ToRemind = value; OnPropertyChanged(); } }
+        }
+
+        public DateTime? FilterRemindDate
+        {
+            get => CurrentFilter.RemindDate;
+            set { if (CurrentFilter.RemindDate != value) { CurrentFilter.RemindDate = value; OnPropertyChanged(); } }
         }
 
         public bool FilterPotentialDuplicates
@@ -249,9 +275,24 @@ namespace RecoTool.UI.ViewModels
                     (x.CCY == null || x.CCY.IndexOf(currency, System.StringComparison.OrdinalIgnoreCase) < 0))
                     continue;
 
-                // Amount range
-                if (f.MinAmount.HasValue && x.SignedAmount < f.MinAmount.Value) continue;
-                if (f.MaxAmount.HasValue && x.SignedAmount > f.MaxAmount.Value) continue;
+                // Amount filter with optional tolerance
+                if (f.Amount.HasValue)
+                {
+                    if (f.AmountWithTolerance)
+                    {
+                        // Apply +/- 1 tolerance
+                        var minAmount = f.Amount.Value - 1m;
+                        var maxAmount = f.Amount.Value + 1m;
+                        if (x.SignedAmount < minAmount || x.SignedAmount > maxAmount)
+                            continue;
+                    }
+                    else
+                    {
+                        // Exact match
+                        if (x.SignedAmount != f.Amount.Value)
+                            continue;
+                    }
+                }
 
                 // Date range (operation)
                 if (f.FromDate.HasValue && (!x.Operation_Date.HasValue || x.Operation_Date.Value < f.FromDate.Value)) continue;
@@ -363,9 +404,16 @@ namespace RecoTool.UI.ViewModels
                             continue;
                     }
                 }
-                if (f.ActionDateFrom.HasValue && (!x.ActionDate.HasValue || x.ActionDate.Value < f.ActionDateFrom.Value))
+                // Action Date (specific date)
+                if (f.ActionDate.HasValue && (!x.ActionDate.HasValue || x.ActionDate.Value.Date != f.ActionDate.Value.Date))
                     continue;
-                if (f.ActionDateTo.HasValue && (!x.ActionDate.HasValue || x.ActionDate.Value > f.ActionDateTo.Value))
+
+                // ToRemind filter
+                if (f.ToRemind.HasValue && x.ToRemind != f.ToRemind.Value)
+                    continue;
+
+                // RemindDate (specific date)
+                if (f.RemindDate.HasValue && (!x.ToRemindDate.HasValue || x.ToRemindDate.Value.Date != f.RemindDate.Value.Date))
                     continue;
 
                 // Last Reviewed filter (based on ActionStatus = Done and ActionDate)

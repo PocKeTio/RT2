@@ -21,14 +21,14 @@
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
-        
+
         <!-- Centered Text Style for DataGrid Columns -->
         <Style x:Key="CenteredTextStyle" TargetType="TextBlock">
             <Setter Property="HorizontalAlignment" Value="Center"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="TextAlignment" Value="Center"/>
         </Style>
-        
+
         <!-- Right-aligned Text Style for Numbers -->
         <Style x:Key="RightAlignedTextStyle" TargetType="TextBlock">
             <Setter Property="HorizontalAlignment" Value="Right"/>
@@ -36,13 +36,13 @@
             <Setter Property="TextAlignment" Value="Right"/>
             <Setter Property="Margin" Value="0,0,8,0"/>
         </Style>
-        
+
         <!-- Centered CheckBox Style -->
         <Style x:Key="CenteredCheckBoxStyle" TargetType="CheckBox">
             <Setter Property="HorizontalAlignment" Value="Center"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
-        
+
         <!-- Converters -->
         <local:UserFieldOptionsConverter x:Key="UserFieldOptionsConverter"/>
         <local:ActionColorConverter x:Key="ActionColorConverter"/>
@@ -54,7 +54,7 @@
         <local:IsNegativeConverter x:Key="IsNegativeConverter"/>
         <local:PluralConverter x:Key="PluralConverter"/>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
-        
+
         <!-- Column Header Styles by Data Source -->
         <!-- Ambre: Blue gradient -->
         <Style x:Key="AmbreHeaderStyle" TargetType="DataGridColumnHeader">
@@ -108,7 +108,7 @@
                 </Setter.Value>
             </Setter>
         </Style>
-        
+
         <!-- User/Reconciliation: Green gradient -->
         <Style x:Key="UserHeaderStyle" TargetType="DataGridColumnHeader">
             <Setter Property="Background">
@@ -161,7 +161,7 @@
                 </Setter.Value>
             </Setter>
         </Style>
-        
+
         <!-- DWINGS Invoice: Orange gradient -->
         <Style x:Key="DWInvoiceHeaderStyle" TargetType="DataGridColumnHeader">
             <Setter Property="Background">
@@ -214,7 +214,7 @@
                 </Setter.Value>
             </Setter>
         </Style>
-        
+
         <!-- DWINGS Guarantee: Purple gradient -->
         <Style x:Key="DWGuaranteeHeaderStyle" TargetType="DataGridColumnHeader">
             <Setter Property="Background">
@@ -279,10 +279,12 @@
         <Border x:Name="MultiUserWarningBanner" Grid.Row="0" Visibility="Collapsed" Padding="8,4" Margin="0">
             <Border.Style>
                 <Style TargetType="Border">
-                    <Setter Property="Background" Value="#FFF9E6"/> <!-- Yellow for viewing -->
+                    <Setter Property="Background" Value="#FFF9E6"/>
+                    <!-- Yellow for viewing -->
                     <Style.Triggers>
                         <DataTrigger Binding="{Binding ElementName=MultiUserWarningBanner, Path=Tag}" Value="Editing">
-                            <Setter Property="Background" Value="#FFE6E6"/> <!-- Red for editing -->
+                            <Setter Property="Background" Value="#FFE6E6"/>
+                            <!-- Red for editing -->
                         </DataTrigger>
                     </Style.Triggers>
                 </Style>
@@ -291,10 +293,12 @@
                 <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
-                            <Setter Property="Foreground" Value="#CC8800"/> <!-- Dark yellow -->
+                            <Setter Property="Foreground" Value="#CC8800"/>
+                            <!-- Dark yellow -->
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding ElementName=MultiUserWarningBanner, Path=Tag}" Value="Editing">
-                                    <Setter Property="Foreground" Value="#CC0000"/> <!-- Dark red -->
+                                    <Setter Property="Foreground" Value="#CC0000"/>
+                                    <!-- Dark red -->
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
@@ -303,10 +307,12 @@
                 <TextBlock x:Name="MultiUserWarningText" FontSize="11" VerticalAlignment="Center">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
-                            <Setter Property="Foreground" Value="#CC8800"/> <!-- Dark yellow -->
+                            <Setter Property="Foreground" Value="#CC8800"/>
+                            <!-- Dark yellow -->
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding ElementName=MultiUserWarningBanner, Path=Tag}" Value="Editing">
-                                    <Setter Property="Foreground" Value="#CC0000"/> <!-- Dark red -->
+                                    <Setter Property="Foreground" Value="#CC0000"/>
+                                    <!-- Dark red -->
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
@@ -368,10 +374,10 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                        
+
                         <!-- Separator -->
                         <Rectangle Width="2" Height="40" Fill="#E2E8F0" Margin="4,0"/>
-                        
+
                         <!-- Not Linked -->
                         <Border x:Name="KpiNotLinkedBorder" Background="#FFEBEE" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#EF9A9A" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="NotLinked"
                                 ToolTip="Not linked with DWINGS">
@@ -383,7 +389,7 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                        
+
                         <!-- Not Grouped -->
                         <Border x:Name="KpiNotGroupedBorder" Background="#FFF3E0" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#FFCC80" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="NotGrouped"
                                 ToolTip="Not grouped across accounts">
@@ -395,7 +401,7 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                        
+
                         <!-- To Review -->
                         <Border x:Name="KpiToReviewBorder" Background="#FFF7ED" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#FFEDD5" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="ToReview">
                             <StackPanel Orientation="Horizontal">
@@ -406,7 +412,7 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                        
+
                         <!-- To Remind -->
                         <Border x:Name="KpiToRemindBorder" Background="#FFF3E0" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#FFCC80" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="ToRemind"
                                 ToolTip="Active reminders (today or past due)">
@@ -418,7 +424,7 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                        
+
                         <!-- Reviewed -->
                         <Border x:Name="KpiReviewedBorder" Background="#ECFDF5" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#D1FAE5" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="Reviewed">
                             <StackPanel Orientation="Horizontal">
@@ -429,7 +435,7 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                        
+
                         <!-- Has Differences -->
                         <Border x:Name="KpiHasDifferencesBorder" Background="#FFFDE7" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#FFF59D" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="HasDifferences"
                                 ToolTip="Has discrepancy in amounts">
@@ -441,7 +447,7 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                        
+
                         <!-- Matched -->
                         <Border x:Name="KpiMatchedBorder" Background="#E8F5E9" CornerRadius="6" Padding="10,6" Margin="0,0,4,0" BorderBrush="#A5D6A7" BorderThickness="1" Cursor="Hand" MouseLeftButtonUp="KpiFilter_Click" Tag="Matched"
                                 ToolTip="Balanced and grouped">
@@ -978,6 +984,10 @@
             <!-- Data Grid Section -->
             <Border Grid.Row="2" Background="White" BorderBrush="#DDDDDD" BorderThickness="1" CornerRadius="8">
                 <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="19*"/>
+                        <ColumnDefinition Width="879*"/>
+                    </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
@@ -987,7 +997,7 @@
                     <!-- Loading Overlay -->
                     <Border Grid.RowSpan="3" Background="#80FFFFFF" 
                 Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}"
-                Panel.ZIndex="1000">
+                Panel.ZIndex="1000" Grid.ColumnSpan="2">
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                             <TextBlock Text="⏳" FontSize="48" HorizontalAlignment="Center" Margin="0,0,0,16" RenderTransformOrigin="0.5,0.5">
                                 <TextBlock.RenderTransform>
@@ -1018,7 +1028,6 @@
                               IsReadOnly="False"
                               HeadersVisibility="All"
                               GridLinesVisibility="Horizontal"
-                              Margin="0,0,0,0"
                               ItemsSource="{Binding VM.ViewData, RelativeSource={RelativeSource AncestorType=UserControl}}"
                               EnableRowVirtualization="True"
                               EnableColumnVirtualization="False"
@@ -1041,7 +1050,7 @@
                               RowHeight="28"
                               RowHeaderWidth="0"
                               MouseDoubleClick="ResultsDataGrid_MouseDoubleClick"
-                              CellEditEnding="ResultsDataGrid_CellEditEnding">
+                              CellEditEnding="ResultsDataGrid_CellEditEnding" Grid.ColumnSpan="2" Grid.RowSpan="2">
                         <DataGrid.Resources>
                             <!-- In-grid editing: decouple ComboBox visuals from theme to avoid ancestor-binding errors -->
                             <Style TargetType="ComboBox" BasedOn="{x:Null}">
@@ -1205,7 +1214,7 @@
                                             <Ellipse Width="12" Height="12" Fill="{Binding StatusColor}" 
                                                      ToolTip="{Binding StatusTooltip}"/>
                                         </StackPanel>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            </DataTemplate>
+                                    </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <!-- Group indicator (clickable) - OPTIMIZED: Direct Visibility binding -->
@@ -1246,7 +1255,7 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="MT Error message" Binding="{Binding I_ERROR_MESSAGE}" Width="220" IsReadOnly="True" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
-                            <DataGridTextColumn Header="Amount in original CCY" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="150" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
+                            <DataGridTextColumn Header="Amount" Binding="{Binding LocalSignedAmount, StringFormat={}{0:N2}}" Width="150" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
                             <DataGridTextColumn Header="Operation Date" Binding="{Binding Operation_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
                             <DataGridTextColumn Header="Reconciliation Num" Binding="{Binding Reconciliation_Num}" Width="130" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
                             <DataGridTextColumn Header="Reconciliation Origin Num" Binding="{Binding ReconciliationOrigin_Num}" Width="150" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
@@ -1254,9 +1263,9 @@
                             <DataGridTextColumn Header="DW Invoice ID (BGI)" Binding="{Binding DWINGS_InvoiceID}" Width="150" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
                             <DataGridTextColumn Header="DW Commission (BGPMT)" Binding="{Binding DWINGS_BGPMT}" Width="170" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
                             <DataGridTextColumn Header="DW Guarantee ID" Binding="{Binding DWINGS_GuaranteeID}" Width="170" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
-                            <DataGridTextColumn Header="Amount in Country Cur" Binding="{Binding SignedAmount, StringFormat={}{0:N2}}" Width="150" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
+                            <DataGridTextColumn Header="Amount in original CCY" Binding="{Binding SignedAmount, StringFormat={}{0:N2}}" Width="150" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
                             <DataGridTextColumn Header="CCY" Binding="{Binding CCY}" Width="60" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
-                            
+
                             <!-- Missing Amount: conditional formatting (Green=0, Orange>0, Red<0) -->
                             <!-- OPTIMIZED: Use pre-calculated properties instead of converters to avoid overhead during scroll -->
                             <DataGridTemplateColumn Header="Missing Amount" Width="130" SortMemberPath="MissingAmount" IsReadOnly="True">
@@ -1287,7 +1296,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            
+
                             <!-- Counterpart Info: Total amount and count -->
                             <DataGridTemplateColumn Header="Counterpart" Width="150" SortMemberPath="CounterpartTotalAmount" IsReadOnly="True">
                                 <DataGridTemplateColumn.CellTemplate>
@@ -1321,7 +1330,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            
+
                             <DataGridTextColumn Header="Value Date" Binding="{Binding Value_Date, StringFormat={}{0:dd/MM/yyyy}}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
                             <DataGridTextColumn Header="Guarantee Type" Width="130" IsReadOnly="True" SortMemberPath="G_GUARANTEE_TYPE" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}">
                                 <DataGridTextColumn.Binding>
@@ -1644,7 +1653,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
-                            
+
                             <!-- Incident Number: editable text field -->
                             <DataGridTextColumn Header="Incident Number" Binding="{Binding IncNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" HeaderStyle="{StaticResource UserHeaderStyle}"/>
                             <DataGridTemplateColumn Header="Risky Item" Width="100" SortMemberPath="RiskyItem" HeaderStyle="{StaticResource UserHeaderStyle}">
@@ -1693,13 +1702,13 @@
 
                             <DataGridTextColumn Header="DW Currency" Binding="{Binding GUARANTEE_CURRENCY}" Width="80" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
                             <DataGridTextColumn Header="DW Amount" Binding="{Binding GUARANTEE_AMOUNT, StringFormat={}{0:N2}}" Width="120" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
-                            
+
                             <!-- DWINGS Guarantee extended fields -->
                             <DataGridTextColumn Header="NatureOfDeal" Binding="{Binding G_NATUREOFDEAL}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
                             <DataGridTextColumn Header="Issue Date" Binding="{Binding G_ISSUEDATE}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
                             <DataGridTextColumn Header="PartyID" Binding="{Binding G_PARTY_ID}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
                             <DataGridTextColumn Header="PartyName" Binding="{Binding G_NAME1}" Width="160" IsReadOnly="True" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
-                            
+
                             <!-- DWINGS Invoice extended fields -->
                             <DataGridTextColumn Header="Payment Request Status" Binding="{Binding I_T_PAYMENT_REQUEST_STATUS}" Width="150" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
                             <DataGridTextColumn Header="Req Amount" Binding="{Binding I_REQUESTED_INVOICE_AMOUNT}" Width="130" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource DWInvoiceHeaderStyle}"/>
@@ -1716,12 +1725,12 @@
                     <Button x:Name="LoadMoreFooterButton"
                             Grid.Row="2"
                             Content="Charger plus de données"
-                            Margin="8"
+                            Margin="430,0,0,0"
                             Padding="10,6"
-                            HorizontalAlignment="Center"
+                            HorizontalAlignment="Left"
                             VerticalAlignment="Center"
                             Visibility="Collapsed"
-                            Click="LoadMoreButton_Click"/>
+                            Click="LoadMoreButton_Click" Grid.Column="1"/>
                 </Grid>
             </Border>
         </Grid>

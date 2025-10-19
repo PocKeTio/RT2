@@ -10,8 +10,8 @@ namespace RecoTool.Domain.Filters
     {
         public string AccountId { get; set; }
         public string Currency { get; set; }
-        public decimal? MinAmount { get; set; }
-        public decimal? MaxAmount { get; set; }
+        public decimal? Amount { get; set; } // Fixed amount filter
+        public bool AmountWithTolerance { get; set; } // If true, apply +/- 1 tolerance
         public bool? PotentialDuplicates { get; set; }
         // New flags
         public bool? Unmatched { get; set; } // Dwings: no invoice linked
@@ -37,9 +37,10 @@ namespace RecoTool.Domain.Filters
         public bool? Ack { get; set; }
         public int? IncidentTypeId { get; set; }
         public bool? ActionDone { get; set; }
-        public DateTime? ActionDateFrom { get; set; }
-        public DateTime? ActionDateTo { get; set; }
+        public DateTime? ActionDate { get; set; } // Specific action date filter
         public DateTime? DeletedDate { get; set; }
+        public bool? ToRemind { get; set; } // Filter by ToRemind flag
+        public DateTime? RemindDate { get; set; } // Filter by specific remind date
         public string LastReviewed { get; set; } // Never | Today | 1week | 1month
     }
 }

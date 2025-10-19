@@ -1130,8 +1130,7 @@ namespace RecoTool.Windows
         public DateTime? FilterFromDate { get => VM.FilterFromDate; set { VM.FilterFromDate = value; OnPropertyChanged(nameof(FilterFromDate)); ScheduleApplyFiltersDebounced(); } }
         public DateTime? FilterToDate { get => VM.FilterToDate; set { VM.FilterToDate = value; OnPropertyChanged(nameof(FilterToDate)); ScheduleApplyFiltersDebounced(); } }
         public DateTime? FilterDeletedDate { get => VM.FilterDeletedDate; set { VM.FilterDeletedDate = value; OnPropertyChanged(nameof(FilterDeletedDate)); ScheduleApplyFiltersDebounced(); } }
-        public decimal? FilterMinAmount { get => VM.FilterMinAmount; set { VM.FilterMinAmount = value; OnPropertyChanged(nameof(FilterMinAmount)); ScheduleApplyFiltersDebounced(); } }
-        public decimal? FilterMaxAmount { get => VM.FilterMaxAmount; set { VM.FilterMaxAmount = value; OnPropertyChanged(nameof(FilterMaxAmount)); ScheduleApplyFiltersDebounced(); } }
+        public string FilterAmount { get => VM.FilterAmount; set { VM.FilterAmount = value; OnPropertyChanged(nameof(FilterAmount)); ScheduleApplyFiltersDebounced(); } }
         public string FilterReconciliationNum { get => VM.FilterReconciliationNum; set { VM.FilterReconciliationNum = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterReconciliationNum)); ScheduleApplyFiltersDebounced(); } }
         public string FilterRawLabel { get => VM.FilterRawLabel; set { VM.FilterRawLabel = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterRawLabel)); ScheduleApplyFiltersDebounced(); } }
         public string FilterEventNum { get => VM.FilterEventNum; set { VM.FilterEventNum = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterEventNum)); ScheduleApplyFiltersDebounced(); } }
@@ -1201,16 +1200,22 @@ namespace RecoTool.Windows
             set { VM.FilterActionDone = value; OnPropertyChanged(nameof(FilterActionDone)); ScheduleApplyFiltersDebounced(); }
         }
 
-        public DateTime? FilterActionDateFrom
+        public DateTime? FilterActionDate
         {
-            get => VM.FilterActionDateFrom;
-            set { VM.FilterActionDateFrom = value; OnPropertyChanged(nameof(FilterActionDateFrom)); ScheduleApplyFiltersDebounced(); }
+            get => VM.FilterActionDate;
+            set { VM.FilterActionDate = value; OnPropertyChanged(nameof(FilterActionDate)); ScheduleApplyFiltersDebounced(); }
         }
 
-        public DateTime? FilterActionDateTo
+        public bool? FilterToRemind
         {
-            get => VM.FilterActionDateTo;
-            set { VM.FilterActionDateTo = value; OnPropertyChanged(nameof(FilterActionDateTo)); ScheduleApplyFiltersDebounced(); }
+            get => VM.FilterToRemind;
+            set { VM.FilterToRemind = value; OnPropertyChanged(nameof(FilterToRemind)); ScheduleApplyFiltersDebounced(); }
+        }
+
+        public DateTime? FilterRemindDate
+        {
+            get => VM.FilterRemindDate;
+            set { VM.FilterRemindDate = value; OnPropertyChanged(nameof(FilterRemindDate)); ScheduleApplyFiltersDebounced(); }
         }
 
         public string FilterLastReviewed

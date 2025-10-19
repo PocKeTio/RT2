@@ -33,8 +33,21 @@ namespace RecoTool.Domain.Filters
 
             if (!string.IsNullOrWhiteSpace(f.AccountId)) parts.Add($"Account_ID = '{Esc(f.AccountId)}'");
             if (!string.IsNullOrWhiteSpace(f.Currency)) parts.Add($"CCY = '{Esc(f.Currency)}'");
-            if (f.MinAmount.HasValue) parts.Add($"SignedAmount >= {f.MinAmount.Value.ToString(CultureInfo.InvariantCulture)}");
-            if (f.MaxAmount.HasValue) parts.Add($"SignedAmount <= {f.MaxAmount.Value.ToString(CultureInfo.InvariantCulture)}");
+            
+            // Amount filter with optional tolerance
+            if (f.Amount.HasValue)
+            {
+                if (f.AmountWithTolerance)
+                {
+                    var minAmount = f.Amount.Value - 1m;
+                    var maxAmount = f.Amount.Value + 1m;
+                    parts.Add($"SignedAmount >= {minAmount.ToString(CultureInfo.InvariantCulture)} AND SignedAmount <= {maxAmount.ToString(CultureInfo.InvariantCulture)}");
+                }
+                else
+                {
+                    parts.Add($"SignedAmount = {f.Amount.Value.ToString(CultureInfo.InvariantCulture)}");
+                }
+            }
             if (f.FromDate.HasValue) parts.Add($"Operation_Date >= {DateLit(f.FromDate.Value)}");
             if (f.ToDate.HasValue) parts.Add($"Operation_Date <= {DateLit(f.ToDate.Value)}");
 
@@ -98,8 +111,25 @@ namespace RecoTool.Domain.Filters
             if (f.ActionDone.HasValue)
                 parts.Add(f.ActionDone.Value ? "r.ActionStatus = TRUE" : "(r.ActionStatus = FALSE OR r.ActionStatus IS NULL)");
 
-            if (f.ActionDateFrom.HasValue) parts.Add($"r.ActionDate >= {DateLit(f.ActionDateFrom.Value)}");
-            if (f.ActionDateTo.HasValue) parts.Add($"r.ActionDate <= {DateLit(f.ActionDateTo.Value)}");
+            // ActionDate (specific date filter)
+            if (f.ActionDate.HasValue)
+            {
+                var d = f.ActionDate.Value.Date;
+                var next = d.AddDays(1);
+                parts.Add($"r.ActionDate >= {DateLit(d)} AND r.ActionDate < {DateLit(next)}");
+            }
+            
+            // ToRemind filter
+            if (f.ToRemind.HasValue)
+                parts.Add(f.ToRemind.Value ? "r.ToRemind = TRUE" : "(r.ToRemind = FALSE OR r.ToRemind IS NULL)");
+            
+            // RemindDate (specific date filter)
+            if (f.RemindDate.HasValue)
+            {
+                var d = f.RemindDate.Value.Date;
+                var next = d.AddDays(1);
+                parts.Add($"r.ToRemindDate >= {DateLit(d)} AND r.ToRemindDate < {DateLit(next)}");
+            }
 
             // Comments contains (on reconciliation side)
             if (!string.IsNullOrWhiteSpace(f.Comments))

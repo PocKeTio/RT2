@@ -123,7 +123,10 @@ namespace RecoTool.Windows
                 if (PaymentRequestStatusCombo != null)
                 {
                     PaymentRequestStatusCombo.ItemsSource = statusList;
-                    PaymentRequestStatusCombo.SelectedIndex = 0;
+                    // DEFAULT: Select "INITIATED" status (filter only INITIATED invoices by default)
+                    // User can still select empty to see all, or select guarantee only if no invoice available
+                    var initiatedIndex = statusList.FindIndex(s => string.Equals(s, "INITIATED", StringComparison.OrdinalIgnoreCase));
+                    PaymentRequestStatusCombo.SelectedIndex = initiatedIndex >= 0 ? initiatedIndex : 0;
                 }
             }
             catch { }

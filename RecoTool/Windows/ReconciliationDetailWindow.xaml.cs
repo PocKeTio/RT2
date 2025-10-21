@@ -1168,7 +1168,7 @@ namespace RecoTool.UI.Views.Windows
                 if (_item == null || _reconciliationService == null) return;
 
                 var result = MessageBox.Show(
-                    "Remove all DWINGS links (BGI, BGPMT, GuaranteeID)?\n\nThis will clear:\n• DWINGS_InvoiceID (BGI)\n• DWINGS_BGPMT\n• DWINGS_GuaranteeID\n• PaymentReference\n\nContinue?",
+                    "Remove all DWINGS links (BGI, BGPMT, GuaranteeID)?\n\nThis will clear:\n• DWINGS_InvoiceID (BGI)\n• DWINGS_BGPMT\n• DWINGS_GuaranteeID\n\nPaymentReference will be kept.\n\nContinue?",
                     "Confirm Unlink",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning);
@@ -1178,29 +1178,24 @@ namespace RecoTool.UI.Views.Windows
                 var reco = _reconciliation ?? await _reconciliationService.GetOrCreateReconciliationAsync(_item.ID);
                 reco.ID = _item.ID;
 
-                // Clear all DWINGS links
+                // Clear all DWINGS links (but keep PaymentReference)
                 reco.DWINGS_InvoiceID = null;
                 reco.DWINGS_BGPMT = null;
                 reco.DWINGS_GuaranteeID = null;
-                reco.PaymentReference = null;
 
                 // Update view model
                 _item.DWINGS_InvoiceID = null;
                 _item.DWINGS_BGPMT = null;
                 _item.DWINGS_GuaranteeID = null;
-                _item.PaymentReference = null;
 
                 await _reconciliationService.SaveReconciliationAsync(reco);
                 _reconciliation = reco;
-                StatusText.Text = "DWINGS links removed and saved.";
-                UpdateLinkStatusBadge();
-
+                
                 // Signal that data was modified (will trigger refresh in ReconciliationView)
                 this.DialogResult = true;
-
-                // Clear the DWINGS results grid
-                if (DwingsResultsGrid != null)
-                    DwingsResultsGrid.ItemsSource = null;
+                
+                // Close the window to force refresh
+                this.Close();
             }
             catch (Exception ex)
             {

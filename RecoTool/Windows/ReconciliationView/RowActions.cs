@@ -436,6 +436,17 @@ namespace RecoTool.Windows
         // Quick mark action as done
         private async void QuickMarkActionDoneMenuItem_Click(object sender, RoutedEventArgs e)
         {
+            await SetActionStatusAsync(sender, true, "DONE");
+        }
+
+        // Quick mark action as pending
+        private async void QuickMarkActionPendingMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            await SetActionStatusAsync(sender, false, "PENDING");
+        }
+
+        private async Task SetActionStatusAsync(object sender, bool isDone, string statusLabel)
+        {
             try
             {
                 // Check multi-user before editing
@@ -453,11 +464,11 @@ namespace RecoTool.Windows
                 var updates = new List<Reconciliation>();
                 foreach (var r in targetRows)
                 {
-                    if (!r.Action.HasValue) continue; // only mark done if an action exists
+                    if (!r.Action.HasValue) continue; // only set status if an action exists
                     var reco = await _reconciliationService.GetOrCreateReconciliationAsync(r.ID);
-                    r.ActionStatus = true;
+                    r.ActionStatus = isDone;
                     r.ActionDate = DateTime.Now;
-                    reco.ActionStatus = true;
+                    reco.ActionStatus = isDone;
                     reco.ActionDate = r.ActionDate;
                     updates.Add(reco);
                 }
@@ -471,7 +482,7 @@ namespace RecoTool.Windows
             }
             catch (Exception ex)
             {
-                ShowError($"Failed to mark action as DONE: {ex.Message}");
+                ShowError($"Failed to mark action as {statusLabel}: {ex.Message}");
             }
         }
 

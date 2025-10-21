@@ -605,9 +605,14 @@ namespace RecoTool.Windows
                     var reminderItem = new MenuItem { Header = "Set Reminder Date…", Tag = "__SetReminder__", DataContext = rowData };
                     reminderItem.Click += QuickSetReminderMenuItem_Click;
                     cm.Items.Add(reminderItem);
-                    var doneItem = new MenuItem { Header = "Set Action as DONE", Tag = "__MarkActionDone__", DataContext = rowData };
+                    var actionStatusMenu = new MenuItem { Header = "Set Action Status" };
+                    var doneItem = new MenuItem { Header = "DONE", Tag = "__MarkActionDone__", DataContext = rowData };
                     doneItem.Click += QuickMarkActionDoneMenuItem_Click;
-                    cm.Items.Add(doneItem);
+                    var pendingItem = new MenuItem { Header = "PENDING", Tag = "__MarkActionPending__", DataContext = rowData };
+                    pendingItem.Click += QuickMarkActionPendingMenuItem_Click;
+                    actionStatusMenu.Items.Add(doneItem);
+                    actionStatusMenu.Items.Add(pendingItem);
+                    cm.Items.Add(actionStatusMenu);
                     var addRuleItem = new MenuItem { Header = "Add Rule based on this line…", Tag = "__AddRuleFromLine__", DataContext = rowData };
                     addRuleItem.Click += QuickAddRuleFromLineMenuItem_Click;
                     cm.Items.Add(addRuleItem);

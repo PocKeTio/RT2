@@ -103,7 +103,7 @@ namespace RecoTool.Services
             using (var connection = new OleDbConnection(dwCs))
             {
                 await connection.OpenAsync().ConfigureAwait(false);
-                using (var cmd = new OleDbCommand(@"SELECT * FROM T_DW_Data WHERE DeletedDate IS NULL", connection))
+                using (var cmd = new OleDbCommand(@"SELECT * FROM T_DW_Data", connection))
                 using (var rd = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
                 {
                     while (await rd.ReadAsync().ConfigureAwait(false))
@@ -139,7 +139,7 @@ namespace RecoTool.Services
                     }
                 }
 
-                using (var cmdG = new OleDbCommand(@"SELECT * FROM T_DW_Guarantee WHERE DeletedDate IS NULL", connection))
+                using (var cmdG = new OleDbCommand(@"SELECT * FROM T_DW_Guarantee", connection))
                 using (var rdG = await cmdG.ExecuteReaderAsync().ConfigureAwait(false))
                 {
                     while (await rdG.ReadAsync().ConfigureAwait(false))

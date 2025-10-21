@@ -926,18 +926,6 @@ namespace RecoTool.UI.Views.Windows
             }
         }
 
-        private async void ReRunAutoSearch_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                // Force a new run regardless of the _autoSearched flag
-                await AutoSearchAsync(force: true);
-            }
-            catch (Exception ex)
-            {
-                SetDiagnostics($"Re-run auto-search error: {ex.Message}", expand: true);
-            }
-        }
 
         private async void LinkDwingsItem_Click(object sender, RoutedEventArgs e)
         {

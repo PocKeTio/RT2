@@ -607,8 +607,7 @@
                                 <TextBox x:Name="DwingsSearchTextBox" Width="300" Style="{StaticResource ModernTextBoxStyle}" Margin="0,0,8,0" 
                                          ToolTip="Search in BGI, BGPMT, Guarantee ID, and Official Ref"/>
                                 <Button x:Name="DwingsSearchButton" Content="Search DWINGS (All Types)" Click="DwingsSearchButton_Click" Style="{StaticResource ModernPrimaryButtonStyle}" Margin="0,0,8,0" Padding="12,6" Height="32"/>
-                                <Button x:Name="DwingsSuggestButton" Content="Suggest" Click="DwingsSuggestButton_Click" Style="{StaticResource ModernButtonStyle}" Margin="0,0,8,0" Padding="12,6" Height="32"/>
-                                <Button x:Name="ReRunAutoSearchButton" Content="Re-run Auto Search" Click="ReRunAutoSearch_Click" Style="{StaticResource ModernButtonStyle}" Padding="12,6" Height="32"/>
+                                <Button x:Name="DwingsSuggestButton" Content="Suggest" Click="DwingsSuggestButton_Click" Style="{StaticResource ModernButtonStyle}" Padding="12,6" Height="32"/>
                             </StackPanel>
                         </Grid>
 

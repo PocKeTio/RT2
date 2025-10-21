@@ -52,7 +52,7 @@ namespace RecoTool.Helpers
         /// <summary>
         /// Resolve a DWINGS invoice by exact BGI match.
         /// BGI = INVOICE_ID (unique identifier), no matching needed.
-        /// Returns the first invoice found with this BGI.
+        /// Returns the invoice found with this BGI, or NULL if ambiguous (multiple matches).
         /// </summary>
         public static DwingsInvoiceDto ResolveInvoiceByBgi(
             IEnumerable<DwingsInvoiceDto> invoices,
@@ -62,7 +62,12 @@ namespace RecoTool.Helpers
             var key = Norm(bgi);
             if (string.IsNullOrWhiteSpace(key)) return null;
 
-            return invoices.FirstOrDefault(i => Norm(i?.INVOICE_ID) == key);
+            var matches = invoices.Where(i => Norm(i?.INVOICE_ID) == key).ToList();
+            
+            // If ambiguous (multiple matches), return null (don't pick any)
+            if (matches.Count > 1) return null;
+            
+            return matches.FirstOrDefault();
         }
 
         /// <summary>
@@ -188,9 +193,9 @@ namespace RecoTool.Helpers
         }
 
         /// <summary>
-        /// Resolve a DWINGS invoice by BGPMT reference.
+        /// Resolve a DWINGS invoice by exact BGPMT match.
         /// BGPMT = commission identifier, no matching needed.
-        /// Returns the first invoice found with this BGPMT.
+        /// Returns the invoice found with this BGPMT, or NULL if ambiguous (multiple matches).
         /// </summary>
         public static DwingsInvoiceDto ResolveInvoiceByBgpmt(
             IEnumerable<DwingsInvoiceDto> invoices,
@@ -200,7 +205,12 @@ namespace RecoTool.Helpers
             var key = Norm(bgpmt);
             if (string.IsNullOrWhiteSpace(key)) return null;
 
-            return invoices.FirstOrDefault(i => Norm(i?.BGPMT) == key);
+            var matches = invoices.Where(i => Norm(i?.BGPMT) == key).ToList();
+            
+            // If ambiguous (multiple matches), return null (don't pick any)
+            if (matches.Count > 1) return null;
+            
+            return matches.FirstOrDefault();
         }
     }
 }

@@ -675,6 +675,19 @@ namespace RecoTool.UI.Views.Windows
             var byGuaranteeId = guarantees.Where(g => string.Equals(g.GUARANTEE_ID, key, StringComparison.OrdinalIgnoreCase)).ToList();
             foreach (var g in byGuaranteeId.Take(10))
             {
+                // Add the guarantee itself as a result (to allow linking by guarantee)
+                results.Add(new DwingsResult
+                {
+                    Type = "Guarantee",
+                    Id = g.GUARANTEE_ID,
+                    Status = g.GUARANTEE_STATUS,
+                    Amount = g.OUTSTANDING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                    Currency = g.CURRENCYNAME,
+                    BGPMT = null,
+                    BusinessCase = g.GUARANTEE_ID,
+                    Description = $"Guarantee: {g.GUARANTEE_ID}"
+                });
+
                 // Find invoices linked to this guarantee
                 var related = invoices.Where(i => 
                     string.Equals(i.BUSINESS_CASE_ID, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase) ||
@@ -709,6 +722,22 @@ namespace RecoTool.UI.Views.Windows
 
                 foreach (var g in byOfficialRef.Take(10))
                 {
+                    // Add the guarantee itself as a result (to allow linking by guarantee)
+                    if (!results.Any(r => r.Id == g.GUARANTEE_ID))
+                    {
+                        results.Add(new DwingsResult
+                        {
+                            Type = "Guarantee (OfficialRef)",
+                            Id = g.GUARANTEE_ID,
+                            Status = g.GUARANTEE_STATUS,
+                            Amount = g.OUTSTANDING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                            Currency = g.CURRENCYNAME,
+                            BGPMT = null,
+                            BusinessCase = g.GUARANTEE_ID,
+                            Description = $"Guarantee via OfficialRef: {g.OFFICIALREF}"
+                        });
+                    }
+
                     var related = invoices.Where(i =>
                         string.Equals(i.BUSINESS_CASE_ID, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(i.BUSINESS_CASE_REFERENCE, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase)

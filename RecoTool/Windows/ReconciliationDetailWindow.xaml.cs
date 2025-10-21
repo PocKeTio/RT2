@@ -597,23 +597,17 @@ namespace RecoTool.UI.Views.Windows
                 }
 
                 string key = DwingsSearchTextBox?.Text?.Trim();
-                var typeItem = DwingsSearchTypeComboBox is ComboBox cb && cb.SelectedItem is ComboBoxItem ci ? (ci.Content?.ToString() ?? "BGPMT") : "BGPMT";
 
-                // Auto-extract if empty
+                // Auto-extract if empty (try all patterns)
                 if (string.IsNullOrWhiteSpace(key) && _item != null)
                 {
-                    if (typeItem.StartsWith("BGPMT", StringComparison.OrdinalIgnoreCase))
-                    {
-                        key = DwingsLinkingHelper.ExtractBgpmtToken(_item.RawLabel) ?? DwingsLinkingHelper.ExtractBgpmtToken(_item.Reconciliation_Num);
-                    }
-                    else if (typeItem.StartsWith("BGI", StringComparison.OrdinalIgnoreCase))
-                    {
-                        key = DwingsLinkingHelper.ExtractBgiToken(_item.RawLabel) ?? DwingsLinkingHelper.ExtractBgiToken(_item.Reconciliation_Num);
-                    }
-                    else if (typeItem.StartsWith("Guarantee", StringComparison.OrdinalIgnoreCase))
-                    {
-                        key = DwingsLinkingHelper.ExtractGuaranteeId(_item.RawLabel) ?? DwingsLinkingHelper.ExtractGuaranteeId(_item.Reconciliation_Num);
-                    }
+                    key = DwingsLinkingHelper.ExtractBgpmtToken(_item.RawLabel) 
+                       ?? DwingsLinkingHelper.ExtractBgpmtToken(_item.Reconciliation_Num)
+                       ?? DwingsLinkingHelper.ExtractBgiToken(_item.RawLabel)
+                       ?? DwingsLinkingHelper.ExtractBgiToken(_item.Reconciliation_Num)
+                       ?? DwingsLinkingHelper.ExtractGuaranteeId(_item.RawLabel)
+                       ?? DwingsLinkingHelper.ExtractGuaranteeId(_item.Reconciliation_Num)
+                       ?? _item.Reconciliation_Num; // Fallback to raw value for OfficialRef
                 }
 
                 if (string.IsNullOrWhiteSpace(key))
@@ -622,7 +616,8 @@ namespace RecoTool.UI.Views.Windows
                     return;
                 }
 
-                var results = await SearchDwingsAsync(typeItem, key);
+                // Search in ALL types automatically
+                var results = await SearchDwingsAllTypesAsync(key);
                 DwingsResultsGrid.ItemsSource = new ObservableCollection<DwingsResult>(results);
                 StatusText.Text = $"DWINGS: {results.Count} result(s).";
             }
@@ -632,126 +627,140 @@ namespace RecoTool.UI.Views.Windows
             }
         }
 
-        private async System.Threading.Tasks.Task<List<DwingsResult>> SearchDwingsAsync(string typeItem, string key)
+        private async System.Threading.Tasks.Task<List<DwingsResult>> SearchDwingsAllTypesAsync(string key)
         {
             var results = new List<DwingsResult>();
             if (string.IsNullOrWhiteSpace(key)) return results;
 
-            // Guarantees: find guarantee, then related invoices via Business Case ref/id
-            if (typeItem.StartsWith("Guarantee", StringComparison.OrdinalIgnoreCase))
-            {
-                var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
-                var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
-                var g = guarantees.FirstOrDefault(x => string.Equals(x.GUARANTEE_ID, key, StringComparison.OrdinalIgnoreCase));
+            var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
+            var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
+            var keyAlnum = System.Text.RegularExpressions.Regex.Replace(key, @"[^A-Za-z0-9]", "");
 
-                IEnumerable<DwingsInvoiceDto> related = Enumerable.Empty<DwingsInvoiceDto>();
-
-                if (g != null)
-                {
-                    // First try exact match on Business Case fields
-                    related = invoices.Where(i => string.Equals(i.BUSINESS_CASE_REFERENCE, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase)
-                                               || string.Equals(i.BUSINESS_CASE_ID, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase));
-
-                    // If none, try contains as a fallback (some data may embed the ID in a longer ref)
-                    if (!related.Any())
-                    {
-                        related = invoices.Where(i => (!string.IsNullOrEmpty(i.BUSINESS_CASE_REFERENCE) && i.BUSINESS_CASE_REFERENCE.IndexOf(g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase) >= 0)
-                                                    || (!string.IsNullOrEmpty(i.BUSINESS_CASE_ID) && i.BUSINESS_CASE_ID.IndexOf(g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase) >= 0));
-                    }
-                }
-                else
-                {
-                    // Guarantee ID not found in the guarantees list: treat the key as a business case ref/id directly
-                    related = invoices.Where(i => string.Equals(i.BUSINESS_CASE_REFERENCE, key, StringComparison.OrdinalIgnoreCase)
-                                               || string.Equals(i.BUSINESS_CASE_ID, key, StringComparison.OrdinalIgnoreCase));
-
-                    if (!related.Any())
-                    {
-                        related = invoices.Where(i => (!string.IsNullOrEmpty(i.BUSINESS_CASE_REFERENCE) && i.BUSINESS_CASE_REFERENCE.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0)
-                                                    || (!string.IsNullOrEmpty(i.BUSINESS_CASE_ID) && i.BUSINESS_CASE_ID.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0));
-                    }
-                }
-
-                foreach (var i in related.Take(200))
-                {
-                    results.Add(new DwingsResult
-                    {
-                        Type = "Invoice",
-                        Id = i.INVOICE_ID,
-                        Status = i.T_INVOICE_STATUS,
-                        Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
-                        Currency = i.BILLING_CURRENCY,
-                        BGPMT = i.BGPMT,
-                        BusinessCase = i.BUSINESS_CASE_REFERENCE,
-                        Description = g != null ? $"Invoice {i.INVOICE_ID} (from Guarantee {g.GUARANTEE_ID})" : $"Invoice {i.INVOICE_ID} (by Business Case)"
-                    });
-                }
-                return results;
-            }
-
-            // Invoices by BGPMT/BGI/Business Case
-            var list = await _reconciliationService.GetDwingsInvoicesAsync();
-            IEnumerable<DwingsInvoiceDto> filtered = list;
-            if (typeItem.StartsWith("BGPMT", StringComparison.OrdinalIgnoreCase))
-            {
-                filtered = filtered.Where(i => string.Equals(i.BGPMT, key, StringComparison.OrdinalIgnoreCase));
-                if (!filtered.Any())
-                    filtered = list.Where(i => !string.IsNullOrEmpty(i.BGPMT) && i.BGPMT.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0);
-            }
-            else if (typeItem.StartsWith("BGI", StringComparison.OrdinalIgnoreCase))
-            {
-                filtered = filtered.Where(i => string.Equals(i.INVOICE_ID, key, StringComparison.OrdinalIgnoreCase));
-                if (!filtered.Any())
-                    filtered = list.Where(i => !string.IsNullOrEmpty(i.INVOICE_ID) && i.INVOICE_ID.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0);
-            }
-            else if (typeItem.StartsWith("Business Case Ref", StringComparison.OrdinalIgnoreCase))
-            {
-                filtered = filtered.Where(i => string.Equals(i.BUSINESS_CASE_REFERENCE, key, StringComparison.OrdinalIgnoreCase));
-                if (!filtered.Any())
-                    filtered = list.Where(i => !string.IsNullOrEmpty(i.BUSINESS_CASE_REFERENCE) && i.BUSINESS_CASE_REFERENCE.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0);
-            }
-            else if (typeItem.StartsWith("Business Case ID", StringComparison.OrdinalIgnoreCase))
-            {
-                filtered = filtered.Where(i => string.Equals(i.BUSINESS_CASE_ID, key, StringComparison.OrdinalIgnoreCase));
-                if (!filtered.Any())
-                    filtered = list.Where(i => !string.IsNullOrEmpty(i.BUSINESS_CASE_ID) && i.BUSINESS_CASE_ID.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0);
-            }
-
-            foreach (var i in filtered.Take(200))
+            // 1. Search by BGI (INVOICE_ID) - exact match
+            var byBgi = invoices.Where(i => string.Equals(i.INVOICE_ID, key, StringComparison.OrdinalIgnoreCase)).ToList();
+            foreach (var i in byBgi.Take(50))
             {
                 results.Add(new DwingsResult
                 {
-                    Type = "Invoice",
+                    Type = "Invoice (BGI)",
                     Id = i.INVOICE_ID,
                     Status = i.T_INVOICE_STATUS,
                     Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
                     Currency = i.BILLING_CURRENCY,
                     BGPMT = i.BGPMT,
-                    BusinessCase = i.BUSINESS_CASE_REFERENCE,
-                    Description = $"Invoice {i.INVOICE_ID}"
+                    BusinessCase = i.BUSINESS_CASE_ID ?? i.BUSINESS_CASE_REFERENCE,
+                    Description = $"Matched by BGI: {i.INVOICE_ID}"
                 });
             }
-            return results;
-        }
 
-        private void SetSearchType(string content)
-        {
-            try
+            // 2. Search by BGPMT - exact match
+            var byBgpmt = invoices.Where(i => string.Equals(i.BGPMT, key, StringComparison.OrdinalIgnoreCase)).ToList();
+            foreach (var i in byBgpmt.Take(50))
             {
-                if (DwingsSearchTypeComboBox is ComboBox cb)
+                if (results.Any(r => r.Id == i.INVOICE_ID)) continue; // Skip duplicates
+                results.Add(new DwingsResult
                 {
-                    foreach (var item in cb.Items)
+                    Type = "Invoice (BGPMT)",
+                    Id = i.INVOICE_ID,
+                    Status = i.T_INVOICE_STATUS,
+                    Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                    Currency = i.BILLING_CURRENCY,
+                    BGPMT = i.BGPMT,
+                    BusinessCase = i.BUSINESS_CASE_ID ?? i.BUSINESS_CASE_REFERENCE,
+                    Description = $"Matched by BGPMT: {i.BGPMT}"
+                });
+            }
+
+            // 3. Search by Guarantee ID
+            var byGuaranteeId = guarantees.Where(g => string.Equals(g.GUARANTEE_ID, key, StringComparison.OrdinalIgnoreCase)).ToList();
+            foreach (var g in byGuaranteeId.Take(10))
+            {
+                // Find invoices linked to this guarantee
+                var related = invoices.Where(i => 
+                    string.Equals(i.BUSINESS_CASE_ID, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(i.BUSINESS_CASE_REFERENCE, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase)
+                ).ToList();
+
+                foreach (var i in related.Take(20))
+                {
+                    if (results.Any(r => r.Id == i.INVOICE_ID)) continue;
+                    results.Add(new DwingsResult
                     {
-                        if (item is ComboBoxItem cbi && string.Equals(cbi.Content?.ToString(), content, StringComparison.OrdinalIgnoreCase))
+                        Type = "Invoice (Guarantee)",
+                        Id = i.INVOICE_ID,
+                        Status = i.T_INVOICE_STATUS,
+                        Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                        Currency = i.BILLING_CURRENCY,
+                        BGPMT = i.BGPMT,
+                        BusinessCase = g.GUARANTEE_ID,
+                        Description = $"Linked to Guarantee: {g.GUARANTEE_ID}"
+                    });
+                }
+            }
+
+            // 4. Search by OFFICIALREF (alphanumeric comparison)
+            if (!string.IsNullOrWhiteSpace(keyAlnum) && keyAlnum.Length >= 3)
+            {
+                var byOfficialRef = guarantees.Where(g =>
+                {
+                    var officialRefAlnum = string.IsNullOrWhiteSpace(g.OFFICIALREF) ? null : System.Text.RegularExpressions.Regex.Replace(g.OFFICIALREF, @"[^A-Za-z0-9]", "");
+                    return !string.IsNullOrWhiteSpace(officialRefAlnum) && officialRefAlnum.Equals(keyAlnum, StringComparison.OrdinalIgnoreCase);
+                }).ToList();
+
+                foreach (var g in byOfficialRef.Take(10))
+                {
+                    var related = invoices.Where(i =>
+                        string.Equals(i.BUSINESS_CASE_ID, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(i.BUSINESS_CASE_REFERENCE, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase)
+                    ).ToList();
+
+                    foreach (var i in related.Take(20))
+                    {
+                        if (results.Any(r => r.Id == i.INVOICE_ID)) continue;
+                        results.Add(new DwingsResult
                         {
-                            cb.SelectedItem = cbi;
-                            break;
-                        }
+                            Type = "Invoice (OfficialRef)",
+                            Id = i.INVOICE_ID,
+                            Status = i.T_INVOICE_STATUS,
+                            Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                            Currency = i.BILLING_CURRENCY,
+                            BGPMT = i.BGPMT,
+                            BusinessCase = g.GUARANTEE_ID,
+                            Description = $"Matched by OfficialRef: {g.OFFICIALREF} → Guarantee: {g.GUARANTEE_ID}"
+                        });
                     }
                 }
             }
-            catch { /* ignore */ }
+
+            // 5. Search by SENDER_REFERENCE (alphanumeric comparison)
+            if (!string.IsNullOrWhiteSpace(keyAlnum) && keyAlnum.Length >= 3)
+            {
+                var bySenderRef = invoices.Where(i =>
+                {
+                    var senderRefAlnum = string.IsNullOrWhiteSpace(i.SENDER_REFERENCE) ? null : System.Text.RegularExpressions.Regex.Replace(i.SENDER_REFERENCE, @"[^A-Za-z0-9]", "");
+                    return !string.IsNullOrWhiteSpace(senderRefAlnum) && senderRefAlnum.Equals(keyAlnum, StringComparison.OrdinalIgnoreCase);
+                }).ToList();
+
+                foreach (var i in bySenderRef.Take(50))
+                {
+                    if (results.Any(r => r.Id == i.INVOICE_ID)) continue;
+                    results.Add(new DwingsResult
+                    {
+                        Type = "Invoice (SenderRef)",
+                        Id = i.INVOICE_ID,
+                        Status = i.T_INVOICE_STATUS,
+                        Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                        Currency = i.BILLING_CURRENCY,
+                        BGPMT = i.BGPMT,
+                        BusinessCase = i.BUSINESS_CASE_ID ?? i.BUSINESS_CASE_REFERENCE,
+                        Description = $"Matched by SenderRef: {i.SENDER_REFERENCE}"
+                    });
+                }
+            }
+
+            return results.Take(200).ToList();
         }
+
 
         private void SetDiagnostics(string text, bool expand = false)
         {

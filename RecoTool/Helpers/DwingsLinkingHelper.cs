@@ -52,7 +52,7 @@ namespace RecoTool.Helpers
         /// <summary>
         /// Resolve a DWINGS invoice by exact BGI match.
         /// BGI = INVOICE_ID (unique identifier), no matching needed.
-        /// Returns the invoice found with this BGI, or NULL if ambiguous (multiple matches).
+        /// Returns the first invoice found with this BGI (even if multiple exist - we take the first one).
         /// </summary>
         public static DwingsInvoiceDto ResolveInvoiceByBgi(
             IEnumerable<DwingsInvoiceDto> invoices,
@@ -62,12 +62,7 @@ namespace RecoTool.Helpers
             var key = Norm(bgi);
             if (string.IsNullOrWhiteSpace(key)) return null;
 
-            var matches = invoices.Where(i => Norm(i?.INVOICE_ID) == key).ToList();
-            
-            // If ambiguous (multiple matches), return null (don't pick any)
-            if (matches.Count > 1) return null;
-            
-            return matches.FirstOrDefault();
+            return invoices.FirstOrDefault(i => Norm(i?.INVOICE_ID) == key);
         }
 
         /// <summary>
@@ -132,11 +127,30 @@ namespace RecoTool.Helpers
                 return Math.Min(reqDelta, billDelta);
             };
 
-            return candidates
+            var sorted = candidates
                 .OrderBy(i => dateScore(i))
                 .ThenBy(i => amountScore(i))
-                .Take(Math.Max(1, take))
                 .ToList();
+
+            // AMBIGUITY CHECK: If requesting only 1 result (take=1) and multiple candidates have the same best score, return empty (ambiguous)
+            if (take == 1 && sorted.Count >= 2)
+            {
+                var first = sorted[0];
+                var second = sorted[1];
+                var firstDateScore = dateScore(first);
+                var firstAmountScore = amountScore(first);
+                var secondDateScore = dateScore(second);
+                var secondAmountScore = amountScore(second);
+                
+                // If both have identical scores (same date proximity and amount delta), it's ambiguous
+                if (Math.Abs(firstDateScore - secondDateScore) < 0.01 && 
+                    Math.Abs(firstAmountScore - secondAmountScore) < 0.01m)
+                {
+                    return new List<DwingsInvoiceDto>(); // Ambiguous - don't pick any
+                }
+            }
+
+            return sorted.Take(Math.Max(1, take)).ToList();
         }
 
         /// <summary>
@@ -195,7 +209,7 @@ namespace RecoTool.Helpers
         /// <summary>
         /// Resolve a DWINGS invoice by exact BGPMT match.
         /// BGPMT = commission identifier, no matching needed.
-        /// Returns the invoice found with this BGPMT, or NULL if ambiguous (multiple matches).
+        /// Returns the first invoice found with this BGPMT (even if multiple exist - we take the first one).
         /// </summary>
         public static DwingsInvoiceDto ResolveInvoiceByBgpmt(
             IEnumerable<DwingsInvoiceDto> invoices,
@@ -205,12 +219,7 @@ namespace RecoTool.Helpers
             var key = Norm(bgpmt);
             if (string.IsNullOrWhiteSpace(key)) return null;
 
-            var matches = invoices.Where(i => Norm(i?.BGPMT) == key).ToList();
-            
-            // If ambiguous (multiple matches), return null (don't pick any)
-            if (matches.Count > 1) return null;
-            
-            return matches.FirstOrDefault();
+            return invoices.FirstOrDefault(i => Norm(i?.BGPMT) == key);
         }
     }
 }

@@ -841,14 +841,13 @@ namespace RecoTool.UI.Views.Windows
                     }
                 }
 
-                // Aggregate results from all candidates
+                // Aggregate results from all candidates using unified search
                 var map = new Dictionary<string, DwingsResult>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (var (Type, Key) in candidates)
                 {
-                    var effectiveType = Type == "BGI" ? "BGI (INVOICE_ID)" : Type;
-                    var results = await SearchDwingsAsync(effectiveType, Key);
-                    sb.AppendLine($"Results for {effectiveType} '{Key}': {results.Count}");
+                    var results = await SearchDwingsAllTypesAsync(Key);
+                    sb.AppendLine($"Results for {Type} '{Key}': {results.Count}");
                     foreach (var r in results)
                     {
                         var k = r.Type + "|" + r.Id;
@@ -922,13 +921,31 @@ namespace RecoTool.UI.Views.Windows
                 var reco = _reconciliation ?? await _reconciliationService.GetOrCreateReconciliationAsync(_item.ID);
                 reco.ID = _item.ID;
 
-                if (string.Equals(dr.Type, "Invoice", StringComparison.OrdinalIgnoreCase))
+                // Link invoice: take ALL available fields (BGI, BGPMT, GuaranteeID)
+                if (dr.Type?.Contains("Invoice") == true)
                 {
-                    reco.DWINGS_InvoiceID = dr.Id;
+                    // Always set BGI (INVOICE_ID)
+                    if (!string.IsNullOrWhiteSpace(dr.Id))
+                    {
+                        reco.DWINGS_InvoiceID = dr.Id;
+                        _item.DWINGS_InvoiceID = dr.Id;
+                    }
+
+                    // Set BGPMT if available
                     if (!string.IsNullOrWhiteSpace(dr.BGPMT))
-                        reco.PaymentReference = dr.BGPMT; // BGPMT
-                    _item.DWINGS_InvoiceID = reco.DWINGS_InvoiceID;
-                    _item.PaymentReference = reco.PaymentReference;
+                    {
+                        reco.DWINGS_BGPMT = dr.BGPMT;
+                        reco.PaymentReference = dr.BGPMT;
+                        _item.DWINGS_BGPMT = dr.BGPMT;
+                        _item.PaymentReference = dr.BGPMT;
+                    }
+
+                    // Set GuaranteeID (from BusinessCase) if available
+                    if (!string.IsNullOrWhiteSpace(dr.BusinessCase))
+                    {
+                        reco.DWINGS_GuaranteeID = dr.BusinessCase;
+                        _item.DWINGS_GuaranteeID = dr.BusinessCase;
+                    }
                 }
                 else if (string.Equals(dr.Type, "Guarantee", StringComparison.OrdinalIgnoreCase))
                 {
@@ -940,6 +957,10 @@ namespace RecoTool.UI.Views.Windows
                 _reconciliation = reco;
                 StatusText.Text = "Linked and saved.";
                 UpdateLinkStatusBadge();
+                
+                // Signal that data was modified (will trigger refresh in ReconciliationView)
+                this.DialogResult = true;
+                
                 // Update cross-account "G" flags in the in-memory list immediately for this invoice
                 try { UpdateGFlagsAfterLink(reco.DWINGS_InvoiceID); } catch { }
                 await ShowLinkedInDwingsGridAsync(reco.DWINGS_InvoiceID, reco.DWINGS_GuaranteeID);
@@ -1108,6 +1129,53 @@ namespace RecoTool.UI.Views.Windows
             catch (Exception ex)
             {
                 MessageBox.Show($"Save failed: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private async void UnlinkButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_item == null || _reconciliationService == null) return;
+
+                var result = MessageBox.Show(
+                    "Remove all DWINGS links (BGI, BGPMT, GuaranteeID)?\n\nThis will clear:\n• DWINGS_InvoiceID (BGI)\n• DWINGS_BGPMT\n• DWINGS_GuaranteeID\n• PaymentReference\n\nContinue?",
+                    "Confirm Unlink",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (result != MessageBoxResult.Yes) return;
+
+                var reco = _reconciliation ?? await _reconciliationService.GetOrCreateReconciliationAsync(_item.ID);
+                reco.ID = _item.ID;
+
+                // Clear all DWINGS links
+                reco.DWINGS_InvoiceID = null;
+                reco.DWINGS_BGPMT = null;
+                reco.DWINGS_GuaranteeID = null;
+                reco.PaymentReference = null;
+
+                // Update view model
+                _item.DWINGS_InvoiceID = null;
+                _item.DWINGS_BGPMT = null;
+                _item.DWINGS_GuaranteeID = null;
+                _item.PaymentReference = null;
+
+                await _reconciliationService.SaveReconciliationAsync(reco);
+                _reconciliation = reco;
+                StatusText.Text = "DWINGS links removed and saved.";
+                UpdateLinkStatusBadge();
+
+                // Signal that data was modified (will trigger refresh in ReconciliationView)
+                this.DialogResult = true;
+
+                // Clear the DWINGS results grid
+                if (DwingsResultsGrid != null)
+                    DwingsResultsGrid.ItemsSource = null;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Unlink failed: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
     }

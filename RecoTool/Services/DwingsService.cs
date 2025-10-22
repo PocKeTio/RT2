@@ -103,7 +103,7 @@ namespace RecoTool.Services
             using (var connection = new OleDbConnection(dwCs))
             {
                 await connection.OpenAsync().ConfigureAwait(false);
-                using (var cmd = new OleDbCommand(@"SELECT * FROM T_DW_Data", connection))
+                using (var cmd = new OleDbCommand(@"SELECT * FROM T_DW_Data ", connection))
                 using (var rd = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
                 {
                     while (await rd.ReadAsync().ConfigureAwait(false))

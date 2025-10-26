@@ -49,6 +49,9 @@ namespace RecoTool.UI.Views.Windows
                 }
 
                 var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
+                var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
+
+                // 1) Invoice suggestions (BGI -> BGPMT -> Guarantee-based)
                 var suggestions = DwingsLinkingHelper.SuggestInvoicesForAmbre(
                     invoices,
                     _item.RawLabel,
@@ -64,13 +67,40 @@ namespace RecoTool.UI.Views.Windows
                 {
                     Type = "Invoice",
                     Id = i.INVOICE_ID,
-                    Status = i.T_INVOICE_STATUS,
+                    Status = i.T_PAYMENT_REQUEST_STATUS,
                     Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
                     Currency = i.BILLING_CURRENCY,
                     BGPMT = i.BGPMT,
                     BusinessCase = i.BUSINESS_CASE_REFERENCE,
                     Description = $"Invoice {i.INVOICE_ID} (suggested)"
                 }).ToList();
+
+                // 2) Direct Guarantee hit from any available reference
+                try
+                {
+                    var gid = _item.GUARANTEE_ID?.Trim()
+                              ?? DwingsLinkingHelper.ExtractGuaranteeId(_item.Reconciliation_Num)
+                              ?? DwingsLinkingHelper.ExtractGuaranteeId(_item.RawLabel);
+                    if (!string.IsNullOrWhiteSpace(gid))
+                    {
+                        var g = guarantees.FirstOrDefault(x => string.Equals(x.GUARANTEE_ID, gid, StringComparison.OrdinalIgnoreCase));
+                        if (g != null)
+                        {
+                            rows.Add(new DwingsResult
+                            {
+                                Type = "Guarantee",
+                                Id = g.GUARANTEE_ID,
+                                Status = g.GUARANTEE_STATUS,
+                                Amount = g.OUTSTANDING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                                Currency = g.CURRENCYNAME,
+                                BGPMT = null,
+                                BusinessCase = g.LEGACYREF,
+                                Description = $"Guarantee {g.GUARANTEE_ID} (direct ref)"
+                            });
+                        }
+                    }
+                }
+                catch { }
 
                 DwingsResultsGrid.ItemsSource = new ObservableCollection<DwingsResult>(rows);
                 StatusText.Text = rows.Count == 0 ? "No suggestion found." : $"DWINGS: {rows.Count} suggestion(s).";
@@ -434,7 +464,7 @@ namespace RecoTool.UI.Views.Windows
                         {
                             Type = "Invoice",
                             Id = i.INVOICE_ID,
-                            Status = i.T_INVOICE_STATUS,
+                            Status = i.T_PAYMENT_REQUEST_STATUS,
                             Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
                             Currency = i.BILLING_CURRENCY,
                             BGPMT = i.BGPMT,
@@ -644,7 +674,7 @@ namespace RecoTool.UI.Views.Windows
                 {
                     Type = "Invoice (BGI)",
                     Id = i.INVOICE_ID,
-                    Status = i.T_INVOICE_STATUS,
+                    Status = i.T_PAYMENT_REQUEST_STATUS,
                     Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
                     Currency = i.BILLING_CURRENCY,
                     BGPMT = i.BGPMT,
@@ -662,7 +692,7 @@ namespace RecoTool.UI.Views.Windows
                 {
                     Type = "Invoice (BGPMT)",
                     Id = i.INVOICE_ID,
-                    Status = i.T_INVOICE_STATUS,
+                    Status = i.T_PAYMENT_REQUEST_STATUS,
                     Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
                     Currency = i.BILLING_CURRENCY,
                     BGPMT = i.BGPMT,
@@ -701,7 +731,7 @@ namespace RecoTool.UI.Views.Windows
                     {
                         Type = "Invoice (Guarantee)",
                         Id = i.INVOICE_ID,
-                        Status = i.T_INVOICE_STATUS,
+                        Status = i.T_PAYMENT_REQUEST_STATUS,
                         Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
                         Currency = i.BILLING_CURRENCY,
                         BGPMT = i.BGPMT,
@@ -750,7 +780,7 @@ namespace RecoTool.UI.Views.Windows
                         {
                             Type = "Invoice (OfficialRef)",
                             Id = i.INVOICE_ID,
-                            Status = i.T_INVOICE_STATUS,
+                            Status = i.T_PAYMENT_REQUEST_STATUS,
                             Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
                             Currency = i.BILLING_CURRENCY,
                             BGPMT = i.BGPMT,
@@ -777,7 +807,7 @@ namespace RecoTool.UI.Views.Windows
                     {
                         Type = "Invoice (SenderRef)",
                         Id = i.INVOICE_ID,
-                        Status = i.T_INVOICE_STATUS,
+                        Status = i.T_PAYMENT_REQUEST_STATUS,
                         Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
                         Currency = i.BILLING_CURRENCY,
                         BGPMT = i.BGPMT,

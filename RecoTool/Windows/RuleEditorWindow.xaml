@@ -323,9 +323,16 @@
                                 <Label ToolTip="Number of days until reminder.">To Remind (days)</Label>
                                 <TextBox x:Name="ToRemindDaysBox" Text="{Binding EditedRule.OutputToRemindDays, UpdateSourceTrigger=PropertyChanged}" PreviewTextInput="NumberOnly_PreviewTextInput" DataObject.Pasting="NumberOnly_Pasting" ToolTip="Number of days until reminder."/>
 
-                                <!-- New output: set FirstClaimDate to today when true -->
+                                <!-- New output: set First Claim Date to today when true -->
                                 <Label ToolTip="If Yes, set FirstClaimDate to today (no change if No or —).">First Claim Date = Today</Label>
                                 <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.OutputFirstClaimToday, UpdateSourceTrigger=PropertyChanged}"/>
+
+                                <!-- New output: Action Status (DONE/PENDING) -->
+                                <Label ToolTip="Set Action Status to DONE or PENDING. Leave as — to not change it.">Action Status</Label>
+                                <ComboBox ItemsSource="{Binding ActionStatusChoices}"
+                                          SelectedValuePath="Value"
+                                          DisplayMemberPath="Label"
+                                          SelectedValue="{Binding EditedRule.OutputActionDone, UpdateSourceTrigger=PropertyChanged}"/>
                             </StackPanel>
                         </Grid>
                     </Border>

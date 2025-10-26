@@ -1102,7 +1102,14 @@ namespace RecoTool.Services
                                 }
                                 if (res.NewFirstClaimTodaySelf == true)
                                 {
-                                    try { r.FirstClaimDate = DateTime.Today; } catch { }
+                                    try
+                                    {
+                                        if (r.FirstClaimDate.HasValue)
+                                            r.LastClaimDate = DateTime.Today;
+                                        else
+                                            r.FirstClaimDate = DateTime.Today;
+                                    }
+                                    catch { }
                                 }
 
                                 if (!string.IsNullOrWhiteSpace(res.UserMessage))
@@ -1688,6 +1695,11 @@ namespace RecoTool.Services
                                                                 reconciliation.Action = res.NewActionIdSelf.Value;
                                                                 EnsureActionDefaults(reconciliation);
                                                             }
+                                                            if (res.NewActionStatusSelf.HasValue)
+                                                            {
+                                                                reconciliation.ActionStatus = res.NewActionStatusSelf.Value;
+                                                                try { reconciliation.ActionDate = DateTime.Now; } catch { }
+                                                            }
                                                             if (res.NewKpiIdSelf.HasValue)
                                                                 reconciliation.KPI = res.NewKpiIdSelf.Value;
                                                             if (res.NewIncidentTypeIdSelf.HasValue)
@@ -1728,7 +1740,7 @@ namespace RecoTool.Services
                                                             if (res.NewReasonNonRiskyIdSelf.HasValue) outs.Add($"ReasonNonRisky={res.NewReasonNonRiskyIdSelf.Value}");
                                                             if (res.NewToRemindSelf.HasValue) outs.Add($"ToRemind={res.NewToRemindSelf.Value}");
                                                             if (res.NewToRemindDaysSelf.HasValue) outs.Add($"ToRemindDays={res.NewToRemindDaysSelf.Value}");
-                                                            if (res.NewFirstClaimTodaySelf == true) outs.Add("FirstClaimDate=Today");
+                                                            if (res.NewFirstClaimTodaySelf == true) outs.Add("First/LastClaimDate=Today");
                                                             var outsStr = string.Join("; ", outs);
                                                             LogHelper.WriteRuleApplied("edit", currentCountryId, reconciliation.ID, res.Rule.RuleId, outsStr, res.UserMessage);
                                                             RaiseRuleApplied("edit", currentCountryId, reconciliation.ID, res.Rule.RuleId, outsStr, res.UserMessage);

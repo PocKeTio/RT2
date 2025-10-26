@@ -189,6 +189,29 @@
                                         ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
                 <DataGridTextColumn Header="DaysSinceReminderMin" Binding="{Binding DaysSinceReminderMin, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
                 <DataGridTextColumn Header="DaysSinceReminderMax" Binding="{Binding DaysSinceReminderMax, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
+                <DataGridTemplateColumn Header="Out.ActionStatus" Width="150">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <ComboBox IsHitTestVisible="False"
+                                      SelectedValuePath="Tag"
+                                      SelectedValue="{Binding OutputActionDone, UpdateSourceTrigger=PropertyChanged}">
+                                <ComboBoxItem Tag="{x:Null}">—</ComboBoxItem>
+                                <ComboBoxItem Tag="False">PENDING</ComboBoxItem>
+                                <ComboBoxItem Tag="True">DONE</ComboBoxItem>
+                            </ComboBox>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <ComboBox SelectedValuePath="Tag"
+                                      SelectedValue="{Binding OutputActionDone, UpdateSourceTrigger=PropertyChanged}">
+                                <ComboBoxItem Tag="{x:Null}">—</ComboBoxItem>
+                                <ComboBoxItem Tag="False">PENDING</ComboBoxItem>
+                                <ComboBoxItem Tag="True">DONE</ComboBoxItem>
+                            </ComboBox>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTemplateColumn Header="Out.Action" Width="140">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>

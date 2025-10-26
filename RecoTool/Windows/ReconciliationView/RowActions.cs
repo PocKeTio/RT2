@@ -295,7 +295,18 @@ namespace RecoTool.Windows
                                 }
                                 if (res.NewFirstClaimTodaySelf == true)
                                 {
-                                    try { r.FirstClaimDate = DateTime.Today; reco.FirstClaimDate = DateTime.Today; } catch { }
+                                    try
+                                    {
+                                        if (r.FirstClaimDate.HasValue)
+                                        {
+                                            r.LastClaimDate = DateTime.Today; reco.LastClaimDate = DateTime.Today;
+                                        }
+                                        else
+                                        {
+                                            r.FirstClaimDate = DateTime.Today; reco.FirstClaimDate = DateTime.Today;
+                                        }
+                                    }
+                                    catch { }
                                 }
                                 
                                 // Apply UserMessage to Comments
@@ -629,8 +640,14 @@ namespace RecoTool.Windows
                 foreach (var r in targetRows)
                 {
                     var reco = await _reconciliationService.GetOrCreateReconciliationAsync(r.ID);
-                    r.FirstClaimDate = DateTime.Today;
-                    reco.FirstClaimDate = r.FirstClaimDate;
+                    if (r.FirstClaimDate.HasValue)
+                    {
+                        r.LastClaimDate = DateTime.Today; reco.LastClaimDate = DateTime.Today;
+                    }
+                    else
+                    {
+                        r.FirstClaimDate = DateTime.Today; reco.FirstClaimDate = r.FirstClaimDate;
+                    }
                     updates.Add(reco);
                 }
 

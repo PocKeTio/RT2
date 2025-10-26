@@ -103,6 +103,7 @@ namespace RecoTool.Services.Rules
                     NewReasonNonRiskyIdSelf = r.OutputReasonNonRiskyId,
                     NewToRemindSelf = r.OutputToRemind,
                     NewToRemindDaysSelf = r.OutputToRemindDays,
+                    NewActionStatusSelf = r.OutputActionDone,
                     NewFirstClaimTodaySelf = r.OutputFirstClaimToday,
                     RequiresUserConfirm = !string.IsNullOrWhiteSpace(r.Message),
                     UserMessage = r.Message

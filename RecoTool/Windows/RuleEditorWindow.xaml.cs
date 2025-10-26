@@ -53,6 +53,14 @@ namespace RecoTool.Windows
             new BoolChoice { Label = "No", Value = false },
         };
 
+        // For Action Status output: tri-state (None, PENDING=false, DONE=true)
+        public ObservableCollection<BoolChoice> ActionStatusChoices { get; } = new ObservableCollection<BoolChoice>
+        {
+            new BoolChoice { Label = "— (None) —", Value = null },
+            new BoolChoice { Label = "PENDING", Value = false },
+            new BoolChoice { Label = "DONE", Value = true },
+        };
+
         public ObservableCollection<EnumChoice<MtStatusCondition>> MtStatusChoices { get; } = new ObservableCollection<EnumChoice<MtStatusCondition>>
         {
             new EnumChoice<MtStatusCondition> { Label = "* (Don't check)", Value = MtStatusCondition.Wildcard },
@@ -155,6 +163,7 @@ namespace RecoTool.Windows
                 OutputToRemind = r.OutputToRemind,
                 OutputToRemindDays = r.OutputToRemindDays,
                 // New output
+                OutputActionDone = r.OutputActionDone,
                 OutputFirstClaimToday = r.OutputFirstClaimToday,
                 ApplyTo = r.ApplyTo,
                 AutoApply = r.AutoApply,

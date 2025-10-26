@@ -547,10 +547,11 @@ namespace RecoTool.Windows
 
                     // Prepare SELF outputs summary (labels, not IDs) with emojis
                     var selfChanges = new List<string>();
-                    if (res.NewActionIdSelf.HasValue) selfChanges.Add($"⚡ Action: {GetUserFieldName(res.NewActionIdSelf.Value, "Action")}");
-                    if (res.NewKpiIdSelf.HasValue) selfChanges.Add($"📊 KPI: {GetUserFieldName(res.NewKpiIdSelf.Value, "KPI")}");
-                    if (res.NewIncidentTypeIdSelf.HasValue) selfChanges.Add($"🔔 Incident Type: {GetUserFieldName(res.NewIncidentTypeIdSelf.Value, "Incident Type")}");
-                    if (res.NewRiskyItemSelf.HasValue) selfChanges.Add($"⚠️ Risky Item: {(res.NewRiskyItemSelf.Value ? "Yes" : "No")}");
+                    if (res.NewActionIdSelf.HasValue) selfChanges.Add($"⚡ Action: {GetUserFieldName(res.NewActionIdSelf.Value, "Action")}\u200B");
+                    if (res.NewKpiIdSelf.HasValue) selfChanges.Add($"📊 KPI: {GetUserFieldName(res.NewKpiIdSelf.Value, "KPI")}\u200B");
+                    if (res.NewIncidentTypeIdSelf.HasValue) selfChanges.Add($"🔔 Incident Type: {GetUserFieldName(res.NewIncidentTypeIdSelf.Value, "Incident Type")}\u200B");
+                    if (res.NewRiskyItemSelf.HasValue) selfChanges.Add($"⚠️ Risky Item: {(res.NewRiskyItemSelf.Value ? "Yes" : "No")}\u200B");
+                    if (res.NewActionStatusSelf.HasValue) selfChanges.Add($"✅ Action Status: {(res.NewActionStatusSelf.Value ? "DONE" : "PENDING")}\u200B");
                     if (res.NewReasonNonRiskyIdSelf.HasValue) selfChanges.Add($"✅ Reason Non Risky: {GetUserFieldName(res.NewReasonNonRiskyIdSelf.Value, "Reason Non Risky")}");
                     if (res.NewToRemindSelf.HasValue) selfChanges.Add($"🔔 To Remind: {(res.NewToRemindSelf.Value ? "Yes" : "No")}");
                     if (res.NewToRemindDaysSelf.HasValue) selfChanges.Add($"📅 To Remind Days: {res.NewToRemindDaysSelf.Value}");
@@ -612,6 +613,7 @@ namespace RecoTool.Windows
 
                     // Apply to in-memory row for instant UI feedback
                     if (res.NewActionIdSelf.HasValue) { UserFieldUpdateService.ApplyAction(row, reco, res.NewActionIdSelf.Value, AllUserFields); }
+                    if (res.NewActionStatusSelf.HasValue) { UserFieldUpdateService.ApplyActionStatus(row, reco, res.NewActionStatusSelf.Value); }
                     if (res.NewKpiIdSelf.HasValue) { row.KPI = res.NewKpiIdSelf.Value; reco.KPI = res.NewKpiIdSelf.Value; }
                     if (res.NewIncidentTypeIdSelf.HasValue) { row.IncidentType = res.NewIncidentTypeIdSelf.Value; reco.IncidentType = res.NewIncidentTypeIdSelf.Value; }
                     if (res.NewRiskyItemSelf.HasValue) { row.RiskyItem = res.NewRiskyItemSelf.Value; reco.RiskyItem = res.NewRiskyItemSelf.Value; }
@@ -623,7 +625,18 @@ namespace RecoTool.Windows
                     }
                     if (res.NewFirstClaimTodaySelf == true)
                     {
-                        try { row.FirstClaimDate = DateTime.Today; reco.FirstClaimDate = DateTime.Today; } catch { }
+                        try
+                        {
+                            if (row.FirstClaimDate.HasValue)
+                            {
+                                row.LastClaimDate = DateTime.Today; reco.LastClaimDate = DateTime.Today;
+                            }
+                            else
+                            {
+                                row.FirstClaimDate = DateTime.Today; reco.FirstClaimDate = DateTime.Today;
+                            }
+                        }
+                        catch { }
                     }
                     
                     // Apply UserMessage to Comments if present
@@ -653,6 +666,7 @@ namespace RecoTool.Windows
                     {
                         var outs = new List<string>();
                         if (res.NewActionIdSelf.HasValue) outs.Add($"Action={res.NewActionIdSelf.Value}");
+                        if (res.NewActionStatusSelf.HasValue) outs.Add($"ActionStatus={(res.NewActionStatusSelf.Value ? "DONE" : "PENDING")} ");
                         if (res.NewKpiIdSelf.HasValue) outs.Add($"KPI={res.NewKpiIdSelf.Value}");
                         if (res.NewIncidentTypeIdSelf.HasValue) outs.Add($"IncidentType={res.NewIncidentTypeIdSelf.Value}");
                         if (res.NewRiskyItemSelf.HasValue) outs.Add($"RiskyItem={res.NewRiskyItemSelf.Value}");

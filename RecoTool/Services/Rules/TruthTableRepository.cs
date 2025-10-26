@@ -113,6 +113,7 @@ namespace RecoTool.Services.Rules
                                     OutputReasonNonRiskyId = GetNullableInt(row, table, "OutputReasonNonRiskyId"),
                                     OutputToRemind = GetNullableBool(row, table, "OutputToRemind"),
                                     OutputToRemindDays = GetNullableInt(row, table, "OutputToRemindDays"),
+                                    OutputActionDone = GetNullableBool(row, table, "OutputActionDone"),
                                     OutputFirstClaimToday = GetNullableBool(row, table, "OutputFirstClaimToday"),
                                     ApplyTo = ParseApplyTo(GetString(row, table, "ApplyTo") ?? "Self"),
                                     AutoApply = table.Columns.Contains("AutoApply") && row["AutoApply"] != DBNull.Value ? Convert.ToBoolean(row["AutoApply"]) : true,
@@ -198,6 +199,7 @@ namespace RecoTool.Services.Rules
                         OutputReasonNonRiskyId INTEGER,
                         OutputToRemind INTEGER,
                         OutputToRemindDays INTEGER,
+                        OutputActionDone INTEGER,
                         OutputFirstClaimToday INTEGER,
                         ApplyTo TEXT(12),
                         AutoApply YESNO,
@@ -249,6 +251,7 @@ namespace RecoTool.Services.Rules
                 ("MTStatus", "TEXT(20)"),
                 ("CommIdEmail", "INTEGER"),
                 ("BgiStatusInitiated", "INTEGER"),
+                ("OutputActionDone", "INTEGER"),
                 ("OutputFirstClaimToday", "INTEGER")
             };
             foreach (var (name, ddl) in need)
@@ -332,7 +335,7 @@ namespace RecoTool.Services.Rules
                         OperationDaysAgoMin=?, OperationDaysAgoMax=?,
                         IsMatched=?, HasManualMatch=?, IsFirstRequest=?, DaysSinceReminderMin=?, DaysSinceReminderMax=?, CurrentActionId=?,
                         OutputActionId=?, OutputKpiId=?, OutputIncidentTypeId=?, OutputRiskyItem=?, OutputReasonNonRiskyId=?,
-                        OutputToRemind=?, OutputToRemindDays=?, OutputFirstClaimToday=?, ApplyTo=?, AutoApply=?, Message=?
+                        OutputToRemind=?, OutputToRemindDays=?, OutputActionDone=?, OutputFirstClaimToday=?, ApplyTo=?, AutoApply=?, Message=?
                         WHERE RuleId=?";
                     using (var cmd = new OleDbCommand(sql, conn))
                     {
@@ -353,8 +356,8 @@ namespace RecoTool.Services.Rules
                         OperationDaysAgoMin, OperationDaysAgoMax,
                         IsMatched, HasManualMatch, IsFirstRequest, DaysSinceReminderMin, DaysSinceReminderMax, CurrentActionId, PaymentRequestStatus,
                         OutputActionId, OutputKpiId, OutputIncidentTypeId, OutputRiskyItem, OutputReasonNonRiskyId,
-                        OutputToRemind, OutputToRemindDays, OutputFirstClaimToday, ApplyTo, AutoApply, Message)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+                        OutputToRemind, OutputToRemindDays, OutputActionDone, OutputFirstClaimToday, ApplyTo, AutoApply, Message)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
                     using (var cmd = new OleDbCommand(sql, conn))
                     {
                         AddRuleParams(cmd, rule, includeRuleIdAtEnd: false);
@@ -423,6 +426,7 @@ namespace RecoTool.Services.Rules
             cmd.Parameters.Add("@OutputReasonNonRiskyId", OleDbType.Integer).Value = (object)(r.OutputReasonNonRiskyId.HasValue ? r.OutputReasonNonRiskyId.Value : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@OutputToRemind", OleDbType.Integer).Value = (object)(r.OutputToRemind.HasValue ? (r.OutputToRemind.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@OutputToRemindDays", OleDbType.Integer).Value = (object)(r.OutputToRemindDays.HasValue ? r.OutputToRemindDays.Value : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@OutputActionDone", OleDbType.Integer).Value = (object)(r.OutputActionDone.HasValue ? (r.OutputActionDone.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@OutputFirstClaimToday", OleDbType.Integer).Value = (object)(r.OutputFirstClaimToday.HasValue ? (r.OutputFirstClaimToday.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
             cmd.Parameters.AddWithValue("@ApplyTo", (object)r.ApplyTo.ToString() ?? DBNull.Value);
             cmd.Parameters.Add("@AutoApply", OleDbType.Boolean).Value = (object)r.AutoApply;

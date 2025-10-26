@@ -538,6 +538,7 @@ namespace RecoTool.Windows
                     if (!string.IsNullOrEmpty(text))
                     {
                         try { Clipboard.SetText(text); } catch { }
+                        try { ShowToast("Copied", durationSeconds: 2); } catch { }
                         e.Handled = true;
                     }
                 }

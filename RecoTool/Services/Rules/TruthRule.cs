@@ -81,6 +81,8 @@ namespace RecoTool.Services.Rules
         public int? OutputReasonNonRiskyId { get; set; }
         public bool? OutputToRemind { get; set; }
         public int? OutputToRemindDays { get; set; }
+        // New: set ActionStatus (true = DONE, false = PENDING). Null => leave as-is (defaults apply)
+        public bool? OutputActionDone { get; set; }
         // New: set FirstClaimDate to today when true (self only)
         public bool? OutputFirstClaimToday { get; set; }
         public ApplyTarget ApplyTo { get; set; } = ApplyTarget.Self;
@@ -131,6 +133,7 @@ namespace RecoTool.Services.Rules
         public int? NewReasonNonRiskyIdSelf { get; set; }
         public bool? NewToRemindSelf { get; set; }
         public int? NewToRemindDaysSelf { get; set; }
+        public bool? NewActionStatusSelf { get; set; }
         // New: set FirstClaimDate to today when true
         public bool? NewFirstClaimTodaySelf { get; set; }
         public List<(string ReconciliationId, int? ActionId, int? KpiId)> CounterpartUpdates { get; set; } = new List<(string, int?, int?)>();

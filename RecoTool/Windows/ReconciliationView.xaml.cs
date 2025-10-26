@@ -11,6 +11,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Threading;
+using System.Windows.Documents;
 using RecoTool.Models;
 using RecoTool.Services;
 using RecoTool.UI.ViewModels;
@@ -442,31 +443,47 @@ namespace RecoTool.Windows
 
         #endregion
 
-        // Single-click to edit cells
+        // Single-click behavior:
+        // - Read-only cells: set CurrentCell for copy, do NOT change selection, do NOT begin edit.
+        // - Editable cells: keep old behavior (select row, begin edit).
         private void DataGridCell_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             try
             {
                 var cell = sender as DataGridCell;
                 if (cell == null) return;
-                if (cell.IsEditing || cell.IsReadOnly) return;
-
-                if (!cell.IsFocused)
-                    cell.Focus();
+                if (cell.IsEditing) return;
 
                 var dataGrid = VisualTreeHelpers.FindParent<DataGrid>(cell);
                 if (dataGrid == null) return;
-                // Ensure single selection by selecting the owning row item directly
+                bool columnReadOnly = (cell.Column != null && cell.Column.IsReadOnly) || cell.IsReadOnly;
+                if (columnReadOnly)
+                {
+                    // Read-only: set CurrentCell for copy helpers; let click bubble so interactive content and row selection work normally
+                    var rowRo = VisualTreeHelpers.FindParent<DataGridRow>(cell);
+                    if (rowRo != null)
+                    {
+                        try { dataGrid.CurrentCell = new DataGridCellInfo(rowRo.Item, cell.Column); } catch { }
+                    }
+                    return;
+                }
+
+                // Editable: selection/edit behavior depends on SelectionUnit
+                if (!cell.IsFocused)
+                    cell.Focus();
                 var row = VisualTreeHelpers.FindParent<DataGridRow>(cell);
                 if (row != null)
                 {
-                    dataGrid.SelectedItem = row.Item;
+                    try { dataGrid.SelectedItem = row.Item; } catch { }
                 }
 
                 // If the cell hosts a CheckBox (e.g., Risky Item), let the CheckBox handle the click
                 // and do not force BeginEdit which can cause sticky edit mode.
                 var hasCheckBox = cell.Content is CheckBox || VisualTreeHelpers.FindDescendant<CheckBox>(cell) != null;
-                if (!hasCheckBox)
+                // Only begin edit when grid/column/cell are editable
+                var col = cell.Column;
+                bool canEdit = !hasCheckBox && !cell.IsReadOnly && (col == null || !col.IsReadOnly) && !dataGrid.IsReadOnly;
+                if (canEdit)
                 {
                     dataGrid.BeginEdit(e);
                     e.Handled = true;
@@ -500,6 +517,57 @@ namespace RecoTool.Windows
                 }
             }
             catch { }
+        }
+
+        // Ctrl+C behavior:
+        // - If current cell is read-only, copy that cell's displayed text only (single-field copy) and handle.
+        // - Otherwise, let default bubbling handle (editors or row-level copy).
+        private void ResultsDataGrid_PreviewExecuted(object sender, ExecutedRoutedEventArgs e)
+        {
+            try
+            {
+                if (!ReferenceEquals(e.Command, ApplicationCommands.Copy)) return;
+                var dg = sender as DataGrid;
+                if (dg == null) return;
+                var col = dg.CurrentCell.Column;
+                var item = dg.CurrentCell.Item;
+                bool isReadOnlyCell = (col != null && col.IsReadOnly) || dg.IsReadOnly;
+                if (isReadOnlyCell && col != null && item != null)
+                {
+                    string text = TryGetCellText(col, item);
+                    if (!string.IsNullOrEmpty(text))
+                    {
+                        try { Clipboard.SetText(text); } catch { }
+                        e.Handled = true;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private static string TryGetCellText(DataGridColumn column, object dataItem)
+        {
+            try
+            {
+                var fe = column.GetCellContent(dataItem);
+                if (fe is TextBlock tb) return tb.Text;
+                if (fe is TextBox tbox) return tbox.Text;
+                var tbDesc = VisualTreeHelpers.FindDescendant<TextBlock>(fe);
+                if (tbDesc != null) return tbDesc.Text;
+                // Fallback: try reflection with SortMemberPath or binding
+                var path = column.SortMemberPath;
+                if (!string.IsNullOrWhiteSpace(path))
+                {
+                    var prop = dataItem.GetType().GetProperty(path);
+                    if (prop != null)
+                    {
+                        var val = prop.GetValue(dataItem);
+                        return val?.ToString() ?? string.Empty;
+                    }
+                }
+            }
+            catch { }
+            return string.Empty;
         }
 
         // New: populate via DataGridRow ContextMenuOpening to avoid XAML column parsing issues

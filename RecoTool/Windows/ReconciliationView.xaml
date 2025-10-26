@@ -973,6 +973,7 @@
                               FrozenColumnCount="1"
                               SelectionMode="Extended"
                               SelectionUnit="FullRow"
+                              ClipboardCopyMode="ExcludeHeader"
                               Loaded="ResultsDataGrid_Loaded"
                               ColumnReordering="ResultsDataGrid_ColumnReordering"
                               PreviewMouseWheel="ResultsDataGrid_PreviewMouseWheel"
@@ -987,7 +988,8 @@
                               RowHeight="28"
                               RowHeaderWidth="0"
                               MouseDoubleClick="ResultsDataGrid_MouseDoubleClick"
-                              CellEditEnding="ResultsDataGrid_CellEditEnding" Grid.ColumnSpan="2" Grid.RowSpan="2">
+                              CellEditEnding="ResultsDataGrid_CellEditEnding"
+                              CommandManager.PreviewExecuted="ResultsDataGrid_PreviewExecuted" Grid.ColumnSpan="2" Grid.RowSpan="2">
                         <DataGrid.Resources>
                             <!-- In-grid editing: decouple ComboBox visuals from theme to avoid ancestor-binding errors -->
                             <Style TargetType="ComboBox" BasedOn="{x:Null}">

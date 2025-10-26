@@ -569,10 +569,13 @@ namespace RecoTool.Windows
                                  (m.Tag as string) == "__Take__"
                               || (m.Tag as string) == "__SetReminder__"
                               || (m.Tag as string) == "__MarkActionDone__"
+                              || (m.Tag as string) == "__MarkActionPending__"
                               || (m.Tag as string) == "__AddRuleFromLine__"
                               || (m.Tag as string) == "__Copy__"
                               || (m.Tag as string) == "__SearchBGI__"
                               || (m.Tag as string) == "__DebugRules__"
+                              || (m.Tag as string) == "__ActionStatusMenu__"
+                              || (m.Tag as string) == "__SetFirstClaimToday__"
                               || (m.Tag as string) == "__OpenGrouped__").ToList())
                     {
                         cm.Items.Remove(mi);
@@ -605,7 +608,7 @@ namespace RecoTool.Windows
                     var reminderItem = new MenuItem { Header = "Set Reminder Date…", Tag = "__SetReminder__", DataContext = rowData };
                     reminderItem.Click += QuickSetReminderMenuItem_Click;
                     cm.Items.Add(reminderItem);
-                    var actionStatusMenu = new MenuItem { Header = "Set Action Status" };
+                    var actionStatusMenu = new MenuItem { Header = "Set Action Status", Tag = "__ActionStatusMenu__" };
                     var doneItem = new MenuItem { Header = "DONE", Tag = "__MarkActionDone__", DataContext = rowData };
                     doneItem.Click += QuickMarkActionDoneMenuItem_Click;
                     var pendingItem = new MenuItem { Header = "PENDING", Tag = "__MarkActionPending__", DataContext = rowData };
@@ -613,6 +616,9 @@ namespace RecoTool.Windows
                     actionStatusMenu.Items.Add(doneItem);
                     actionStatusMenu.Items.Add(pendingItem);
                     cm.Items.Add(actionStatusMenu);
+                    var firstClaimToday = new MenuItem { Header = "Set First Claim Date = Today", Tag = "__SetFirstClaimToday__", DataContext = rowData };
+                    firstClaimToday.Click += QuickSetFirstClaimTodayMenuItem_Click;
+                    cm.Items.Add(firstClaimToday);
                     var addRuleItem = new MenuItem { Header = "Add Rule based on this line…", Tag = "__AddRuleFromLine__", DataContext = rowData };
                     addRuleItem.Click += QuickAddRuleFromLineMenuItem_Click;
                     cm.Items.Add(addRuleItem);
@@ -1134,15 +1140,18 @@ namespace RecoTool.Windows
         public string FilterCountry { get => _filterCountry; set { _filterCountry = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterCountry)); ScheduleApplyFiltersDebounced(); } }
         public DateTime? FilterFromDate { get => VM.FilterFromDate; set { VM.FilterFromDate = value; OnPropertyChanged(nameof(FilterFromDate)); ScheduleApplyFiltersDebounced(); } }
         public DateTime? FilterToDate { get => VM.FilterToDate; set { VM.FilterToDate = value; OnPropertyChanged(nameof(FilterToDate)); ScheduleApplyFiltersDebounced(); } }
+        public DateTime? FilterOperationDate { get => VM.FilterOperationDate; set { VM.FilterOperationDate = value; OnPropertyChanged(nameof(FilterOperationDate)); ScheduleApplyFiltersDebounced(); } }
         public DateTime? FilterDeletedDate { get => VM.FilterDeletedDate; set { VM.FilterDeletedDate = value; OnPropertyChanged(nameof(FilterDeletedDate)); ScheduleApplyFiltersDebounced(); } }
         public string FilterAmount { get => VM.FilterAmount; set { VM.FilterAmount = value; OnPropertyChanged(nameof(FilterAmount)); ScheduleApplyFiltersDebounced(); } }
         public string FilterReconciliationNum { get => VM.FilterReconciliationNum; set { VM.FilterReconciliationNum = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterReconciliationNum)); ScheduleApplyFiltersDebounced(); } }
         public string FilterRawLabel { get => VM.FilterRawLabel; set { VM.FilterRawLabel = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterRawLabel)); ScheduleApplyFiltersDebounced(); } }
         public string FilterEventNum { get => VM.FilterEventNum; set { VM.FilterEventNum = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterEventNum)); ScheduleApplyFiltersDebounced(); } }
         public string FilterComments { get => VM.FilterComments; set { VM.FilterComments = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterComments)); ScheduleApplyFiltersDebounced(); } }
+        public string FilterClient { get => VM.FilterClient; set { VM.FilterClient = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterClient)); ScheduleApplyFiltersDebounced(); } }
         public string FilterDwGuaranteeId { get => VM.FilterDwGuaranteeId; set { VM.FilterDwGuaranteeId = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterDwGuaranteeId)); ScheduleApplyFiltersDebounced(); } }
         public string FilterDwCommissionId { get => VM.FilterDwCommissionId; set { VM.FilterDwCommissionId = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterDwCommissionId)); ScheduleApplyFiltersDebounced(); } }
         public string FilterDwInvoiceId { get => VM.FilterDwInvoiceId; set { VM.FilterDwInvoiceId = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterDwInvoiceId)); ScheduleApplyFiltersDebounced(); } }
+        public string FilterDwRef { get => VM.FilterDwRef; set { VM.FilterDwRef = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterDwRef)); ScheduleApplyFiltersDebounced(); } }
         public string FilterStatus { get => VM.FilterStatus; set { VM.FilterStatus = string.IsNullOrWhiteSpace(value) ? null : value; OnPropertyChanged(nameof(FilterStatus)); ScheduleApplyFiltersDebounced(); } }
 
         // New string-backed ComboBox filters

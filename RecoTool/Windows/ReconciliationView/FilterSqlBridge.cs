@@ -65,6 +65,12 @@ namespace RecoTool.Windows
             
             if (!string.IsNullOrWhiteSpace(f.EventNum))
                 preset.EventNum = f.EventNum;
+
+            if (!string.IsNullOrWhiteSpace(f.DwRef))
+                preset.DwRef = f.DwRef;
+
+            if (!string.IsNullOrWhiteSpace(f.Client))
+                preset.Client = f.Client;
             
             if (!string.IsNullOrWhiteSpace(f.DwGuaranteeId))
                 preset.DwGuaranteeId = f.DwGuaranteeId;
@@ -136,8 +142,16 @@ namespace RecoTool.Windows
                 {
                     FilterAmount = p.MaxAmount.Value.ToString();
                 }
-                FilterFromDate = p.FromDate;
-                FilterToDate = p.ToDate;
+                // Map From/To to a single precise date when possible
+                if (p.FromDate.HasValue && (!p.ToDate.HasValue || p.FromDate.Value.Date == p.ToDate.Value.Date))
+                {
+                    FilterOperationDate = p.FromDate.Value.Date;
+                }
+                else
+                {
+                    FilterFromDate = p.FromDate;
+                    FilterToDate = p.ToDate;
+                }
                 // Prefer ID-based restore
                 FilterActionId = p.Action;
                 FilterKpiId = p.KPI;
@@ -146,6 +160,8 @@ namespace RecoTool.Windows
                 FilterReconciliationNum = p.ReconciliationNum;
                 FilterRawLabel = p.RawLabel;
                 FilterEventNum = p.EventNum;
+                FilterDwRef = p.DwRef;
+                FilterClient = p.Client;
                 FilterDwGuaranteeId = p.DwGuaranteeId;
                 FilterDwCommissionId = p.DwCommissionId;
                 FilterGuaranteeType = p.GuaranteeType;
@@ -212,12 +228,14 @@ namespace RecoTool.Windows
                 Currency = f.Currency,
                 Amount = f.Amount,
                 AmountWithTolerance = f.AmountWithTolerance,
+                OperationDate = f.OperationDate,
                 FromDate = f.FromDate,
                 ToDate = f.ToDate,
                 DeletedDate = f.DeletedDate,
                 ReconciliationNum = f.ReconciliationNum,
                 RawLabel = f.RawLabel,
                 EventNum = f.EventNum,
+                DwRef = f.DwRef,
                 TransactionTypeId = f.TransactionTypeId,
                 TransactionType = f.TransactionType,
                 GuaranteeStatus = f.GuaranteeStatus,
@@ -286,10 +304,10 @@ namespace RecoTool.Windows
                     FilterAmount = midpoint.ToString() + "!";
                 }
             }
-            var d1 = GetDate(@"Operation_Date\s*>=\s*#([0-9]{4}-[0-9]{2}-[0-9]{2})#");
-            var d2 = GetDate(@"Operation_Date\s*<=\s*#([0-9]{4}-[0-9]{2}-[0-9]{2})#");
-            FilterFromDate = d1;
-            FilterToDate = d2;
+            var opFrom = GetDate(@"Operation_Date\s*>=\s*#([0-9]{4}-[0-9]{2}-[0-9]{2})#");
+            var opTo = GetDate(@"Operation_Date\s*<=\s*#([0-9]{4}-[0-9]{2}-[0-9]{2})#");
+            FilterFromDate = opFrom;
+            FilterToDate = opTo;
             FilterReconciliationNum = GetString(@"Reconciliation_Num\s+LIKE\s+'%([^']*)%'");
             FilterRawLabel = GetString(@"RawLabel\s+LIKE\s+'%([^']*)%'");
             FilterEventNum = GetString(@"Event_Num\s+LIKE\s+'%([^']*)%'");
@@ -340,6 +358,18 @@ namespace RecoTool.Windows
                     FilterStatus = "Live";
                 else if (Regex.IsMatch(s, @"a\.DeleteDate\s+is\s+not\s+null", RegexOptions.IgnoreCase))
                     FilterStatus = "Archived";
+            }
+            catch { }
+
+            // Restore precise Operation_Date if present as a day range
+            try
+            {
+                var m2 = Regex.Match(s, @"Operation_Date\s*>=\s*#([0-9]{4}-[0-9]{2}-[0-9]{2})#\s*AND\s*Operation_Date\s*<\s*#([0-9]{4}-[0-9]{2}-[0-9]{2})#", RegexOptions.IgnoreCase);
+                if (m2.Success)
+                {
+                    if (DateTime.TryParse(m2.Groups[1].Value, out var opDay))
+                        FilterOperationDate = opDay.Date;
+                }
             }
             catch { }
         }

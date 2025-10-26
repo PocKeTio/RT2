@@ -273,7 +273,7 @@ namespace RecoTool.UI.Views.Windows
             if (IBillingCurrencyValue != null) IBillingCurrencyValue.Text = _item.I_BILLING_CURRENCY ?? string.Empty;
             if (IStartDateValue != null) IStartDateValue.Text = _item.I_START_DATE ?? string.Empty;
             if (IEndDateValue != null) IEndDateValue.Text = _item.I_END_DATE ?? string.Empty;
-            if (IStatusValue != null) IStatusValue.Text = _item.I_T_INVOICE_STATUS ?? string.Empty;
+            if (IStatusValue != null) IStatusValue.Text = _item.I_T_PAYMENT_REQUEST_STATUS ?? string.Empty;
             if (IBusinessCaseRefValue != null) IBusinessCaseRefValue.Text = _item.I_BUSINESS_CASE_REFERENCE ?? string.Empty;
         }
 
@@ -506,7 +506,7 @@ namespace RecoTool.UI.Views.Windows
                         if (IBillingCurrencyValue != null) IBillingCurrencyValue.Text = i.BILLING_CURRENCY ?? string.Empty;
                         if (IStartDateValue != null) IStartDateValue.Text = i.START_DATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
                         if (IEndDateValue != null) IEndDateValue.Text = i.END_DATE?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
-                        if (IStatusValue != null) IStatusValue.Text = i.T_INVOICE_STATUS ?? string.Empty;
+                        if (IStatusValue != null) IStatusValue.Text = i.T_PAYMENT_REQUEST_STATUS ?? string.Empty;
                         if (IBusinessCaseRefValue != null) IBusinessCaseRefValue.Text = i.BUSINESS_CASE_REFERENCE ?? string.Empty;
                     }
                 }

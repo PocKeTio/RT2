@@ -158,16 +158,16 @@ namespace RecoTool.Windows
                 var receivableId = currentCountry.CNT_AmbreReceivable;
                 var pivotId = currentCountry.CNT_AmbrePivot;
 
-                // Currency breakdown: use ABSOLUTE values to show volume (not net balance)
+                // Currency breakdown: sum REAL signed amounts
                 var grouped = _reconciliationViewData
                     .Where(r => !string.IsNullOrWhiteSpace(r.CCY) && r.SignedAmount != 0)
                     .GroupBy(r => r.CCY.Trim().ToUpperInvariant())
                     .Select(g => new
                     {
                         CCY = g.Key,
-                        // Abs() = volume total (crédit + débit), pas le solde net
-                        RecAmount = g.Where(x => x.Account_ID == receivableId).Sum(x => Math.Abs(x.SignedAmount)),
-                        PivAmount = g.Where(x => x.Account_ID == pivotId).Sum(x => Math.Abs(x.SignedAmount))
+                        // Sum real signed amounts per account side
+                        RecAmount = g.Where(x => x.Account_ID == receivableId).Sum(x => x.SignedAmount),
+                        PivAmount = g.Where(x => x.Account_ID == pivotId).Sum(x => x.SignedAmount)
                     })
                     .OrderByDescending(x => x.RecAmount + x.PivAmount)
                     .Take(10)
@@ -1820,7 +1820,7 @@ namespace RecoTool.Windows
                     .Where(r => r.Account_ID == _offlineFirstService?.CurrentCountry?.CNT_AmbreReceivable)
                     .ToList();
 
-                // KPI breakdown: use ABSOLUTE values to show volume (not net balance)
+                // KPI breakdown: sum REAL signed amounts (not absolute values)
                 var kpiData = receivableData
                     .Where(r => r.KPI.HasValue)
                     .GroupBy(r => r.KPI.Value)
@@ -1828,8 +1828,8 @@ namespace RecoTool.Windows
                     {
                         KPI = g.Key,
                         Count = g.Count(),
-                        // Abs() = volume total des transactions, pas le solde net
-                        TotalAmount = g.Sum(x => Math.Abs(x.SignedAmount))
+                        // Sum real amounts (signed)
+                        TotalAmount = g.Sum(x => x.SignedAmount)
                     })
                     .OrderByDescending(x => x.Count)
                     .ToList();

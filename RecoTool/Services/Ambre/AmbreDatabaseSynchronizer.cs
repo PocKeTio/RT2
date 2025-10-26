@@ -156,15 +156,32 @@ namespace RecoTool.Services.AmbreImport
 
         private async Task<IDisposable> AcquireGlobalLockAsync(string countryId)
         {
-            var lockTimeout = TimeSpan.FromMinutes(2);
-            var acquireTask = _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", TimeSpan.FromMinutes(30));
-            
-            if (await Task.WhenAny(acquireTask, Task.Delay(lockTimeout)) != acquireTask)
+            // Derive wait and lease from T_Param if present; defaults: wait=120s, lease=300s
+            int waitSec = 120;
+            int leaseSec = 300;
+            try { var s = _offlineFirstService.GetParameter("ImportGlobalLockAcquireWaitSeconds"); if (!string.IsNullOrWhiteSpace(s)) int.TryParse(s, out waitSec); } catch { }
+            try { var s = _offlineFirstService.GetParameter("ImportGlobalLockLeaseSeconds"); if (!string.IsNullOrWhiteSpace(s)) int.TryParse(s, out leaseSec); } catch { }
+
+            if (waitSec < 30) waitSec = 30; if (waitSec > 600) waitSec = 600;
+            if (leaseSec < 120) leaseSec = 120; if (leaseSec > 1800) leaseSec = 1800;
+
+            var waitBudget = TimeSpan.FromSeconds(waitSec);
+            var lease = TimeSpan.FromSeconds(leaseSec);
+
+            using (var cts = new System.Threading.CancellationTokenSource(waitBudget))
             {
-                throw new TimeoutException($"Unable to obtain global lock within {lockTimeout.TotalSeconds} seconds");
+                try
+                {
+                    var handle = await _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", lease, cts.Token);
+                    if (handle == null)
+                        throw new InvalidOperationException($"Unable to acquire global lock for {countryId}");
+                    return handle;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw new TimeoutException($"Unable to obtain global lock within {waitSec} seconds");
+                }
             }
-            
-            return await acquireTask;
         }
 
         private async Task PerformNetworkSyncAsync(string countryId)

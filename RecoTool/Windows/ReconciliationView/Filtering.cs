@@ -69,6 +69,7 @@ namespace RecoTool.Windows
                 FilterReconciliationNum = null;
                 FilterRawLabel = null;
                 FilterEventNum = null;
+                FilterClient = null;
                 // Keep Status as-is
             }
             catch { }

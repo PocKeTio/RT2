@@ -2093,9 +2093,22 @@ namespace RecoTool.Windows
                     // Initialize DWINGS caches first
                     await localSvc?.EnsureDwingsCachesInitializedAsync();
                     
-                    var list = localRepo != null
-                        ? await localRepo.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false)
-                        : await localSvc.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
+                    // Include deleted rows at preload if page status is Archived
+                    bool wantArchived = false;
+                    try { wantArchived = string.Equals(SelectedStatus, "Archived", StringComparison.OrdinalIgnoreCase); } catch { }
+
+                    List<RecoTool.Services.DTOs.ReconciliationViewData> list;
+                    if (wantArchived && localSvc != null)
+                    {
+                        // Use service overload to include deleted when needed
+                        list = await localSvc.GetReconciliationViewAsync(countryId, backendSql, includeDeleted: true).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        list = localRepo != null
+                            ? await localRepo.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false)
+                            : await localSvc.GetReconciliationViewAsync(countryId, backendSql).ConfigureAwait(false);
+                    }
                     await view.Dispatcher.InvokeAsync(() =>
                     {
                         try { view.InitializeWithPreloadedData(list, backendSql); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"InitializeWithPreloadedData error: {ex.Message}"); }

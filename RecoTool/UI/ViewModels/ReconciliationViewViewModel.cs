@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Linq;
+using System.Globalization;
 using RecoTool.Services.DTOs;
 using RecoTool.Domain.Filters;
 using RecoTool.UI.Models;
@@ -30,6 +31,8 @@ namespace RecoTool.UI.ViewModels
             set { _currentFilter = value ?? new FilterState(); OnPropertyChanged(); }
         }
 
+        private string _filterAmountText; // preserve raw input (supports '!' and intermediate typing)
+
         // Wrapper properties for XAML binding (TwoWay) that proxy to CurrentFilter
         public string FilterReconciliationNum
         {
@@ -47,6 +50,18 @@ namespace RecoTool.UI.ViewModels
         {
             get => CurrentFilter.EventNum;
             set { if (CurrentFilter.EventNum != value) { CurrentFilter.EventNum = value; OnPropertyChanged(); } }
+        }
+
+        public string FilterClient
+        {
+            get => CurrentFilter.Client;
+            set { if (CurrentFilter.Client != value) { CurrentFilter.Client = value; OnPropertyChanged(); } }
+        }
+
+        public string FilterDwRef
+        {
+            get => CurrentFilter.DwRef;
+            set { if (CurrentFilter.DwRef != value) { CurrentFilter.DwRef = value; OnPropertyChanged(); } }
         }
 
         public string FilterComments
@@ -67,6 +82,12 @@ namespace RecoTool.UI.ViewModels
             set { if (CurrentFilter.ToDate != value) { CurrentFilter.ToDate = value; OnPropertyChanged(); } }
         }
 
+        public DateTime? FilterOperationDate
+        {
+            get => CurrentFilter.OperationDate;
+            set { if (CurrentFilter.OperationDate != value) { CurrentFilter.OperationDate = value; OnPropertyChanged(); } }
+        }
+
         public DateTime? FilterDeletedDate
         {
             get => CurrentFilter.DeletedDate;
@@ -81,9 +102,10 @@ namespace RecoTool.UI.ViewModels
 
         public string FilterAmount
         {
-            get => CurrentFilter.Amount?.ToString();
+            get => _filterAmountText;
             set 
             { 
+                _filterAmountText = string.IsNullOrWhiteSpace(value) ? null : value;
                 // Parse amount and check for tolerance indicator (!)
                 if (string.IsNullOrWhiteSpace(value))
                 {
@@ -94,17 +116,37 @@ namespace RecoTool.UI.ViewModels
                 {
                     var trimmed = value.Trim();
                     var hasTolerance = trimmed.EndsWith("!");
-                    var amountStr = hasTolerance ? trimmed.TrimEnd('!') : trimmed;
-                    
-                    if (decimal.TryParse(amountStr, out var amount))
+                    var amountStr = hasTolerance ? trimmed.Substring(0, trimmed.Length - 1) : trimmed;
+
+                    // Accept both '.' and ',' regardless of current culture, and allow trailing separators during typing
+                    var cur = CultureInfo.CurrentCulture;
+                    var styles = NumberStyles.Number | NumberStyles.AllowLeadingSign;
+
+                    // Allow intermediate input like "123." or "123,"
+                    if (amountStr.EndsWith(".") || amountStr.EndsWith(","))
+                        amountStr = amountStr.TrimEnd('.', ',');
+
+                    decimal amount;
+                    bool parsed = decimal.TryParse(amountStr, styles, cur, out amount);
+                    if (!parsed)
+                    {
+                        // Try with alternate decimal separator
+                        var alt = (CultureInfo)cur.Clone();
+                        var dec = cur.NumberFormat.NumberDecimalSeparator;
+                        alt.NumberFormat.NumberDecimalSeparator = (dec == ",") ? "." : ",";
+                        parsed = decimal.TryParse(amountStr, styles, alt, out amount)
+                                 || decimal.TryParse(amountStr, styles, CultureInfo.InvariantCulture, out amount);
+                    }
+
+                    if (parsed)
                     {
                         CurrentFilter.Amount = amount;
                         CurrentFilter.AmountWithTolerance = hasTolerance;
                     }
                     else
                     {
-                        CurrentFilter.Amount = null;
-                        CurrentFilter.AmountWithTolerance = false;
+                        // Keep previous amount; only update tolerance flag based on the presence of '!'
+                        CurrentFilter.AmountWithTolerance = hasTolerance;
                     }
                 }
                 OnPropertyChanged(); 
@@ -248,6 +290,8 @@ namespace RecoTool.UI.ViewModels
             var reconciliationNum = f.ReconciliationNum;
             var rawLabel = f.RawLabel;
             var eventNum = f.EventNum;
+            var dwRef = f.DwRef;
+            var client = f.Client;
             var comments = f.Comments;
             var guaranteeStatus = f.GuaranteeStatus?.Trim();
             var dwInvoiceId = f.DwInvoiceId;
@@ -260,6 +304,7 @@ namespace RecoTool.UI.ViewModels
             var today = DateTime.Today;
             var oneWeekAgo = today.AddDays(-7);
             var oneMonthAgo = today.AddMonths(-1);
+            var opDate = f.OperationDate?.Date;
             
             // Single-pass filter with combined predicate
             var result = new List<ReconciliationViewData>();
@@ -294,9 +339,16 @@ namespace RecoTool.UI.ViewModels
                     }
                 }
 
-                // Date range (operation)
-                if (f.FromDate.HasValue && (!x.Operation_Date.HasValue || x.Operation_Date.Value < f.FromDate.Value)) continue;
-                if (f.ToDate.HasValue && (!x.Operation_Date.HasValue || x.Operation_Date.Value > f.ToDate.Value)) continue;
+                // Operation date filter: precise date takes precedence over range
+                if (opDate.HasValue)
+                {
+                    if (!x.Operation_Date.HasValue || x.Operation_Date.Value.Date != opDate.Value) continue;
+                }
+                else
+                {
+                    if (f.FromDate.HasValue && (!x.Operation_Date.HasValue || x.Operation_Date.Value < f.FromDate.Value)) continue;
+                    if (f.ToDate.HasValue && (!x.Operation_Date.HasValue || x.Operation_Date.Value > f.ToDate.Value)) continue;
+                }
 
                 // Reference contains
                 if (!string.IsNullOrWhiteSpace(reconciliationNum) && 
@@ -314,29 +366,60 @@ namespace RecoTool.UI.ViewModels
                     (x.Comments ?? string.Empty).IndexOf(comments, System.StringComparison.OrdinalIgnoreCase) < 0)
                     continue;
 
+                // Client contains across DWINGS invoice/guarantee names
+                if (!string.IsNullOrWhiteSpace(client))
+                {
+                    bool anyClient = false;
+                    string ck = client;
+                    if (!string.IsNullOrEmpty(x.I_SENDER_NAME) && x.I_SENDER_NAME.IndexOf(ck, System.StringComparison.OrdinalIgnoreCase) >= 0) anyClient = true;
+                    else if (!string.IsNullOrEmpty(x.I_RECEIVER_NAME) && x.I_RECEIVER_NAME.IndexOf(ck, System.StringComparison.OrdinalIgnoreCase) >= 0) anyClient = true;
+                    else if (!string.IsNullOrEmpty(x.I_DEBTOR_PARTY_NAME) && x.I_DEBTOR_PARTY_NAME.IndexOf(ck, System.StringComparison.OrdinalIgnoreCase) >= 0) anyClient = true;
+                    else if (!string.IsNullOrEmpty(x.G_NAME1) && x.G_NAME1.IndexOf(ck, System.StringComparison.OrdinalIgnoreCase) >= 0) anyClient = true;
+                    else if (!string.IsNullOrEmpty(x.G_NAME2) && x.G_NAME2.IndexOf(ck, System.StringComparison.OrdinalIgnoreCase) >= 0) anyClient = true;
+                    else if (!string.IsNullOrEmpty(x.G_PARTY_REF) && x.G_PARTY_REF.IndexOf(ck, System.StringComparison.OrdinalIgnoreCase) >= 0) anyClient = true;
+                    if (!anyClient) continue;
+                }
+
                 // Guarantee status contains
                 if (!string.IsNullOrWhiteSpace(guaranteeStatus) && 
                     (x.GUARANTEE_STATUS ?? string.Empty).IndexOf(guaranteeStatus, System.StringComparison.OrdinalIgnoreCase) < 0)
                     continue;
 
-                // DW ids
-                if (!string.IsNullOrWhiteSpace(dwInvoiceId))
+                // Consolidated DWINGS Ref: match across multiple columns
+                if (!string.IsNullOrWhiteSpace(dwRef))
                 {
-                    if ((x.DWINGS_InvoiceID ?? string.Empty).IndexOf(dwInvoiceId, System.StringComparison.OrdinalIgnoreCase) < 0 &&
-                        (x.INVOICE_ID ?? string.Empty).IndexOf(dwInvoiceId, System.StringComparison.OrdinalIgnoreCase) < 0)
-                        continue;
+                    bool any = false;
+                    string key = dwRef;
+                    if (!string.IsNullOrEmpty(x.DWINGS_InvoiceID) && x.DWINGS_InvoiceID.IndexOf(key, System.StringComparison.OrdinalIgnoreCase) >= 0) any = true;
+                    else if (!string.IsNullOrEmpty(x.INVOICE_ID) && x.INVOICE_ID.IndexOf(key, System.StringComparison.OrdinalIgnoreCase) >= 0) any = true;
+                    else if (!string.IsNullOrEmpty(x.DWINGS_GuaranteeID) && x.DWINGS_GuaranteeID.IndexOf(key, System.StringComparison.OrdinalIgnoreCase) >= 0) any = true;
+                    else if (!string.IsNullOrEmpty(x.GUARANTEE_ID) && x.GUARANTEE_ID.IndexOf(key, System.StringComparison.OrdinalIgnoreCase) >= 0) any = true;
+                    else if (!string.IsNullOrEmpty(x.DWINGS_BGPMT) && x.DWINGS_BGPMT.IndexOf(key, System.StringComparison.OrdinalIgnoreCase) >= 0) any = true;
+                    else if (!string.IsNullOrEmpty(x.COMMISSION_ID) && x.COMMISSION_ID.IndexOf(key, System.StringComparison.OrdinalIgnoreCase) >= 0) any = true;
+                    else if (!string.IsNullOrEmpty(x.G_OFFICIALREF) && x.G_OFFICIALREF.IndexOf(key, System.StringComparison.OrdinalIgnoreCase) >= 0) any = true;
+                    if (!any) continue;
                 }
-                if (!string.IsNullOrWhiteSpace(dwGuaranteeId))
+                else
                 {
-                    if ((x.DWINGS_GuaranteeID ?? string.Empty).IndexOf(dwGuaranteeId, System.StringComparison.OrdinalIgnoreCase) < 0 &&
-                        (x.GUARANTEE_ID ?? string.Empty).IndexOf(dwGuaranteeId, System.StringComparison.OrdinalIgnoreCase) < 0)
-                        continue;
-                }
-                if (!string.IsNullOrWhiteSpace(dwCommissionId))
-                {
-                    if ((x.DWINGS_BGPMT ?? string.Empty).IndexOf(dwCommissionId, System.StringComparison.OrdinalIgnoreCase) < 0 &&
-                        (x.COMMISSION_ID ?? string.Empty).IndexOf(dwCommissionId, System.StringComparison.OrdinalIgnoreCase) < 0)
-                        continue;
+                    // Backward compatibility: keep individual DW filters if provided
+                    if (!string.IsNullOrWhiteSpace(dwInvoiceId))
+                    {
+                        if ((x.DWINGS_InvoiceID ?? string.Empty).IndexOf(dwInvoiceId, System.StringComparison.OrdinalIgnoreCase) < 0 &&
+                            (x.INVOICE_ID ?? string.Empty).IndexOf(dwInvoiceId, System.StringComparison.OrdinalIgnoreCase) < 0)
+                            continue;
+                    }
+                    if (!string.IsNullOrWhiteSpace(dwGuaranteeId))
+                    {
+                        if ((x.DWINGS_GuaranteeID ?? string.Empty).IndexOf(dwGuaranteeId, System.StringComparison.OrdinalIgnoreCase) < 0 &&
+                            (x.GUARANTEE_ID ?? string.Empty).IndexOf(dwGuaranteeId, System.StringComparison.OrdinalIgnoreCase) < 0)
+                            continue;
+                    }
+                    if (!string.IsNullOrWhiteSpace(dwCommissionId))
+                    {
+                        if ((x.DWINGS_BGPMT ?? string.Empty).IndexOf(dwCommissionId, System.StringComparison.OrdinalIgnoreCase) < 0 &&
+                            (x.COMMISSION_ID ?? string.Empty).IndexOf(dwCommissionId, System.StringComparison.OrdinalIgnoreCase) < 0)
+                            continue;
+                    }
                 }
 
                 // Deleted date exact day

@@ -11,6 +11,8 @@ namespace RecoTool.Domain.Filters
         public string AccountId { get; set; }
         public string Currency { get; set; }
         public string Country { get; set; }
+        public string DwRef { get; set; }
+        public string Client { get; set; }
         public decimal? MinAmount { get; set; }
         public decimal? MaxAmount { get; set; }
         public DateTime? FromDate { get; set; }

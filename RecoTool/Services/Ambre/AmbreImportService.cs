@@ -208,28 +208,41 @@ namespace RecoTool.Services
 
         private async Task<IDisposable> AcquireGlobalLockAsync(string countryId, ImportResult result)
         {
-            var lockTimeout = TimeSpan.FromMinutes(2);
-            LogManager.Info($"Attempting to acquire global lock for {countryId}...");
+            // Derive wait and lease from T_Param if present; defaults: wait=120s, lease=300s
+            int waitSec = 120;
+            int leaseSec = 300;
+            try { var s = _offlineFirstService.GetParameter("ImportGlobalLockAcquireWaitSeconds"); if (!string.IsNullOrWhiteSpace(s)) int.TryParse(s, out waitSec); } catch { }
+            try { var s = _offlineFirstService.GetParameter("ImportGlobalLockLeaseSeconds"); if (!string.IsNullOrWhiteSpace(s)) int.TryParse(s, out leaseSec); } catch { }
 
-            var acquireTask = _offlineFirstService.AcquireGlobalLockAsync(
-                countryId, "AmbreImport", TimeSpan.FromMinutes(30));
-            
-            var completed = await Task.WhenAny(acquireTask, Task.Delay(lockTimeout)) == acquireTask;
-            if (!completed)
+            if (waitSec < 30) waitSec = 30; if (waitSec > 600) waitSec = 600;
+            if (leaseSec < 120) leaseSec = 120; if (leaseSec > 1800) leaseSec = 1800;
+
+            var waitBudget = TimeSpan.FromSeconds(waitSec);
+            var lease = TimeSpan.FromSeconds(leaseSec);
+
+            LogManager.Info($"Attempting to acquire global lock for {countryId} (wait={waitSec}s, lease={leaseSec}s)...");
+
+            using (var cts = new System.Threading.CancellationTokenSource(waitBudget))
             {
-                result.Errors.Add($"Unable to obtain global lock within {lockTimeout.TotalSeconds} seconds.");
-                return null;
+                try
+                {
+                    // Note: the OfflineFirstService method uses the timeout both as wait budget and lease.
+                    // We pass the desired lease here and bound wait via CancellationToken to ensure in-process gate is released on timeout.
+                    var handle = await _offlineFirstService.AcquireGlobalLockAsync(countryId, "AmbreImport", lease, cts.Token);
+                    if (handle == null)
+                    {
+                        result.Errors.Add($"Unable to acquire global lock for {countryId}");
+                        return null;
+                    }
+                    LogManager.Info($"Global lock acquired for {countryId}");
+                    return handle;
+                }
+                catch (OperationCanceledException)
+                {
+                    result.Errors.Add($"Unable to obtain global lock within {waitSec} seconds.");
+                    return null;
+                }
             }
-
-            var globalLock = await acquireTask;
-            if (globalLock == null)
-            {
-                result.Errors.Add($"Unable to acquire global lock for {countryId}");
-                return null;
-            }
-
-            LogManager.Info($"Global lock acquired for {countryId}");
-            return globalLock;
         }
 
         private async Task<List<DataAmbre>> ProcessDataAsync(

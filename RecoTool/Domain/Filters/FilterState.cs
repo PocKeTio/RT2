@@ -16,6 +16,7 @@ namespace RecoTool.Domain.Filters
         // New flags
         public bool? Unmatched { get; set; } // Dwings: no invoice linked
         public bool? NewLines { get; set; } // Ambre: newly appeared lines
+        public DateTime? OperationDate { get; set; } // Precise operation date (preferred over From/To)
         public DateTime? FromDate { get; set; }
         public DateTime? ToDate { get; set; }
         public int? ActionId { get; set; }
@@ -24,6 +25,8 @@ namespace RecoTool.Domain.Filters
         public string ReconciliationNum { get; set; }
         public string RawLabel { get; set; }
         public string EventNum { get; set; }
+        public string Client { get; set; }
+        public string DwRef { get; set; } // Consolidated DWINGS reference (BGI, Guarantee, BGPMT, Official Ref)
         public string DwGuaranteeId { get; set; }
         public string DwCommissionId { get; set; }
         public string DwInvoiceId { get; set; }

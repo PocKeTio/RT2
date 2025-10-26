@@ -163,7 +163,16 @@ namespace RecoTool.Windows
                 else
                 {
                     // Charger la vue combinée avec filtre backend éventuel
-                    viewList = await _reconciliationService.GetReconciliationViewAsync(_currentCountryId, _backendFilterSql);
+                    // Include deleted rows when Status=Archived or when filtering by DeletedDate
+                    bool includeDeleted = false;
+                    try
+                    {
+                        var status = VM?.CurrentFilter?.Status;
+                        includeDeleted = (!string.IsNullOrWhiteSpace(status) && string.Equals(status, "Archived", StringComparison.OrdinalIgnoreCase))
+                                         || (VM?.CurrentFilter?.DeletedDate != null);
+                    }
+                    catch { }
+                    viewList = await _reconciliationService.GetReconciliationViewAsync(_currentCountryId, _backendFilterSql, includeDeleted);
                     swDb.Stop();
                 }
                 int totalRows = viewList?.Count ?? 0;

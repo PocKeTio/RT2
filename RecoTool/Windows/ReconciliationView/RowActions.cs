@@ -329,7 +329,7 @@ namespace RecoTool.Windows
                     updates.Add(reco);
                 }
 
-                await _reconciliationService.SaveReconciliationsAsync(updates);
+                await _reconciliationService.SaveReconciliationsAsync(updates, applyRulesOnEdit: false);
                 
                 // Show summary if rules were applied
                 if (applyRules && rulesAppliedCount > 0)
@@ -416,7 +416,7 @@ namespace RecoTool.Windows
                     updates.Add(reco);
                 }
 
-                await _reconciliationService.SaveReconciliationsAsync(updates);
+                await _reconciliationService.SaveReconciliationsAsync(updates, applyRulesOnEdit: false);
                 
                 // Refresh KPIs to reflect changes immediately
                 UpdateKpis(_filteredData);
@@ -474,7 +474,7 @@ namespace RecoTool.Windows
                     updates.Add(reco);
                 }
                 if (updates.Count == 0) return;
-                await _reconciliationService.SaveReconciliationsAsync(updates);
+                await _reconciliationService.SaveReconciliationsAsync(updates, applyRulesOnEdit: false);
                 
                 // Refresh KPIs to reflect changes immediately
                 UpdateKpis(_filteredData);
@@ -511,7 +511,7 @@ namespace RecoTool.Windows
                     reco.Assignee = user;
                     updates.Add(reco);
                 }
-                await _reconciliationService.SaveReconciliationsAsync(updates);
+                await _reconciliationService.SaveReconciliationsAsync(updates, applyRulesOnEdit: false);
 
                 // Schedule debounced background sync
                 try
@@ -590,7 +590,7 @@ namespace RecoTool.Windows
                     reco.ToRemind = true;
                     updates.Add(reco);
                 }
-                await _reconciliationService.SaveReconciliationsAsync(updates);
+                await _reconciliationService.SaveReconciliationsAsync(updates, applyRulesOnEdit: false);
                 
                 // Refresh KPIs to reflect changes immediately
                 UpdateKpis(_filteredData);
@@ -605,6 +605,50 @@ namespace RecoTool.Windows
             catch (Exception ex)
             {
                 ShowError($"Failed to set reminder: {ex.Message}");
+            }
+        }
+
+        // Quick set First Claim Date = Today
+        private async void QuickSetFirstClaimTodayMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // Check multi-user before editing
+                if (!await CheckMultiUserBeforeEditAsync())
+                    return;
+
+                var dg = this.FindName("ResultsDataGrid") as DataGrid;
+                if (dg == null) return;
+                var rowCtx = (sender as FrameworkElement)?.DataContext as ReconciliationViewData;
+                var targetRows = dg.SelectedItems != null && dg.SelectedItems.Count > 1 && rowCtx != null && dg.SelectedItems.OfType<ReconciliationViewData>().Contains(rowCtx)
+                    ? dg.SelectedItems.OfType<ReconciliationViewData>().ToList()
+                    : (rowCtx != null ? new List<ReconciliationViewData> { rowCtx } : new List<ReconciliationViewData>());
+                if (targetRows.Count == 0) return;
+
+                var updates = new List<Reconciliation>();
+                foreach (var r in targetRows)
+                {
+                    var reco = await _reconciliationService.GetOrCreateReconciliationAsync(r.ID);
+                    r.FirstClaimDate = DateTime.Today;
+                    reco.FirstClaimDate = r.FirstClaimDate;
+                    updates.Add(reco);
+                }
+
+                await _reconciliationService.SaveReconciliationsAsync(updates, applyRulesOnEdit: false);
+
+                // Refresh KPIs to reflect changes immediately
+                UpdateKpis(_filteredData);
+
+                // Background sync best effort (debounced)
+                try
+                {
+                    ScheduleBulkPushDebounced();
+                }
+                catch { }
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Failed to set First Claim Date: {ex.Message}");
             }
         }
 

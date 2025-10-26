@@ -48,8 +48,18 @@ namespace RecoTool.Domain.Filters
                     parts.Add($"SignedAmount = {f.Amount.Value.ToString(CultureInfo.InvariantCulture)}");
                 }
             }
-            if (f.FromDate.HasValue) parts.Add($"Operation_Date >= {DateLit(f.FromDate.Value)}");
-            if (f.ToDate.HasValue) parts.Add($"Operation_Date <= {DateLit(f.ToDate.Value)}");
+            // Precise OperationDate (preferred over range)
+            if (f.OperationDate.HasValue)
+            {
+                var d = f.OperationDate.Value.Date;
+                var next = d.AddDays(1);
+                parts.Add($"Operation_Date >= {DateLit(d)} AND Operation_Date < {DateLit(next)}");
+            }
+            else
+            {
+                if (f.FromDate.HasValue) parts.Add($"Operation_Date >= {DateLit(f.FromDate.Value)}");
+                if (f.ToDate.HasValue) parts.Add($"Operation_Date <= {DateLit(f.ToDate.Value)}");
+            }
 
             if (f.DeletedDate.HasValue)
             {
@@ -61,6 +71,13 @@ namespace RecoTool.Domain.Filters
             if (!string.IsNullOrWhiteSpace(f.ReconciliationNum)) parts.Add($"a.Reconciliation_Num LIKE '%{Esc(f.ReconciliationNum)}%'");
             if (!string.IsNullOrWhiteSpace(f.RawLabel)) parts.Add($"RawLabel LIKE '%{Esc(f.RawLabel)}%'");
             if (!string.IsNullOrWhiteSpace(f.EventNum)) parts.Add($"Event_Num LIKE '%{Esc(f.EventNum)}%'");
+
+            // Consolidated DWINGS reference (only fields available in FROM: r.*)
+            if (!string.IsNullOrWhiteSpace(f.DwRef))
+            {
+                var k = Esc(f.DwRef);
+                parts.Add($"(r.DWINGS_InvoiceID LIKE '%{k}%' OR r.DWINGS_GuaranteeID LIKE '%{k}%' OR r.DWINGS_BGPMT LIKE '%{k}%')");
+            }
 
             if (!string.IsNullOrWhiteSpace(f.TransactionType))
             {

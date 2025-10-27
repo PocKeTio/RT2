@@ -111,6 +111,7 @@ namespace RecoTool.UI.ViewModels
                 {
                     CurrentFilter.Amount = null;
                     CurrentFilter.AmountWithTolerance = false;
+                    CurrentFilter.AmountSignConstraint = null;
                 }
                 else
                 {
@@ -118,9 +119,14 @@ namespace RecoTool.UI.ViewModels
                     var hasTolerance = trimmed.EndsWith("!");
                     var amountStr = hasTolerance ? trimmed.Substring(0, trimmed.Length - 1) : trimmed;
 
+                    // Detect explicit sign at the very beginning
+                    bool? signConstraint = null; // null = ignore sign
+                    if (amountStr.StartsWith("+")) { signConstraint = true; amountStr = amountStr.Substring(1); }
+                    else if (amountStr.StartsWith("-")) { signConstraint = false; amountStr = amountStr.Substring(1); }
+
                     // Accept both '.' and ',' regardless of current culture, and allow trailing separators during typing
                     var cur = CultureInfo.CurrentCulture;
-                    var styles = NumberStyles.Number | NumberStyles.AllowLeadingSign;
+                    var styles = NumberStyles.Number; // we already handled an explicit sign if present
 
                     // Allow intermediate input like "123." or "123,"
                     if (amountStr.EndsWith(".") || amountStr.EndsWith(","))
@@ -140,13 +146,16 @@ namespace RecoTool.UI.ViewModels
 
                     if (parsed)
                     {
-                        CurrentFilter.Amount = amount;
+                        // Store absolute value for default behavior
+                        CurrentFilter.Amount = Math.Abs(amount);
                         CurrentFilter.AmountWithTolerance = hasTolerance;
+                        CurrentFilter.AmountSignConstraint = signConstraint; // only constrain sign if user wrote + or -
                     }
                     else
                     {
                         // Keep previous amount; only update tolerance flag based on the presence of '!'
                         CurrentFilter.AmountWithTolerance = hasTolerance;
+                        CurrentFilter.AmountSignConstraint = signConstraint;
                     }
                 }
                 OnPropertyChanged(); 
@@ -320,21 +329,35 @@ namespace RecoTool.UI.ViewModels
                     (x.CCY == null || x.CCY.IndexOf(currency, System.StringComparison.OrdinalIgnoreCase) < 0))
                     continue;
 
-                // Amount filter with optional tolerance
+                // Amount filter: default is absolute match; explicit leading + / - constrains sign
                 if (f.Amount.HasValue)
                 {
+                    // Enforce sign if explicitly requested
+                    if (f.AmountSignConstraint.HasValue)
+                    {
+                        if (f.AmountSignConstraint.Value)
+                        {
+                            if (x.SignedAmount < 0) continue; // require positive
+                        }
+                        else
+                        {
+                            if (x.SignedAmount > 0) continue; // require negative
+                        }
+                    }
+
+                    var valueAbs = Math.Abs(x.SignedAmount);
                     if (f.AmountWithTolerance)
                     {
                         // Apply +/- 1 tolerance
                         var minAmount = f.Amount.Value - 1m;
                         var maxAmount = f.Amount.Value + 1m;
-                        if (x.SignedAmount < minAmount || x.SignedAmount > maxAmount)
+                        if (valueAbs < minAmount || valueAbs > maxAmount)
                             continue;
                     }
                     else
                     {
                         // Exact match
-                        if (x.SignedAmount != f.Amount.Value)
+                        if (valueAbs != f.Amount.Value)
                             continue;
                     }
                 }

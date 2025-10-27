@@ -102,6 +102,7 @@ namespace RecoTool.Services.Rules
                                     IsMatched = GetNullableBool(row, table, "IsMatched"),
                                     HasManualMatch = GetNullableBool(row, table, "HasManualMatch"),
                                     IsFirstRequest = GetNullableBool(row, table, "IsFirstRequest"),
+                                    IsNewLine = GetNullableBool(row, table, "IsNewLine"),
                                     DaysSinceReminderMin = GetNullableInt(row, table, "DaysSinceReminderMin"),
                                     DaysSinceReminderMax = GetNullableInt(row, table, "DaysSinceReminderMax"),
                                     CurrentActionId = NormalizeWildcard(GetString(row, table, "CurrentActionId")),
@@ -188,6 +189,7 @@ namespace RecoTool.Services.Rules
                         IsMatched INTEGER,
                         HasManualMatch INTEGER,
                         IsFirstRequest INTEGER,
+                        IsNewLine INTEGER,
                         DaysSinceReminderMin INTEGER,
                         DaysSinceReminderMax INTEGER,
                         CurrentActionId TEXT(255),
@@ -244,6 +246,7 @@ namespace RecoTool.Services.Rules
                 ("IsMatched", "INTEGER"),
                 ("HasManualMatch", "INTEGER"),
                 ("IsFirstRequest", "INTEGER"),
+                ("IsNewLine", "INTEGER"),
                 ("DaysSinceReminderMin", "INTEGER"),
                 ("DaysSinceReminderMax", "INTEGER"),
                 ("CurrentActionId", "TEXT(255)"),
@@ -277,7 +280,7 @@ namespace RecoTool.Services.Rules
                 {
                     "HasDwingsLink", "IsGrouped", "IsAmountMatch",
                     "TriggerDateIsNull", "IsMatched",
-                    "HasManualMatch", "IsFirstRequest", "OutputRiskyItem", "OutputToRemind",
+                    "HasManualMatch", "IsFirstRequest", "IsNewLine", "OutputRiskyItem", "OutputToRemind",
                     "CommIdEmail", "BgiStatusInitiated", "OutputFirstClaimToday"
                 };
 
@@ -333,7 +336,7 @@ namespace RecoTool.Services.Rules
                         MTStatus=?, CommIdEmail=?, BgiStatusInitiated=?,
                         TriggerDateIsNull=?, DaysSinceTriggerMin=?, DaysSinceTriggerMax=?,
                         OperationDaysAgoMin=?, OperationDaysAgoMax=?,
-                        IsMatched=?, HasManualMatch=?, IsFirstRequest=?, DaysSinceReminderMin=?, DaysSinceReminderMax=?, CurrentActionId=?,
+                        IsMatched=?, HasManualMatch=?, IsFirstRequest=?, IsNewLine=?, DaysSinceReminderMin=?, DaysSinceReminderMax=?, CurrentActionId=?, PaymentRequestStatus=?,
                         OutputActionId=?, OutputKpiId=?, OutputIncidentTypeId=?, OutputRiskyItem=?, OutputReasonNonRiskyId=?,
                         OutputToRemind=?, OutputToRemindDays=?, OutputActionDone=?, OutputFirstClaimToday=?, ApplyTo=?, AutoApply=?, Message=?
                         WHERE RuleId=?";
@@ -354,10 +357,10 @@ namespace RecoTool.Services.Rules
                         MTStatus, CommIdEmail, BgiStatusInitiated,
                         TriggerDateIsNull, DaysSinceTriggerMin, DaysSinceTriggerMax,
                         OperationDaysAgoMin, OperationDaysAgoMax,
-                        IsMatched, HasManualMatch, IsFirstRequest, DaysSinceReminderMin, DaysSinceReminderMax, CurrentActionId, PaymentRequestStatus,
+                        IsMatched, HasManualMatch, IsFirstRequest, IsNewLine, DaysSinceReminderMin, DaysSinceReminderMax, CurrentActionId, PaymentRequestStatus,
                         OutputActionId, OutputKpiId, OutputIncidentTypeId, OutputRiskyItem, OutputReasonNonRiskyId,
                         OutputToRemind, OutputToRemindDays, OutputActionDone, OutputFirstClaimToday, ApplyTo, AutoApply, Message)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
                     using (var cmd = new OleDbCommand(sql, conn))
                     {
                         AddRuleParams(cmd, rule, includeRuleIdAtEnd: false);
@@ -415,6 +418,7 @@ namespace RecoTool.Services.Rules
             cmd.Parameters.Add("@IsMatched", OleDbType.Integer).Value = (object)(r.IsMatched.HasValue ? (r.IsMatched.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@HasManualMatch", OleDbType.Integer).Value = (object)(r.HasManualMatch.HasValue ? (r.HasManualMatch.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@IsFirstRequest", OleDbType.Integer).Value = (object)(r.IsFirstRequest.HasValue ? (r.IsFirstRequest.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
+            cmd.Parameters.Add("@IsNewLine", OleDbType.Integer).Value = (object)(r.IsNewLine.HasValue ? (r.IsNewLine.Value ? -1 : 0) : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@DaysSinceReminderMin", OleDbType.Integer).Value = (object)(r.DaysSinceReminderMin.HasValue ? r.DaysSinceReminderMin.Value : (int?)null) ?? DBNull.Value;
             cmd.Parameters.Add("@DaysSinceReminderMax", OleDbType.Integer).Value = (object)(r.DaysSinceReminderMax.HasValue ? r.DaysSinceReminderMax.Value : (int?)null) ?? DBNull.Value;
             cmd.Parameters.AddWithValue("@CurrentActionId", (object)r.CurrentActionId ?? DBNull.Value);

@@ -1202,6 +1202,7 @@
                             <DataGridTextColumn Header="DW Invoice ID (BGI)" Binding="{Binding DWINGS_InvoiceID}" Width="150" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
                             <DataGridTextColumn Header="DW Commission (BGPMT)" Binding="{Binding DWINGS_BGPMT}" Width="170" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
                             <DataGridTextColumn Header="DW Guarantee ID" Binding="{Binding DWINGS_GuaranteeID}" Width="170" IsReadOnly="True" HeaderStyle="{StaticResource UserHeaderStyle}"/>
+                            <DataGridTextColumn Header="Official Ref" Binding="{Binding G_OFFICIALREF}" Width="160" IsReadOnly="True" HeaderStyle="{StaticResource DWGuaranteeHeaderStyle}"/>
                             <DataGridTextColumn Header="Amount in original CCY" Binding="{Binding SignedAmount, StringFormat={}{0:N2}}" Width="150" IsReadOnly="True" ElementStyle="{StaticResource RightAlignedTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
                             <DataGridTextColumn Header="CCY" Binding="{Binding CCY}" Width="60" IsReadOnly="True" ElementStyle="{StaticResource CenteredTextStyle}" HeaderStyle="{StaticResource AmbreHeaderStyle}"/>
 

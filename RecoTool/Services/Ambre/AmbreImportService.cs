@@ -99,28 +99,64 @@ namespace RecoTool.Services
                 // 3. Préparation de l'environnement
                 var prepTimer = System.Diagnostics.Stopwatch.StartNew();
                 progressCallback?.Invoke("Preparing environment...", 15);
-                if (!await PrepareEnvironmentAsync(countryId, result))
+                // Determine whether to use a global lock for the import (default: disabled)
+                bool useGlobalLock = false;
+                try
+                {
+                    var param = _offlineFirstService.GetParameter("UseGlobalLockForAmbreImport");
+                    if (!string.IsNullOrWhiteSpace(param)) bool.TryParse(param, out useGlobalLock);
+                }
+                catch { }
+
+                if (!await PrepareEnvironmentAsync(countryId, result, useGlobalLock))
                     return result;
                 prepTimer.Stop();
                 LogManager.Info($"[PERF] Environment preparation completed in {prepTimer.ElapsedMilliseconds}ms");
 
-                // 4. Import avec verrou global
-                var lockTimer = System.Diagnostics.Stopwatch.StartNew();
-                using (_offlineFirstService.BeginAmbreImportScope())
-                using (var globalLock = await AcquireGlobalLockAsync(countryId, result))
+                // 4. Import avec ou sans verrou global (par défaut: désactivé)
+                if (useGlobalLock)
                 {
-                    if (globalLock == null) return result;
-                    lockTimer.Stop();
-                    LogManager.Info($"[PERF] Global lock acquired in {lockTimer.ElapsedMilliseconds}ms");
+                    var lockTimer = System.Diagnostics.Stopwatch.StartNew();
+                    using (_offlineFirstService.BeginAmbreImportScope())
+                    using (var globalLock = await AcquireGlobalLockAsync(countryId, result))
+                    {
+                        if (globalLock == null) return result;
+                        lockTimer.Stop();
+                        LogManager.Info($"[PERF] Global lock acquired in {lockTimer.ElapsedMilliseconds}ms");
 
-                    // Set sync status now that we have the lock
+                        // Set sync status now that we have the lock
+                        try { await _offlineFirstService.SetSyncStatusAsync("Processing"); } catch { }
+
+                        // 5. Lecture et traitement des données
+                        var processTimer = System.Diagnostics.Stopwatch.StartNew();
+                        var processedData = await ProcessDataAsync(
+                            files, config, countryId, isMultiFile, result, progressCallback);
+                        
+                        if (!processedData.Any())
+                        {
+                            result.Errors.Add("No valid data after processing.");
+                            return result;
+                        }
+                        processTimer.Stop();
+                        LogManager.Info($"[PERF] Data processing completed: {processedData.Count} records in {processTimer.ElapsedMilliseconds}ms");
+
+                        // 6. Synchronisation avec la base de données
+                        try { await _offlineFirstService.SetSyncStatusAsync("Synchronizing"); } catch { }
+                        var syncTimer = System.Diagnostics.Stopwatch.StartNew();
+                        await _databaseSynchronizer.SynchronizeAsync(
+                            processedData, countryId, result, progressCallback);
+                        syncTimer.Stop();
+                        LogManager.Info($"[PERF] Database synchronization completed in {syncTimer.ElapsedMilliseconds}ms");
+                    }
+                }
+                else
+                {
+                    // No global lock: still run processing + sync, but do not assume lock
                     try { await _offlineFirstService.SetSyncStatusAsync("Processing"); } catch { }
 
-                    // 5. Lecture et traitement des données
                     var processTimer = System.Diagnostics.Stopwatch.StartNew();
                     var processedData = await ProcessDataAsync(
                         files, config, countryId, isMultiFile, result, progressCallback);
-                    
                     if (!processedData.Any())
                     {
                         result.Errors.Add("No valid data after processing.");
@@ -129,7 +165,6 @@ namespace RecoTool.Services
                     processTimer.Stop();
                     LogManager.Info($"[PERF] Data processing completed: {processedData.Count} records in {processTimer.ElapsedMilliseconds}ms");
 
-                    // 6. Synchronisation avec la base de données
                     try { await _offlineFirstService.SetSyncStatusAsync("Synchronizing"); } catch { }
                     var syncTimer = System.Diagnostics.Stopwatch.StartNew();
                     await _databaseSynchronizer.SynchronizeAsync(
@@ -173,7 +208,7 @@ namespace RecoTool.Services
             }
         }
 
-        private async Task<bool> PrepareEnvironmentAsync(string countryId, ImportResult result)
+        private async Task<bool> PrepareEnvironmentAsync(string countryId, ImportResult result, bool useGlobalLock)
         {
             var switched = await _offlineFirstService.SetCurrentCountryAsync(countryId, suppressPush: true);
             if (!switched)
@@ -191,7 +226,7 @@ namespace RecoTool.Services
                 try
                 {
                     var pushed = await _offlineFirstService.PushPendingChangesToNetworkAsync(
-                        countryId, assumeLockHeld: true);
+                        countryId, assumeLockHeld: useGlobalLock);
                     LogManager.Info($"Pushed {pushed} local change(s) to network.");
                 }
                 catch (Exception pushEx)

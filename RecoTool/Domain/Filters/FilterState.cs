@@ -12,6 +12,7 @@ namespace RecoTool.Domain.Filters
         public string Currency { get; set; }
         public decimal? Amount { get; set; } // Fixed amount filter
         public bool AmountWithTolerance { get; set; } // If true, apply +/- 1 tolerance
+        public bool? AmountSignConstraint { get; set; } // null = ignore sign (default), true = require positive, false = require negative
         public bool? PotentialDuplicates { get; set; }
         // New flags
         public bool? Unmatched { get; set; } // Dwings: no invoice linked

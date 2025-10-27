@@ -426,6 +426,20 @@ namespace RecoTool.Services.Rules
                     if (!conditionMet) allConditionsMet = false;
                 }
 
+                // IsNewLine
+                if (r.IsNewLine.HasValue)
+                {
+                    bool conditionMet = c.IsNewLine.HasValue && c.IsNewLine.Value == r.IsNewLine.Value;
+                    debugEval.Conditions.Add(new RuleConditionDebug
+                    {
+                        Field = "IsNewLine",
+                        Expected = r.IsNewLine.Value.ToString(),
+                        Actual = c.IsNewLine?.ToString() ?? "(null)",
+                        IsMet = conditionMet
+                    });
+                    if (!conditionMet) allConditionsMet = false;
+                }
+
                 // DaysSinceReminder range
                 if (r.DaysSinceReminderMin.HasValue || r.DaysSinceReminderMax.HasValue)
                 {
@@ -503,6 +517,7 @@ namespace RecoTool.Services.Rules
                 IsMatched = ctx.IsMatched,
                 HasManualMatch = ctx.HasManualMatch,
                 IsFirstRequest = ctx.IsFirstRequest,
+                IsNewLine = ctx.IsNewLine,
                 DaysSinceReminder = ctx.DaysSinceReminder,
                 CurrentActionId = ctx.CurrentActionId,
                 // new DWINGS-derived inputs
@@ -668,6 +683,13 @@ namespace RecoTool.Services.Rules
             {
                 if (!c.IsFirstRequest.HasValue) return false;
                 if (c.IsFirstRequest.Value != r.IsFirstRequest.Value) return false;
+            }
+
+            // IsNewLine
+            if (r.IsNewLine.HasValue)
+            {
+                if (!c.IsNewLine.HasValue) return false;
+                if (c.IsNewLine.Value != r.IsNewLine.Value) return false;
             }
 
             // DaysSinceReminder range

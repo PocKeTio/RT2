@@ -263,8 +263,12 @@
                         </Border>
                     </StackPanel>
                     
-                    <!-- Right side - Window Controls and Brand with improved styling -->
+                    <!-- Right side - Version + Window Controls -->
                     <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <!-- App Version -->
+                        <Border CornerRadius="10" Padding="10,2" Margin="0,0,8,0" Background="#26FFFFFF" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding AppVersion}" Foreground="White" FontWeight="SemiBold"/>
+                        </Border>
                         <Button x:Name="MinimizeButton" Style="{StaticResource WindowControlButton}" Click="MinimizeButton_Click">
                             <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
                         </Button>

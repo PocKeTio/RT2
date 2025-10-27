@@ -265,7 +265,7 @@ namespace RecoTool.Services.AmbreImport
             return null;
         }
 
-        private RuleContext BuildRuleContext(DataAmbre dataAmbre, Reconciliation reconciliation, Country country, string countryId, bool isPivot, IReadOnlyList<DwingsInvoiceDto> dwInvoices, IReadOnlyList<DwingsGuaranteeDto> dwGuarantees, bool isGrouped, decimal? missingAmount)
+        private RuleContext BuildRuleContext(DataAmbre dataAmbre, Reconciliation reconciliation, Country country, string countryId, bool isPivot, IReadOnlyList<DwingsInvoiceDto> dwInvoices, IReadOnlyList<DwingsGuaranteeDto> dwGuarantees, bool isGrouped, decimal? missingAmount, bool isNewLine)
         {
             // Determine transaction type enum name
             TransactionType? tx;
@@ -391,6 +391,7 @@ namespace RecoTool.Services.AmbreImport
                 IsMatched = isMatched,
                 HasManualMatch = hasManualMatch,
                 IsFirstRequest = isFirstRequest,
+                IsNewLine = isNewLine,
                 DaysSinceReminder = daysSinceReminder,
                 CurrentActionId = reconciliation?.Action,
                 // New DWINGS-derived
@@ -456,7 +457,7 @@ namespace RecoTool.Services.AmbreImport
                     var batch = staged.Skip(i).Take(batchSize).ToList();
                     var batchTasks = batch.Select(async s =>
                     {
-                        var ctx = BuildRuleContext(s.DataAmbre, s.Reconciliation, country, countryId, s.IsPivot, dwInvoices, dwGuarantees, s.IsGrouped, s.MissingAmount);
+                        var ctx = BuildRuleContext(s.DataAmbre, s.Reconciliation, country, countryId, s.IsPivot, dwInvoices, dwGuarantees, s.IsGrouped, s.MissingAmount, isNewLines);
                         var res = await _rulesEngine.EvaluateAsync(ctx, RuleScope.Import).ConfigureAwait(false);
                         return (Staging: s, Result: res);
                     }).ToList();

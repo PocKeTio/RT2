@@ -1605,16 +1605,31 @@ namespace RecoTool.Windows
                     return;
                 }
 
-                // OPTIMIZED: Reuses ReconciliationView cache (instant load if already cached)
-                // Previously had dashboardOnly parameter that created separate cache entries
-                // Removed dashboardOnly - was incomplete (missing IsToReview, Assignee) and prevented cache reuse
-                var reconciliationViewData = await _reconciliationService.GetReconciliationViewAsync(_offlineFirstService.CurrentCountryId, null);
-                _reconciliationViewData = reconciliationViewData ?? new List<ReconciliationViewData>();
+                // OPTIMIZED: Prefer in-memory cached view if available (no await, no re-enrichment)
+                var cid = _offlineFirstService.CurrentCountryId;
+                var cachedLive = _reconciliationService.TryGetCachedReconciliationView(cid, null, includeDeleted: false);
+                if (cachedLive != null)
+                {
+                    _reconciliationViewData = cachedLive;
+                }
+                else
+                {
+                    var reconciliationViewData = await _reconciliationService.GetReconciliationViewAsync(cid, null);
+                    _reconciliationViewData = reconciliationViewData ?? new List<ReconciliationViewData>();
+                }
 
                 // CRITICAL: Load historical data (includeDeleted=true) for Deletion Delay and New vs Deleted charts
                 // These charts need DeleteDate to calculate reconciliation duration and daily trends
-                var historicalData = await _reconciliationService.GetReconciliationViewAsync(_offlineFirstService.CurrentCountryId, null, includeDeleted: true);
-                _reconciliationHistoricalData = historicalData ?? new List<ReconciliationViewData>();
+                var cachedHist = _reconciliationService.TryGetCachedReconciliationView(cid, null, includeDeleted: true);
+                if (cachedHist != null)
+                {
+                    _reconciliationHistoricalData = cachedHist;
+                }
+                else
+                {
+                    var historicalData = await _reconciliationService.GetReconciliationViewAsync(cid, null, includeDeleted: true);
+                    _reconciliationHistoricalData = historicalData ?? new List<ReconciliationViewData>();
+                }
 
                 // Analyser la répartition des comptes pour diagnostic
                 AnalyzeAccountDistribution();

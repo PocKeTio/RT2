@@ -218,6 +218,9 @@
                                 <Label ToolTip="Yes, No, or — (None) to ignore.">Is First Claim</Label>
                                 <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.IsFirstRequest, UpdateSourceTrigger=PropertyChanged}"/>
 
+                                <Label ToolTip="Yes, No, or — (None) to ignore.">Is New Line</Label>
+                                <ComboBox ItemsSource="{Binding BoolChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.IsNewLine, UpdateSourceTrigger=PropertyChanged}"/>
+
                                 <!-- New DWINGS-derived inputs -->
                                 <Label ToolTip="Choose MT Status condition: *, ACKED, NOT ACKED, or NULL (empty).">MT Status</Label>
                                 <ComboBox ItemsSource="{Binding MtStatusChoices}" SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding EditedRule.MTStatus, UpdateSourceTrigger=PropertyChanged}"/>

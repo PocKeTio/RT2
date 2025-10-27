@@ -66,6 +66,7 @@ namespace RecoTool.Services.Rules
         public bool? IsMatched { get; set; }
         public bool? HasManualMatch { get; set; }
         public bool? IsFirstRequest { get; set; }
+        public bool? IsNewLine { get; set; }
         public int? DaysSinceReminderMin { get; set; }
         public int? DaysSinceReminderMax { get; set; }
 
@@ -118,6 +119,7 @@ namespace RecoTool.Services.Rules
         public bool? IsMatched { get; set; }
         public bool? HasManualMatch { get; set; }
         public bool? IsFirstRequest { get; set; }
+        public bool? IsNewLine { get; set; }
         public int? DaysSinceReminder { get; set; }
         public int? CurrentActionId { get; set; }
         public string PaymentRequestStatus { get; set; } // T_PAYMENT_REQUEST_STATUS from DWINGS invoice

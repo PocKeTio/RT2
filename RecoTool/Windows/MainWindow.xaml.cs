@@ -33,6 +33,7 @@ namespace RecoTool.Windows
         private bool _isChangingCountrySelection;
         private bool _isCountryInitializing;
         private bool _closingPushHandled; // guard to avoid re-entrancy on Closing
+        private HomePage _homePage; // cached instance to avoid reloading referentials on each navigation
 
         // La DI appelle ce constructeur en fournissant les services nécessaires (ici OfflineFirstService)
         public MainWindow(
@@ -51,6 +52,18 @@ namespace RecoTool.Windows
             InitializeServices();
             SetupEventHandlers();
             SetupSyncMonitor();
+
+            // Set app version for header display
+            try
+            {
+                var asm = Assembly.GetExecutingAssembly();
+                var ver = asm?.GetName()?.Version;
+                if (ver != null)
+                {
+                    AppVersion = $"v{ver.Major}.{ver.Minor}.{ver.Build}";
+                }
+            }
+            catch { AppVersion = "v"; }
             this.Closing += async (s, e) =>
             {
                 try
@@ -270,6 +283,14 @@ namespace RecoTool.Windows
         
         public event PropertyChangedEventHandler PropertyChanged;
         private void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
+        // App Version shown in the header
+        private string _appVersion = "v";
+        public string AppVersion
+        {
+            get => _appVersion;
+            set { _appVersion = value; OnPropertyChanged(nameof(AppVersion)); }
+        }
 
         private bool _isOffline = true;
         public bool IsOffline
@@ -1119,14 +1140,33 @@ namespace RecoTool.Windows
         {
             try
             {
-                var homePage = new HomePage(_offlineFirstService, _reconciliationService);
-                NavigateToPage(homePage);
+                if (_homePage == null)
+                {
+                    _homePage = new HomePage(_offlineFirstService, _reconciliationService);
+                }
+                else
+                {
+                    // Only refresh dashboard data if the country has changed
+                    var prevCid = _homePage.CurrentCountryId;
+                    _homePage.UpdateServices(_offlineFirstService, _reconciliationService);
+                    var newCid = _offlineFirstService?.CurrentCountryId;
+                    if (!string.IsNullOrEmpty(newCid) && !string.Equals(prevCid, newCid, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _homePage.Refresh();
+                    }
+                }
+
+                NavigateToPage(_homePage);
                 UpdateNavigationButtons("Home");
 
                 // Si un pays est déjà sélectionné, rafraîchir immédiatement le dashboard
                 if (!string.IsNullOrEmpty(_offlineFirstService?.CurrentCountryId))
                 {
-                    homePage.Refresh(); // lance le chargement async des données
+                    if (_homePage != null && _homePage.IsLoaded == false)
+                    {
+                        // First navigation to Home after app start: trigger initial refresh
+                        _homePage.Refresh();
+                    }
                 }
             }
             catch (Exception ex)

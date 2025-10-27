@@ -354,6 +354,13 @@ namespace RecoTool.Services
             return await GetReconciliationViewAsync(countryId, filterSql, includeDeleted: false).ConfigureAwait(false);
         }
         
+        public List<ReconciliationViewData> TryGetCachedReconciliationView(string countryId, string filterSql, bool includeDeleted = false)
+        {
+            var key = $"{countryId ?? string.Empty}|{includeDeleted}|{NormalizeFilterForCache(filterSql)}";
+            if (_recoViewDataCache.TryGetValue(key, out var list)) return list;
+            return null;
+        }
+        
         /// <summary>
         /// Récupère les données jointes Ambre + Réconciliation avec option d'inclure les lignes supprimées
         /// Used by HomePage for historical charts (Deletion Delay, New vs Deleted Daily)
@@ -434,22 +441,8 @@ namespace RecoTool.Services
                     {
                         row.PopulateInvoiceProperties(invoice);
                     }
-                    
-                    // Extract and populate guarantee properties
-                    if (string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID))
-                    {
-                        var gid = DwingsLinkingHelper.ExtractGuaranteeId(row.Reconciliation_Num)
-                                  ?? DwingsLinkingHelper.ExtractGuaranteeId(row.Comments)
-                                  ?? DwingsLinkingHelper.ExtractGuaranteeId(row.Receivable_DWRefFromAmbre)
-                                  ?? DwingsLinkingHelper.ExtractGuaranteeId(row.RawLabel)
-                                  ?? row.I_BUSINESS_CASE_REFERENCE
-                                  ?? row.I_BUSINESS_CASE_ID;
-                        if (!string.IsNullOrWhiteSpace(gid))
-                        {
-                            row.DWINGS_GuaranteeID = gid;
-                        }
-                    }
-                    
+
+                    // Do NOT heuristically backfill DWINGS_GuaranteeID here. Only populate G_* when an explicit link exists.
                     if (!string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID) && guaranteeDict.TryGetValue(row.DWINGS_GuaranteeID, out var guarantee))
                     {
                         row.PopulateGuaranteeProperties(guarantee);
@@ -565,7 +558,8 @@ namespace RecoTool.Services
                         row.PopulateInvoiceProperties(invoice);
                     }
                     
-                    // Populate guarantee properties
+                    
+                    
                     if (!string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID) && guaranteeDict.TryGetValue(row.DWINGS_GuaranteeID, out var guarantee))
                     {
                         row.PopulateGuaranteeProperties(guarantee);
@@ -698,33 +692,17 @@ namespace RecoTool.Services
             // OPTIMIZED: Link guarantee IDs heuristically (G_* fields are now lazy-loaded)
             try
             {
-                foreach (var row in list)
-                {
-                    // Resolve guarantee id heuristically if missing
-                    string gid = row.DWINGS_GuaranteeID;
-                    if (string.IsNullOrWhiteSpace(gid))
-                    {
-                        // Try extract from various fields
-                        gid = DwingsLinkingHelper.ExtractGuaranteeId(row.Reconciliation_Num)
-                              ?? DwingsLinkingHelper.ExtractGuaranteeId(row.Comments)
-                              ?? DwingsLinkingHelper.ExtractGuaranteeId(row.Receivable_DWRefFromAmbre)
-                              ?? DwingsLinkingHelper.ExtractGuaranteeId(row.RawLabel)
-                              ?? row.I_BUSINESS_CASE_REFERENCE // populated above from invoice if found
-                              ?? row.I_BUSINESS_CASE_ID;
+                
+                
+                swExec.Stop();
 
-                        if (!string.IsNullOrWhiteSpace(gid))
-                        {
-                            row.DWINGS_GuaranteeID = gid; // backfill for consistency
-                        }
-                    }
-                }
+                // Store materialized list for incremental updates
+                _recoViewDataCache[cacheKey] = list;
+                return list;
             }
             catch { /* best-effort linking */ }
-            swExec.Stop();
 
-            // Store materialized list for incremental updates
-            _recoViewDataCache[cacheKey] = list;
-            return list;
+            return null;
         }
 
         private static string NormalizeFilterForCache(string filterSql)
@@ -2553,6 +2531,10 @@ namespace RecoTool.Services
             }
             catch { }
 
+            // Determine IsNewLine flag (tri-state): true if created today, false if known and not today, null if unknown
+            bool? isNewLineFlag = null;
+            try { if (r != null && r.CreationDate.HasValue) isNewLineFlag = r.CreationDate.Value.Date == today; } catch { }
+
             return new RuleContext
             {
                 CountryId = countryId,
@@ -2572,6 +2554,7 @@ namespace RecoTool.Services
                 IsMatched = isMatched,
                 HasManualMatch = hasManualMatch,
                 IsFirstRequest = isFirstRequest,
+                IsNewLine = isNewLineFlag,
                 DaysSinceReminder = daysSinceReminder,
                 CurrentActionId = r?.Action,
                 // New DWINGS-derived

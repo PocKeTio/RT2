@@ -187,6 +187,8 @@
                 <DataGridTextColumn Header="OperationDaysAgoMax" Binding="{Binding OperationDaysAgoMax, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
                 <DataGridCheckBoxColumn Header="IsFirstClaim" Binding="{Binding IsFirstRequest, UpdateSourceTrigger=PropertyChanged}" Width="130"
                                         ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
+                <DataGridCheckBoxColumn Header="IsNewLine" Binding="{Binding IsNewLine, UpdateSourceTrigger=PropertyChanged}" Width="110"
+                                        ElementStyle="{StaticResource TriStateCheckBox}" EditingElementStyle="{StaticResource TriStateCheckBox}"/>
                 <DataGridTextColumn Header="DaysSinceReminderMin" Binding="{Binding DaysSinceReminderMin, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
                 <DataGridTextColumn Header="DaysSinceReminderMax" Binding="{Binding DaysSinceReminderMax, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
                 <DataGridTemplateColumn Header="Out.ActionStatus" Width="150">

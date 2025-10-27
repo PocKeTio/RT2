@@ -224,7 +224,19 @@ namespace RecoTool.Services.DTOs
         }
 
         // Propriétés de Reconciliation
-        public string DWINGS_GuaranteeID { get; set; }
+        private string _dwingsGuaranteeID;
+        public string DWINGS_GuaranteeID
+        {
+            get => _dwingsGuaranteeID;
+            set
+            {
+                if (!string.Equals(_dwingsGuaranteeID, value, StringComparison.Ordinal))
+                {
+                    _dwingsGuaranteeID = value;
+                    OnPropertyChanged(nameof(DWINGS_GuaranteeID));
+                }
+            }
+        }
         
         private string _dwingsInvoiceID;
         public string DWINGS_InvoiceID 
@@ -243,7 +255,19 @@ namespace RecoTool.Services.DTOs
             }
         }
         
-        public string DWINGS_BGPMT { get; set; }
+        private string _dwingsBgpmt;
+        public string DWINGS_BGPMT
+        {
+            get => _dwingsBgpmt;
+            set
+            {
+                if (!string.Equals(_dwingsBgpmt, value, StringComparison.Ordinal))
+                {
+                    _dwingsBgpmt = value;
+                    OnPropertyChanged(nameof(DWINGS_BGPMT));
+                }
+            }
+        }
         private int? _action;
         public int? Action
         {
@@ -316,8 +340,32 @@ namespace RecoTool.Services.DTOs
             }
         }
         
-        public DateTime? FirstClaimDate { get; set; }
-        public DateTime? LastClaimDate { get; set; }
+        private DateTime? _firstClaimDate;
+        public DateTime? FirstClaimDate
+        {
+            get => _firstClaimDate;
+            set
+            {
+                if (_firstClaimDate != value)
+                {
+                    _firstClaimDate = value;
+                    OnPropertyChanged(nameof(FirstClaimDate));
+                }
+            }
+        }
+        private DateTime? _lastClaimDate;
+        public DateTime? LastClaimDate
+        {
+            get => _lastClaimDate;
+            set
+            {
+                if (_lastClaimDate != value)
+                {
+                    _lastClaimDate = value;
+                    OnPropertyChanged(nameof(LastClaimDate));
+                }
+            }
+        }
         private bool _toRemind;
         public bool ToRemind
         {

@@ -48,8 +48,11 @@ namespace RecoTool.UI.Views.Windows
                     return;
                 }
 
-                var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
-                var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
+                var invTask0 = _reconciliationService.GetDwingsInvoicesAsync();
+                var guarTask0 = _reconciliationService.GetDwingsGuaranteesAsync();
+                await System.Threading.Tasks.Task.WhenAll(invTask0, guarTask0);
+                var invoices = invTask0.Result;
+                var guarantees = guarTask0.Result;
 
                 // 1) Invoice suggestions (BGI -> BGPMT -> Guarantee-based)
                 var suggestions = DwingsLinkingHelper.SuggestInvoicesForAmbre(
@@ -63,17 +66,11 @@ namespace RecoTool.UI.Views.Windows
                     _item.SignedAmount,
                     take: 50);
 
-                var rows = suggestions.Select(i => new DwingsResult
+                var rows = new List<DwingsResult>();
+                foreach (var i in suggestions)
                 {
-                    Type = "Invoice",
-                    Id = i.INVOICE_ID,
-                    Status = i.T_PAYMENT_REQUEST_STATUS,
-                    Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
-                    Currency = i.BILLING_CURRENCY,
-                    BGPMT = i.BGPMT,
-                    BusinessCase = i.BUSINESS_CASE_REFERENCE,
-                    Description = $"Invoice {i.INVOICE_ID} (suggested)"
-                }).ToList();
+                    AddInvoiceResult(rows, i, "Invoice", $"Invoice {i.INVOICE_ID} (suggested)");
+                }
 
                 // 2) Direct Guarantee hit from any available reference
                 try
@@ -86,17 +83,7 @@ namespace RecoTool.UI.Views.Windows
                         var g = guarantees.FirstOrDefault(x => string.Equals(x.GUARANTEE_ID, gid, StringComparison.OrdinalIgnoreCase));
                         if (g != null)
                         {
-                            rows.Add(new DwingsResult
-                            {
-                                Type = "Guarantee",
-                                Id = g.GUARANTEE_ID,
-                                Status = g.GUARANTEE_STATUS,
-                                Amount = g.OUTSTANDING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
-                                Currency = g.CURRENCYNAME,
-                                BGPMT = null,
-                                BusinessCase = g.LEGACYREF,
-                                Description = $"Guarantee {g.GUARANTEE_ID} (direct ref)"
-                            });
+                            AddGuaranteeResult(rows, g, "Guarantee", $"Guarantee {g.GUARANTEE_ID} (direct ref)");
                         }
                     }
                 }
@@ -179,6 +166,63 @@ namespace RecoTool.UI.Views.Windows
             public string Currency { get; set; }
             public string BGPMT { get; set; }
             public string BusinessCase { get; set; }
+        }
+
+        private static DwingsResult BuildInvoiceResult(DwingsInvoiceDto i, string type, string description, string businessCaseOverride = null)
+        {
+            return new DwingsResult
+            {
+                Type = type,
+                Id = i?.INVOICE_ID,
+                Status = i?.T_PAYMENT_REQUEST_STATUS,
+                Amount = i?.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                Currency = i?.BILLING_CURRENCY,
+                BGPMT = i?.BGPMT,
+                BusinessCase = businessCaseOverride ?? (i?.BUSINESS_CASE_ID ?? i?.BUSINESS_CASE_REFERENCE),
+                Description = description
+            };
+        }
+
+        private static DwingsResult BuildGuaranteeResult(DwingsGuaranteeDto g, string type, string description)
+        {
+            return new DwingsResult
+            {
+                Type = type,
+                Id = g?.GUARANTEE_ID,
+                Status = g?.GUARANTEE_STATUS,
+                Amount = g?.OUTSTANDING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
+                Currency = g?.CURRENCYNAME,
+                BGPMT = null,
+                BusinessCase = g?.GUARANTEE_ID,
+                Description = description
+            };
+        }
+
+        private static void AddInvoiceResult(List<DwingsResult> rows, DwingsInvoiceDto i, string type, string description, string businessCaseOverride = null)
+        {
+            if (i == null || string.IsNullOrWhiteSpace(i.INVOICE_ID)) return;
+            if (rows.Any(r => (r.Type?.IndexOf("Invoice", StringComparison.OrdinalIgnoreCase) >= 0) && string.Equals(r.Id, i.INVOICE_ID, StringComparison.OrdinalIgnoreCase))) return;
+            rows.Add(BuildInvoiceResult(i, type, description, businessCaseOverride));
+        }
+
+        private static void AddGuaranteeResult(List<DwingsResult> rows, DwingsGuaranteeDto g, string type, string description)
+        {
+            if (g == null || string.IsNullOrWhiteSpace(g.GUARANTEE_ID)) return;
+            if (rows.Any(r => string.Equals(r.Type, type, StringComparison.OrdinalIgnoreCase) && string.Equals(r.Id, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase))) return;
+            rows.Add(BuildGuaranteeResult(g, type, description));
+        }
+
+        private static void AddInvoicesForGuarantee(List<DwingsResult> rows, IEnumerable<DwingsInvoiceDto> invoices, DwingsGuaranteeDto g, string type, string descriptionPrefix)
+        {
+            if (g == null || invoices == null) return;
+            var related = invoices.Where(i =>
+                string.Equals(i.BUSINESS_CASE_ID, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(i.BUSINESS_CASE_REFERENCE, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase)
+            ).ToList();
+            foreach (var i in related)
+            {
+                AddInvoiceResult(rows, i, type, $"{descriptionPrefix} {g.GUARANTEE_ID}", businessCaseOverride: g.GUARANTEE_ID);
+            }
         }
 
         public ReconciliationDetailWindow(ReconciliationViewData item, IEnumerable<ReconciliationViewData> all)
@@ -454,42 +498,37 @@ namespace RecoTool.UI.Views.Windows
             try
             {
                 var rows = new List<DwingsResult>();
-                if (!string.IsNullOrWhiteSpace(invoiceId))
+                IReadOnlyList<DwingsInvoiceDto> invoices = null;
+                IReadOnlyList<DwingsGuaranteeDto> guarantees = null;
+
+                if (!string.IsNullOrWhiteSpace(guaranteeId))
                 {
-                    var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
+                    var invTask = _reconciliationService.GetDwingsInvoicesAsync();
+                    var guarTask = _reconciliationService.GetDwingsGuaranteesAsync();
+                    await System.Threading.Tasks.Task.WhenAll(invTask, guarTask);
+                    invoices = invTask.Result;
+                    guarantees = guarTask.Result;
+                }
+                else if (!string.IsNullOrWhiteSpace(invoiceId))
+                {
+                    invoices = await _reconciliationService.GetDwingsInvoicesAsync();
+                }
+
+                if (!string.IsNullOrWhiteSpace(invoiceId) && invoices != null)
+                {
                     var i = invoices.FirstOrDefault(x => string.Equals(x.INVOICE_ID, invoiceId, StringComparison.OrdinalIgnoreCase));
                     if (i != null)
                     {
-                        rows.Add(new DwingsResult
-                        {
-                            Type = "Invoice",
-                            Id = i.INVOICE_ID,
-                            Status = i.T_PAYMENT_REQUEST_STATUS,
-                            Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
-                            Currency = i.BILLING_CURRENCY,
-                            BGPMT = i.BGPMT,
-                            BusinessCase = i.BUSINESS_CASE_REFERENCE,
-                            Description = $"Invoice {i.INVOICE_ID}"
-                        });
+                        AddInvoiceResult(rows, i, "Invoice", $"Invoice {i.INVOICE_ID}");
                     }
                 }
-                if (!string.IsNullOrWhiteSpace(guaranteeId))
+                if (!string.IsNullOrWhiteSpace(guaranteeId) && guarantees != null)
                 {
-                    var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
                     var g = guarantees.FirstOrDefault(x => string.Equals(x.GUARANTEE_ID, guaranteeId, StringComparison.OrdinalIgnoreCase));
                     if (g != null)
                     {
-                        rows.Add(new DwingsResult
-                        {
-                            Type = "Guarantee",
-                            Id = g.GUARANTEE_ID,
-                            Status = g.GUARANTEE_STATUS,
-                            Amount = null,
-                            Currency = null,
-                            BGPMT = null,
-                            BusinessCase = null,
-                            Description = $"Guarantee {g.GUARANTEE_ID}"
-                        });
+                        AddGuaranteeResult(rows, g, "Guarantee", $"Guarantee {g.GUARANTEE_ID}");
+                        AddInvoicesForGuarantee(rows, invoices, g, "Invoice", "Linked to Guarantee:");
                     }
                 }
 
@@ -662,83 +701,34 @@ namespace RecoTool.UI.Views.Windows
             var results = new List<DwingsResult>();
             if (string.IsNullOrWhiteSpace(key)) return results;
 
-            var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
-            var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
+            var invTask = _reconciliationService.GetDwingsInvoicesAsync();
+            var guarTask = _reconciliationService.GetDwingsGuaranteesAsync();
+            await System.Threading.Tasks.Task.WhenAll(invTask, guarTask);
+            var invoices = invTask.Result;
+            var guarantees = guarTask.Result;
             var keyAlnum = System.Text.RegularExpressions.Regex.Replace(key, @"[^A-Za-z0-9]", "");
 
             // 1. Search by BGI (INVOICE_ID) - exact match
             var byBgi = invoices.Where(i => string.Equals(i.INVOICE_ID, key, StringComparison.OrdinalIgnoreCase)).ToList();
             foreach (var i in byBgi.Take(50))
             {
-                results.Add(new DwingsResult
-                {
-                    Type = "Invoice (BGI)",
-                    Id = i.INVOICE_ID,
-                    Status = i.T_PAYMENT_REQUEST_STATUS,
-                    Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
-                    Currency = i.BILLING_CURRENCY,
-                    BGPMT = i.BGPMT,
-                    BusinessCase = i.BUSINESS_CASE_ID ?? i.BUSINESS_CASE_REFERENCE,
-                    Description = $"Matched by BGI: {i.INVOICE_ID}"
-                });
+                AddInvoiceResult(results, i, "Invoice", $"Matched by BGI: {i.INVOICE_ID}");
             }
 
             // 2. Search by BGPMT - exact match
             var byBgpmt = invoices.Where(i => string.Equals(i.BGPMT, key, StringComparison.OrdinalIgnoreCase)).ToList();
             foreach (var i in byBgpmt.Take(50))
             {
-                if (results.Any(r => r.Id == i.INVOICE_ID)) continue; // Skip duplicates
-                results.Add(new DwingsResult
-                {
-                    Type = "Invoice (BGPMT)",
-                    Id = i.INVOICE_ID,
-                    Status = i.T_PAYMENT_REQUEST_STATUS,
-                    Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
-                    Currency = i.BILLING_CURRENCY,
-                    BGPMT = i.BGPMT,
-                    BusinessCase = i.BUSINESS_CASE_ID ?? i.BUSINESS_CASE_REFERENCE,
-                    Description = $"Matched by BGPMT: {i.BGPMT}"
-                });
+                AddInvoiceResult(results, i, "Invoice", $"Matched by BGPMT: {i.BGPMT}");
             }
 
             // 3. Search by Guarantee ID
             var byGuaranteeId = guarantees.Where(g => string.Equals(g.GUARANTEE_ID, key, StringComparison.OrdinalIgnoreCase)).ToList();
             foreach (var g in byGuaranteeId.Take(10))
             {
-                // Add the guarantee itself as a result (to allow linking by guarantee)
-                results.Add(new DwingsResult
-                {
-                    Type = "Guarantee",
-                    Id = g.GUARANTEE_ID,
-                    Status = g.GUARANTEE_STATUS,
-                    Amount = g.OUTSTANDING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
-                    Currency = g.CURRENCYNAME,
-                    BGPMT = null,
-                    BusinessCase = g.GUARANTEE_ID,
-                    Description = $"Guarantee: {g.GUARANTEE_ID}"
-                });
-
-                // Find invoices linked to this guarantee
-                var related = invoices.Where(i => 
-                    string.Equals(i.BUSINESS_CASE_ID, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(i.BUSINESS_CASE_REFERENCE, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase)
-                ).ToList();
-
-                foreach (var i in related.Take(20))
-                {
-                    if (results.Any(r => r.Id == i.INVOICE_ID)) continue;
-                    results.Add(new DwingsResult
-                    {
-                        Type = "Invoice (Guarantee)",
-                        Id = i.INVOICE_ID,
-                        Status = i.T_PAYMENT_REQUEST_STATUS,
-                        Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
-                        Currency = i.BILLING_CURRENCY,
-                        BGPMT = i.BGPMT,
-                        BusinessCase = g.GUARANTEE_ID,
-                        Description = $"Linked to Guarantee: {g.GUARANTEE_ID}"
-                    });
-                }
+                // Add the guarantee itself and its related invoices
+                AddGuaranteeResult(results, g, "Guarantee", $"Guarantee: {g.GUARANTEE_ID}");
+                AddInvoicesForGuarantee(results, invoices, g, "Invoice", "Linked to Guarantee:");
             }
 
             // 4. Search by OFFICIALREF (alphanumeric comparison)
@@ -752,41 +742,19 @@ namespace RecoTool.UI.Views.Windows
 
                 foreach (var g in byOfficialRef.Take(10))
                 {
-                    // Add the guarantee itself as a result (to allow linking by guarantee)
-                    if (!results.Any(r => r.Id == g.GUARANTEE_ID))
+                    // Add the guarantee itself and its related invoices
+                    AddGuaranteeResult(results, g, "Guarantee", $"Guarantee via OfficialRef: {g.OFFICIALREF}");
+                    // Add related invoices with a specific description referencing official ref and guarantee
+                    if (invoices != null)
                     {
-                        results.Add(new DwingsResult
+                        var related = invoices.Where(i =>
+                            string.Equals(i.BUSINESS_CASE_ID, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(i.BUSINESS_CASE_REFERENCE, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase)
+                        ).ToList();
+                        foreach (var i in related.Take(20))
                         {
-                            Type = "Guarantee (OfficialRef)",
-                            Id = g.GUARANTEE_ID,
-                            Status = g.GUARANTEE_STATUS,
-                            Amount = g.OUTSTANDING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
-                            Currency = g.CURRENCYNAME,
-                            BGPMT = null,
-                            BusinessCase = g.GUARANTEE_ID,
-                            Description = $"Guarantee via OfficialRef: {g.OFFICIALREF}"
-                        });
-                    }
-
-                    var related = invoices.Where(i =>
-                        string.Equals(i.BUSINESS_CASE_ID, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(i.BUSINESS_CASE_REFERENCE, g.GUARANTEE_ID, StringComparison.OrdinalIgnoreCase)
-                    ).ToList();
-
-                    foreach (var i in related.Take(20))
-                    {
-                        if (results.Any(r => r.Id == i.INVOICE_ID)) continue;
-                        results.Add(new DwingsResult
-                        {
-                            Type = "Invoice (OfficialRef)",
-                            Id = i.INVOICE_ID,
-                            Status = i.T_PAYMENT_REQUEST_STATUS,
-                            Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
-                            Currency = i.BILLING_CURRENCY,
-                            BGPMT = i.BGPMT,
-                            BusinessCase = g.GUARANTEE_ID,
-                            Description = $"Matched by OfficialRef: {g.OFFICIALREF} → Guarantee: {g.GUARANTEE_ID}"
-                        });
+                            AddInvoiceResult(results, i, "Invoice", $"Matched by OfficialRef: {g.OFFICIALREF} → Guarantee: {g.GUARANTEE_ID}", businessCaseOverride: g.GUARANTEE_ID);
+                        }
                     }
                 }
             }
@@ -802,18 +770,7 @@ namespace RecoTool.UI.Views.Windows
 
                 foreach (var i in bySenderRef.Take(50))
                 {
-                    if (results.Any(r => r.Id == i.INVOICE_ID)) continue;
-                    results.Add(new DwingsResult
-                    {
-                        Type = "Invoice (SenderRef)",
-                        Id = i.INVOICE_ID,
-                        Status = i.T_PAYMENT_REQUEST_STATUS,
-                        Amount = i.BILLING_AMOUNT?.ToString(CultureInfo.InvariantCulture),
-                        Currency = i.BILLING_CURRENCY,
-                        BGPMT = i.BGPMT,
-                        BusinessCase = i.BUSINESS_CASE_ID ?? i.BUSINESS_CASE_REFERENCE,
-                        Description = $"Matched by SenderRef: {i.SENDER_REFERENCE}"
-                    });
+                    AddInvoiceResult(results, i, "Invoice (SenderRef)", $"Matched by SenderRef: {i.SENDER_REFERENCE}");
                 }
             }
 
@@ -996,8 +953,13 @@ namespace RecoTool.UI.Views.Windows
                 }
                 else if (string.Equals(dr.Type, "Guarantee", StringComparison.OrdinalIgnoreCase))
                 {
+                    // Per spec: guarantee-only link must clear any existing BGI/BGPMT
                     reco.DWINGS_GuaranteeID = dr.Id;
-                    _item.DWINGS_GuaranteeID = reco.DWINGS_GuaranteeID;
+                    reco.DWINGS_InvoiceID = null;
+                    reco.DWINGS_BGPMT = null;
+                    _item.DWINGS_GuaranteeID = dr.Id;
+                    _item.DWINGS_InvoiceID = null;
+                    _item.DWINGS_BGPMT = null;
                 }
 
                 await _reconciliationService.SaveReconciliationAsync(reco);

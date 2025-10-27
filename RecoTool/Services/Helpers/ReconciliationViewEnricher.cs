@@ -107,12 +107,6 @@ namespace RecoTool.Services.Helpers
                 {
                     // OPTIMIZED: Only set the linking fields, all I_* properties are now lazy-loaded
                     row.INVOICE_ID = inv.INVOICE_ID;
-                    
-                    // If guarantee link is missing but invoice carries Business Case reference, propose it
-                    if (string.IsNullOrWhiteSpace(row.DWINGS_GuaranteeID) && !string.IsNullOrWhiteSpace(inv.BUSINESS_CASE_REFERENCE))
-                    {
-                        row.DWINGS_GuaranteeID = inv.BUSINESS_CASE_REFERENCE;
-                    }
                 }
             }
         }

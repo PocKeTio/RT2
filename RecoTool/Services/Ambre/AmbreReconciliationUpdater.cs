@@ -10,6 +10,9 @@ using RecoTool.Models;
 using RecoTool.Services.DTOs;
 using RecoTool.Services;
 using RecoTool.Services.Rules;
+using RecoTool.Services.External;
+using Microsoft.Extensions.DependencyInjection;
+using RecoTool;
 using RecoTool.Services.Helpers;
 using RecoTool.Infrastructure.Logging;
 
@@ -25,20 +28,23 @@ namespace RecoTool.Services.AmbreImport
         private readonly ReconciliationService _reconciliationService;
         private readonly DwingsReferenceResolver _dwingsResolver;
         private readonly RulesEngine _rulesEngine;
-        private readonly RecoTool.Services.External.IFreeApiClient _freeApi;
+        private readonly IFreeApiClient _freeApi;
         private TransformationService _transformationService; // Cached per import
 
         public AmbreReconciliationUpdater(
             OfflineFirstService offlineFirstService,
             string currentUser,
-            ReconciliationService reconciliationService)
+            ReconciliationService reconciliationService,
+            IFreeApiClient freeApi = null)
         {
             _offlineFirstService = offlineFirstService ?? throw new ArgumentNullException(nameof(offlineFirstService));
             _currentUser = currentUser;
             _reconciliationService = reconciliationService;
             _dwingsResolver = new DwingsReferenceResolver(reconciliationService);
             _rulesEngine = new RulesEngine(_offlineFirstService);
-            _freeApi = new RecoTool.Services.External.MockFreeApiClient(); // initial mock implementation
+            _freeApi = freeApi
+                ?? App.ServiceProvider?.GetService<IFreeApiClient>()
+                ?? new FreeApiService();
         }
 
         /// <summary>

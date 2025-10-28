@@ -94,6 +94,7 @@
     <Compile Include="Services\Analytics\DashboardAnalyticsService.cs" />
     <Compile Include="Services\Cache\CacheService.cs" />
     <Compile Include="Services\Cache\CountryDataCache.cs" />
+    <Compile Include="Services\External\FreeApiService.cs" />
     <Compile Include="Services\External\IFreeApiClient.cs" />
     <Compile Include="Services\External\MockFreeApiClient.cs" />
     <Compile Include="Services\Helpers\ReconciliationKpiCalculator.cs" />

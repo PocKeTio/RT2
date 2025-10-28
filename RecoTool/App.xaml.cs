@@ -6,6 +6,7 @@ using RecoTool.Services.Policies;
 using RecoTool.Domain.Repositories;
 using RecoTool.Infrastructure.Repositories;
 using RecoTool.Windows;
+using RecoTool.Services.External;
 
 namespace RecoTool
 {
@@ -29,6 +30,11 @@ namespace RecoTool
 
             // Notre service offline-first (singleton pour tout l'app)
             services.AddSingleton<OfflineFirstService>();
+
+            // Free API service (singleton): wraps authentication, throttling (max 3), and caching
+            // Register concrete instance via factory to force parameterless ctor and avoid circular dependency
+            services.AddSingleton<FreeApiService>(sp => new FreeApiService());
+            services.AddSingleton<IFreeApiClient>(sp => sp.GetRequiredService<FreeApiService>());
 
             // Sync policy: centralize when background pushes and syncs are allowed
             services.AddSingleton<ISyncPolicy, SyncPolicy>();
@@ -89,6 +95,17 @@ namespace RecoTool
                 offline.LoadReferentialsAsync().GetAwaiter().GetResult();
 
                 var currentCountry = offline.CurrentCountryId;
+
+                // Authenticate Free API at startup (before any parallel calls during import)
+                try
+                {
+                    var free = ServiceProvider.GetRequiredService<IFreeApiClient>();
+                    free.AuthenticateAsync().GetAwaiter().GetResult();
+                }
+                catch (Exception exAuth)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Startup] FreeApi authentication warning: {exAuth.Message}");
+                }
 
                 // Ensure Control DB schema exists early (idempotent)
                 try

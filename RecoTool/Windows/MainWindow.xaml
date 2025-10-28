@@ -220,13 +220,13 @@
                                 <TextBlock Text="Reconciliation" Foreground="White" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
-                        <Button x:Name="ReportsButton" Click="ReportsButton_Click" Style="{StaticResource HeaderNavigationButton}" Margin="8,0" MinWidth="90">
+                        <Button x:Name="ReportsButton" Visibility="Collapsed" Click="ReportsButton_Click" Style="{StaticResource HeaderNavigationButton}" Margin="8,0" MinWidth="90" Width="105">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                 <TextBlock Text="Reports" Foreground="White" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
-                        <Button x:Name="SettingsButton" Click="SettingsButton_Click" Style="{StaticResource HeaderNavigationButton}" Margin="8,0,8,0" MinWidth="90">
+                        <Button x:Name="SettingsButton" Visibility="Collapsed" Click="SettingsButton_Click" Style="{StaticResource HeaderNavigationButton}" Margin="8,0,8,0" MinWidth="90">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                 <TextBlock Text="Settings" Foreground="White" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
@@ -242,6 +242,15 @@
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="&#xE897;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                 <TextBlock Text="User Guide" Foreground="White" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <!-- FREE Auth Button: shown only when user is NOT authenticated with Free API -->
+                        <Button x:Name="FreeAuthButton" Click="FreeAuthButton_Click" Style="{StaticResource HeaderNavigationButton}" Margin="8,0" MinWidth="80"
+                                Visibility="{Binding ShowFreeAuthButton, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                ToolTip="Authenticate to enable Free API lookups">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE1E2;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBlock Text="FREE" Foreground="White" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
                         <Button x:Name="DwingsButtonsButton" Click="DwingsButtonsButton_Click" Style="{StaticResource HeaderNavigationButton}" Margin="8,0,8,0" MinWidth="150">

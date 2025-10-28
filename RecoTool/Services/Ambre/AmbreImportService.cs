@@ -8,6 +8,9 @@ using RecoTool.Helpers;
 using RecoTool.Models;
 using RecoTool.Services.DTOs;
 using RecoTool.Services.AmbreImport;
+using RecoTool.Services.External;
+using Microsoft.Extensions.DependencyInjection;
+using RecoTool;
 
 namespace RecoTool.Services
 {
@@ -78,6 +81,17 @@ namespace RecoTool.Services
             
             try
             {
+                // Best-effort: ensure Free API is authenticated before potential parallel calls
+                try
+                {
+                    var free = App.ServiceProvider?.GetService<IFreeApiClient>();
+                    if (free != null && !(free.IsAuthenticated))
+                    {
+                        await free.AuthenticateAsync().ConfigureAwait(false);
+                    }
+                }
+                catch { }
+
                 // 1. Initialisation et validation
                 var initTimer = System.Diagnostics.Stopwatch.StartNew();
                 await _configurationLoader.EnsureInitializedAsync();

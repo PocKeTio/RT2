@@ -16,6 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics;
 using System.Reflection;
 using System.Deployment.Application;
+using RecoTool.Services.External;
 
 namespace RecoTool.Windows
 {
@@ -35,6 +36,8 @@ namespace RecoTool.Windows
         private bool _isCountryInitializing;
         private bool _closingPushHandled; // guard to avoid re-entrancy on Closing
         private HomePage _homePage; // cached instance to avoid reloading referentials on each navigation
+        private IFreeApiClient _freeApi;
+        private bool _showFreeAuthButton;
 
         // La DI appelle ce constructeur en fournissant les services nécessaires (ici OfflineFirstService)
         public MainWindow(
@@ -53,6 +56,15 @@ namespace RecoTool.Windows
             InitializeServices();
             SetupEventHandlers();
             SetupSyncMonitor();
+
+            // Free API auth button initial state
+            try
+            {
+                _freeApi = App.ServiceProvider?.GetService<IFreeApiClient>();
+                _showFreeAuthButton = !(_freeApi?.IsAuthenticated ?? false);
+                OnPropertyChanged(nameof(ShowFreeAuthButton));
+            }
+            catch { }
 
             // Set app version for header display (prefer ClickOnce deployment version when available)
             try
@@ -299,7 +311,21 @@ namespace RecoTool.Windows
         }
         
         public event PropertyChangedEventHandler PropertyChanged;
+        public event EventHandler CloseRequested;
         private void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
+        public bool ShowFreeAuthButton
+        {
+            get => _showFreeAuthButton;
+            set
+            {
+                if (_showFreeAuthButton != value)
+                {
+                    _showFreeAuthButton = value;
+                    OnPropertyChanged(nameof(ShowFreeAuthButton));
+                }
+            }
+        }
 
         // App Version shown in the header
         private string _appVersion = "v";
@@ -1689,5 +1715,28 @@ private async void SynchronizeButton_Click(object sender, RoutedEventArgs e)
         }
 
         #endregion
+
+        private async void FreeAuthButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_freeApi == null)
+                {
+                    _freeApi = App.ServiceProvider?.GetService<IFreeApiClient>();
+                    if (_freeApi == null) { ShowFreeAuthButton = true; return; }
+                }
+                var ok = await _freeApi.AuthenticateAsync();
+                ShowFreeAuthButton = !ok;
+                if (!ok)
+                {
+                    try { MessageBox.Show("Free authentication failed. You can retry from the FREE button.", "Free API", MessageBoxButton.OK, MessageBoxImage.Warning); } catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowFreeAuthButton = true;
+                try { MessageBox.Show($"Free authentication error: {ex.Message}", "Free API", MessageBoxButton.OK, MessageBoxImage.Error); } catch { }
+            }
+        }
     }
 }

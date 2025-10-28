@@ -1,0 +1,23 @@
+<Window x:Class="RecoTool.Windows.PreviewTextDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Preview" Height="450" Width="700"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResizeWithGrip">
+    <DockPanel>
+        <TextBlock x:Name="TitleBlock" DockPanel.Dock="Top" Margin="10,10,10,0" FontWeight="SemiBold" />
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Margin="10">
+            <TextBox x:Name="ContentTextBox"
+                     IsReadOnly="True"
+                     TextWrapping="Wrap"
+                     AcceptsReturn="True"
+                     BorderThickness="0"
+                     Background="Transparent"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"/>
+        </ScrollViewer>
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="10">
+            <Button Width="90" Height="28" Content="Close" IsDefault="True" Click="Close_Click" />
+        </StackPanel>
+    </DockPanel>
+</Window>

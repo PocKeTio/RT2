@@ -45,6 +45,7 @@
       <EmbedInteropTypes>True</EmbedInteropTypes>
     </Reference>
     <Reference Include="Microsoft.VisualBasic" />
+    <Reference Include="System.Deployment" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.IO.Compression" />
     <Reference Include="System.IO.Compression.FileSystem" />
@@ -93,6 +94,8 @@
     <Compile Include="Services\Analytics\DashboardAnalyticsService.cs" />
     <Compile Include="Services\Cache\CacheService.cs" />
     <Compile Include="Services\Cache\CountryDataCache.cs" />
+    <Compile Include="Services\External\IFreeApiClient.cs" />
+    <Compile Include="Services\External\MockFreeApiClient.cs" />
     <Compile Include="Services\Helpers\ReconciliationKpiCalculator.cs" />
     <Compile Include="Services\ReferentialCacheService.cs" />
     <Compile Include="Services\Rules\MtStatusCondition.cs" />
@@ -158,6 +161,9 @@
     </Compile>
     <Compile Include="Windows\ImportAmbreWindow.xaml.cs">
       <DependentUpon>ImportAmbreWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\PreviewTextDialog.xaml.cs">
+      <DependentUpon>PreviewTextDialog.xaml</DependentUpon>
     </Compile>
     <Compile Include="Windows\ProgressWindow.xaml.cs">
       <DependentUpon>ProgressWindow.xaml</DependentUpon>
@@ -274,6 +280,10 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Include="Windows\ImportAmbreWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Windows\PreviewTextDialog.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

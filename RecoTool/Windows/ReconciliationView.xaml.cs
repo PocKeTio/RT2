@@ -91,6 +91,26 @@ namespace RecoTool.Windows
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
 
+        // Open read-only preview for MbawData
+        private async void MbawCell_Click(object sender, MouseButtonEventArgs e)
+        {
+            try
+            {
+                var fe = sender as FrameworkElement;
+                var row = fe?.DataContext as RecoTool.Services.DTOs.ReconciliationViewData;
+                if (row == null) return;
+
+                var dlg = new PreviewTextDialog
+                {
+                    Owner = Window.GetWindow(this)
+                };
+                dlg.SetTitle("Mbaw Data");
+                dlg.SetContent(row.MbawData ?? string.Empty);
+                dlg.ShowDialog();
+            }
+            catch { }
+        }
+
         // Allows parent page to set a custom title, optionally marking it as a ToDo title
         public void SetViewTitle(string title, bool isTodo)
         {

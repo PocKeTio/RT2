@@ -174,6 +174,15 @@ namespace RecoTool.Windows
                     catch { }
                     viewList = await _reconciliationService.GetReconciliationViewAsync(_currentCountryId, _backendFilterSql, includeDeleted);
                     swDb.Stop();
+
+                    // IMPORTANT: Even when fetching fresh from the service, DWINGS-derived fields
+                    // (e.g., OfficialRef, grouping flags) must be re-enriched to reflect recent link/unlink
+                    try
+                    {
+                        await _reconciliationService?.EnsureDwingsCachesInitializedAsync();
+                        await _reconciliationService?.ReapplyEnrichmentsToListAsync(viewList, _currentCountryId);
+                    }
+                    catch { /* best-effort */ }
                 }
                 int totalRows = viewList?.Count ?? 0;
 

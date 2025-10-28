@@ -651,7 +651,11 @@ namespace RecoTool.Windows
                     
                     UpdateProgress(100, "Import completed successfully");
                     
-                    ShowInfo($"Import completed successfully!\n\nProcessed rows: {importResult.ProcessedCount}\nImported rows: {importResult.ImportedCount}\nUpdated rows: {importResult.UpdatedCount}\nDeleted rows: {importResult.DeletedCount}");
+                    var lines = new System.Collections.Generic.List<string>();
+                    if (importResult.ImportedCount > 0) lines.Add($"Imported rows: {importResult.ImportedCount}");
+                    if (importResult.UpdatedCount > 0) lines.Add($"Updated rows: {importResult.UpdatedCount}");
+                    var body = lines.Count > 0 ? string.Join("\n", lines) : "No changes applied";
+                    ShowInfo($"Import completed successfully!\n\n{body}");
 
                     // Snapshot freeze/insert is handled in AmbreImportService under the global lock.
                     

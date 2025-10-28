@@ -16,6 +16,41 @@ namespace RecoTool.Services
             return string.IsNullOrWhiteSpace(tparam) ? fallback : tparam;
         }
 
+        /// <summary>
+        /// Checks if the current user can write to the network database directory (RECO TOOLS path).
+        /// Returns false if directory is missing or not writable.
+        /// </summary>
+        public bool HasWriteAccessToNetworkDatabaseDirectory(string countryId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(countryId)) return false;
+                // Resolve the network directory from central config or parameter
+                string remoteDir = GetCentralConfig("CountryDatabaseDirectory");
+                if (string.IsNullOrWhiteSpace(remoteDir)) remoteDir = GetParameter("CountryDatabaseDirectory");
+                if (string.IsNullOrWhiteSpace(remoteDir) || !Directory.Exists(remoteDir)) return false;
+
+                // Try to create and delete a temp file to verify write permission
+                string probe = Path.Combine(remoteDir, $".reco_write_probe_{Guid.NewGuid():N}.tmp");
+                try
+                {
+                    using (var fs = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+                    {
+                        var bytes = System.Text.Encoding.UTF8.GetBytes("probe");
+                        fs.Write(bytes, 0, bytes.Length);
+                    }
+                    File.Delete(probe);
+                    return true;
+                }
+                catch
+                {
+                    try { if (File.Exists(probe)) File.Delete(probe); } catch { }
+                    return false;
+                }
+            }
+            catch { return false; }
+        }
+
         // Centralized ACE connection string builders
         private static string AceConn(string path)
             => $"Provider=Microsoft.ACE.OLEDB.16.0;Data Source={path};";

@@ -1425,6 +1425,27 @@
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Internal Invoice Ref" Binding="{Binding InternalInvoiceReference}" Width="140" HeaderStyle="{StaticResource UserHeaderStyle}"/>
 
+                            <!-- MbawData (read-only, user-visible) -->
+                            <DataGridTemplateColumn Header="Mbaw Data" Width="250" HeaderStyle="{StaticResource UserHeaderStyle}">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="Transparent"
+                                                Padding="0"
+                                                ToolTipService.InitialShowDelay="0"
+                                                ToolTipService.BetweenShowDelay="0"
+                                                ToolTipService.ShowDuration="300000"
+                                                PreviewMouseLeftButtonUp="MbawCell_Click">
+                                            <Border.ToolTip>
+                                                <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="800" MaxWidth="800">
+                                                    <TextBlock Text="{Binding MbawData}" TextWrapping="Wrap"/>
+                                                </ScrollViewer>
+                                            </Border.ToolTip>
+                                            <TextBlock Text="{Binding MbawData}" TextTrimming="CharacterEllipsis" />
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+
                             <!-- First Claim Date with DatePicker -->
                             <DataGridTemplateColumn Header="First Claim Date" Width="160" SortMemberPath="FirstClaimDate" HeaderStyle="{StaticResource UserHeaderStyle}">
                                 <DataGridTemplateColumn.CellTemplate>

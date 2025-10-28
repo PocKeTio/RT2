@@ -15,6 +15,7 @@ using System.Windows.Media.Imaging;
 using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics;
 using System.Reflection;
+using System.Deployment.Application;
 
 namespace RecoTool.Windows
 {
@@ -53,17 +54,29 @@ namespace RecoTool.Windows
             SetupEventHandlers();
             SetupSyncMonitor();
 
-            // Set app version for header display
+            // Set app version for header display (prefer ClickOnce deployment version when available)
             try
             {
-                var asm = Assembly.GetExecutingAssembly();
-                var ver = asm?.GetName()?.Version;
-                if (ver != null)
+                if (ApplicationDeployment.IsNetworkDeployed)
                 {
-                    AppVersion = $"v{ver.Major}.{ver.Minor}.{ver.Build}";
+                    var depVer = ApplicationDeployment.CurrentDeployment?.CurrentVersion;
+                    if (depVer != null)
+                    {
+                        AppVersion = $"v{depVer.Major}.{depVer.Minor}.{depVer.Build}.{depVer.Revision}";
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(AppVersion) || AppVersion == "v")
+                {
+                    var asm = Assembly.GetExecutingAssembly();
+                    var ver = asm?.GetName()?.Version;
+                    if (ver != null)
+                    {
+                        AppVersion = $"v{ver.Major}.{ver.Minor}.{ver.Build}";
+                    }
                 }
             }
-            catch { AppVersion = "v"; }
+            catch { /* ignore; AppVersion stays default */ }
             this.Closing += async (s, e) =>
             {
                 try
@@ -113,17 +126,22 @@ namespace RecoTool.Windows
                             string syncError = null;
                             try
                             {
-                                var pushTask = _offlineFirstService?.PushReconciliationIfPendingAsync(cid);
-                                if (pushTask != null)
+                                var result = await _offlineFirstService.SynchronizeAsync(
+                                    cid,
+                                    null,
+                                    (progress, message) =>
+                                    {
+                                        try { progressWindow?.UpdateProgress(message ?? "Synchronisation...", progress); } catch { }
+                                    });
+                                if (result != null && result.Success)
                                 {
-                                    // Always sync fully if there are pending operations before closing
-                                    await pushTask;
                                     syncSuccess = true;
                                     try { progressWindow?.UpdateProgress("Synchronisation terminée avec succès", 90); } catch { }
                                 }
                                 else
                                 {
-                                    syncSuccess = true; // No pending changes
+                                    syncSuccess = false;
+                                    syncError = result?.Message ?? "Unknown synchronization error";
                                 }
                             }
                             catch (Exception syncEx)
@@ -136,14 +154,13 @@ namespace RecoTool.Windows
                             // Restore policy
                             try { _offlineFirstService.AllowBackgroundPushes = prevAllow; } catch { }
                             
-                            // Show warning if sync failed
-                            if (!syncSuccess && !string.IsNullOrWhiteSpace(syncError))
+                            if (!syncSuccess)
                             {
                                 try
                                 {
                                     var result = MessageBox.Show(
                                         $"⚠️ SYNCHRONIZATION FAILED\n\n" +
-                                        $"Error: {syncError}\n\n" +
+                                        $"Error: {syncError ?? "Unknown error"}\n\n" +
                                         "Your local changes may not have been saved to the network.\n" +
                                         "Do you want to close anyway?\n\n" +
                                         "• YES: Close the application (changes may be lost)\n" +
@@ -896,6 +913,21 @@ namespace RecoTool.Windows
                     // Echec de préparation de la base locale/réseau pour ce pays
                     IsOffline = true;
                     OperationalDataStatus = "OFFLINE";
+                    return false;
+                }
+
+                // Mandatory write access check on network RECO TOOLS path before proceeding
+                onProgress?.Invoke(81, "Checking permissions...");
+                bool canWrite = false;
+                try { canWrite = _offlineFirstService.HasWriteAccessToNetworkDatabaseDirectory(countryId); } catch { canWrite = false; }
+                if (!canWrite)
+                {
+                    IsOffline = true;
+                    OperationalDataStatus = "OFFLINE";
+                    SetReferentialState("No write access", Brushes.Crimson, false);
+                    ShowError(
+                        "Permission required",
+                        "You do not have write access to the RECO TOOLS network path (country databases directory).\n\nYou cannot use the application without write access in RECO TOOLS path.");
                     return false;
                 }
 

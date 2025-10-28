@@ -25,6 +25,7 @@ namespace RecoTool.Services.AmbreImport
         private readonly ReconciliationService _reconciliationService;
         private readonly DwingsReferenceResolver _dwingsResolver;
         private readonly RulesEngine _rulesEngine;
+        private readonly RecoTool.Services.External.IFreeApiClient _freeApi;
         private TransformationService _transformationService; // Cached per import
 
         public AmbreReconciliationUpdater(
@@ -37,6 +38,7 @@ namespace RecoTool.Services.AmbreImport
             _reconciliationService = reconciliationService;
             _dwingsResolver = new DwingsReferenceResolver(reconciliationService);
             _rulesEngine = new RulesEngine(_offlineFirstService);
+            _freeApi = new RecoTool.Services.External.MockFreeApiClient(); // initial mock implementation
         }
 
         /// <summary>
@@ -214,6 +216,40 @@ namespace RecoTool.Services.AmbreImport
             reconciliation.DWINGS_InvoiceID = dwingsRefs.InvoiceId;
             reconciliation.DWINGS_BGPMT = dwingsRefs.CommissionId;
             reconciliation.DWINGS_GuaranteeID = dwingsRefs.GuaranteeId;
+
+            // FREE API FALLBACK: trigger only when no DWINGS Guarantee is linked
+            if (string.IsNullOrWhiteSpace(reconciliation.DWINGS_GuaranteeID))
+            {
+                try
+                {
+                    var day = dataAmbre.Operation_Date ?? dataAmbre.Value_Date ?? DateTime.Today;
+                    var reference = dataAmbre.Reconciliation_Num ?? dataAmbre.RawLabel ?? string.Empty;
+                    var serviceCode = country?.CNT_ServiceCode;
+                    // Only call the Free API if it has not been called before (MbawData empty for new lines)
+                    if (string.IsNullOrWhiteSpace(reconciliation.MbawData))
+                    {
+                        var payload = await _freeApi.SearchAsync(day, reference, serviceCode);
+                        // Store payload or a sentinel "Not found" to prevent future calls
+                        reconciliation.MbawData = string.IsNullOrWhiteSpace(payload) ? "Not found" : payload;
+
+                        if (!string.IsNullOrWhiteSpace(payload))
+                        {
+                            // Extract tokens from the payload
+                            var foundBgpmt = DwingsLinkingHelper.ExtractBgpmtToken(payload);
+                            var foundBgi = DwingsLinkingHelper.ExtractBgiToken(payload);
+                            var foundGid = DwingsLinkingHelper.ExtractGuaranteeId(payload);
+
+                            if (!string.IsNullOrWhiteSpace(foundGid) && string.IsNullOrWhiteSpace(reconciliation.DWINGS_GuaranteeID))
+                                reconciliation.DWINGS_GuaranteeID = foundGid;
+                            if (!string.IsNullOrWhiteSpace(foundBgi) && string.IsNullOrWhiteSpace(reconciliation.DWINGS_InvoiceID))
+                                reconciliation.DWINGS_InvoiceID = foundBgi;
+                            if (!string.IsNullOrWhiteSpace(foundBgpmt) && string.IsNullOrWhiteSpace(reconciliation.DWINGS_BGPMT))
+                                reconciliation.DWINGS_BGPMT = foundBgpmt;
+                        }
+                    }
+                }
+                catch { /* best-effort enrichment */ }
+            }
 
             // For PIVOT: Auto-fill PaymentReference for bulk trigger
             if (isPivot)
@@ -744,8 +780,7 @@ namespace RecoTool.Services.AmbreImport
             {
                 if (updatedRecords == null || updatedRecords.Count == 0) return;
                 var invoices = await _reconciliationService.GetDwingsInvoicesAsync();
-                if (invoices == null || invoices.Count == 0) return;
-                var dwList = invoices.ToList();
+                var dwList = invoices?.ToList() ?? new List<DwingsInvoiceDto>();
                 
                 // Also get guarantees for OfficialRef/PartyRef matching
                 var guarantees = await _reconciliationService.GetDwingsGuaranteesAsync();
@@ -1283,9 +1318,9 @@ namespace RecoTool.Services.AmbreImport
             var cmd = new OleDbCommand(@"INSERT INTO [T_Reconciliation] (
                 [ID],[DWINGS_GuaranteeID],[DWINGS_InvoiceID],[DWINGS_BGPMT],
                 [Action],[ActionStatus],[ActionDate],[Comments],[InternalInvoiceReference],[FirstClaimDate],[LastClaimDate],
-                [ToRemind],[ToRemindDate],[ACK],[SwiftCode],[PaymentReference],[KPI],
+                [ToRemind],[ToRemindDate],[ACK],[SwiftCode],[PaymentReference],[MbawData],[SpiritData],[KPI],
                 [IncidentType],[RiskyItem],[ReasonNonRisky],[CreationDate],[ModifiedBy],[LastModified]
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", conn, tx);
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", conn, tx);
 
             // Add parameters in order
             cmd.Parameters.AddWithValue("@ID", (object)rec.ID ?? DBNull.Value);
@@ -1309,6 +1344,11 @@ namespace RecoTool.Services.AmbreImport
             
             cmd.Parameters.AddWithValue("@SwiftCode", (object)rec.SwiftCode ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@PaymentReference", (object)rec.PaymentReference ?? DBNull.Value);
+            // Long text fields
+            var pMbaw = cmd.Parameters.Add("@MbawData", OleDbType.LongVarWChar);
+            pMbaw.Value = rec.MbawData ?? (object)DBNull.Value;
+            var pSpirit = cmd.Parameters.Add("@SpiritData", OleDbType.LongVarWChar);
+            pSpirit.Value = rec.SpiritData ?? (object)DBNull.Value;
             
             cmd.Parameters.Add("@KPI", OleDbType.Integer).Value = 
                 rec.KPI.HasValue ? (object)rec.KPI.Value : DBNull.Value;

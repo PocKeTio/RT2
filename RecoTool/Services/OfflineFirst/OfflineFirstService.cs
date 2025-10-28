@@ -1385,7 +1385,8 @@ namespace RecoTool.Services
         // Nouvelle approche README: service de synchro et configuration
         private SynchronizationService _syncService;
         private SyncConfiguration _syncConfig;
-        private readonly ConcurrentDictionary<string, DateTime> _lastSyncTimes;
+        private readonly ConcurrentDictionary<string, DateTime> _lastSyncTimes =
+            new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         private readonly object _lockObject = new object();
         // In-process gate: ensure only one AcquireGlobalLockAsync is executing per process at any time.
         private static readonly SemaphoreSlim _acquireGlobalProcessGate = new SemaphoreSlim(1, 1);
@@ -3606,11 +3607,16 @@ namespace RecoTool.Services
 
                     if (reconRes != null && reconRes.Success)
                     {
-                        _lastSyncTimes[_currentCountryId] = DateTime.UtcNow;
+                        var key = _currentCountryId;
+                        if (!string.IsNullOrWhiteSpace(key))
+                        {
+                            _lastSyncTimes[key] = DateTime.UtcNow;
+                        }
                         // Persist LastSyncTimestamp in _SyncConfig (ISO UTC)
                         try
                         {
-                            var iso = _lastSyncTimes[_currentCountryId].ToString("o");
+                            if (string.IsNullOrWhiteSpace(key)) return reconRes; // nothing to persist without a country key
+                            var iso = _lastSyncTimes[key].ToString("o");
                             using (var connection = new OleDbConnection(GetControlConnectionString()))
                             {
                                 await connection.OpenAsync();
@@ -3643,7 +3649,7 @@ namespace RecoTool.Services
                                 // Also persist LastSyncVersion if the remote table supports it
                                 try
                                 {
-                                    var remotePath = GetNetworkReconciliationDbPath(_currentCountryId);
+                                    var remotePath = GetNetworkReconciliationDbPath(key);
                                     if (!string.IsNullOrWhiteSpace(remotePath) && File.Exists(remotePath))
                                     {
                                         var connStr = $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={remotePath};Persist Security Info=False;";

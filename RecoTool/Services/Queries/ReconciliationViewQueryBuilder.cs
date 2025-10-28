@@ -40,6 +40,8 @@ namespace RecoTool.Services.Queries
                                    r.ACK,
                                    r.SwiftCode,
                                    r.PaymentReference,
+                                   r.MbawData,
+                                   r.SpiritData,
                                    r.KPI,
                                    r.IncidentType,
                                    r.RiskyItem,
